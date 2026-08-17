@@ -332,7 +332,6 @@ class ContractService:
             sender_id=user_id,
             text=data.text,
             status=MessageDeliveryStatus.sent,
-            status=MessageDeliveryStatus.sent,
         )
         self.db.add(msg)
         await self.db.flush()
