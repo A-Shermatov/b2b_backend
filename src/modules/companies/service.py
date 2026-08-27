@@ -340,7 +340,7 @@ class CompanyService:
             actor_id=actor.id,
             kind=actor.kind.value,
             display_name=actor.display_name
-            or (description if description else f"Поставщик #{actor.id}"),
+            or (description if description else f"Исполнитель #{actor.id}"),
             company_id=None,
             city=None,
             country=None,

@@ -99,7 +99,7 @@ class ProposalService:
             rfq.actor_id,
             NotificationType.proposal,
             "Новый отклик",
-            f"Поставщик отправил предложение на RFQ «{rfq.title}»",
+            f"Исполнитель отправил предложение на RFQ «{rfq.title}»",
             f"/customer/rfqs/{rfq.id}/proposals",
         )
         return proposal_to_schema(await self._load(proposal.id))

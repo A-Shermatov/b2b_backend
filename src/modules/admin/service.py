@@ -1300,6 +1300,7 @@ class AdminService:
             **self._serialize_dispute_list_item(dispute, parties),
             "buyer_statement": dispute.buyer_statement,
             "supplier_statement": dispute.supplier_statement,
+            "admin_instructions": dispute.admin_instructions,
             "resolution": dispute.resolution.value if dispute.resolution else None,
             "resolution_note": dispute.resolution_note,
             "partial_buyer_amount": dispute.partial_buyer_amount,
@@ -1417,6 +1418,7 @@ class AdminService:
 
         if action == "request_evidence":
             dispute.status = DisputeStatus.under_review
+            dispute.admin_instructions = reason.strip()
         elif action == "release_funds":
             for milestone in milestones:
                 if milestone.status in movable:
@@ -1609,8 +1611,8 @@ class AdminService:
     ) -> tuple[str, str]:
         messages = {
             "release_funds": (
-                "Спор: выплата поставщику",
-                f"По спору по контракту «{contract_title}» средства выплачены поставщику.",
+                "Спор: выплата исполнителю",
+                f"По спору по контракту «{contract_title}» средства выплачены исполнителю.",
             ),
             "refund_buyer": (
                 "Спор: возврат покупателю",

@@ -338,6 +338,7 @@ def _ensure_admin_disputes_schema_sync(sync_conn) -> None:
                 opened_by_actor_id INTEGER REFERENCES actors(id),
                 buyer_statement TEXT,
                 supplier_statement TEXT,
+                admin_instructions TEXT,
                 resolution dispute_resolution,
                 resolution_note TEXT,
                 partial_buyer_amount DOUBLE PRECISION,
@@ -346,6 +347,14 @@ def _ensure_admin_disputes_schema_sync(sync_conn) -> None:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            """
+        )
+    )
+    sync_conn.execute(
+        text(
+            """
+            ALTER TABLE disputes
+            ADD COLUMN IF NOT EXISTS admin_instructions TEXT;
             """
         )
     )

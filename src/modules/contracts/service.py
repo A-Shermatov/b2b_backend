@@ -146,6 +146,7 @@ class ContractService:
                 selectinload(Contract.files),
                 selectinload(Contract.submissions),
                 selectinload(Contract.rfq),
+                selectinload(Contract.disputes).selectinload(Dispute.evidence),
             )
         )
         c = result.scalar_one_or_none()
@@ -249,6 +250,7 @@ class ContractService:
                 .selectinload(Message.sender),
                 selectinload(Contract.files),
                 selectinload(Contract.submissions),
+                selectinload(Contract.disputes).selectinload(Dispute.evidence),
             ).order_by(Contract.created_at.desc())
         )
         return [contract_to_schema(c) for c in result.scalars().all()]
@@ -258,6 +260,20 @@ class ContractService:
         if contract.buyer_actor_id != actor_id and contract.supplier_actor_id != actor_id:
             raise ForbiddenError("Access denied")
         return contract_to_schema(contract)
+
+    def _ensure_not_under_dispute(self, contract: Contract) -> None:
+        disputes = getattr(contract, "disputes", None) or []
+        active = any(
+            d.status
+            in (
+                DisputeStatus.open,
+                DisputeStatus.under_review,
+                DisputeStatus.appealed,
+            )
+            for d in disputes
+        )
+        if active or contract.status == ContractStatus.disputed:
+            raise ConflictError("Contract is under dispute")
 
     async def _resolve_actor_user_ids(self, actor_id: int) -> list[int]:
         actor = (
@@ -477,6 +493,7 @@ class ContractService:
         contract = await self._load(contract_id)
         if contract.supplier_actor_id != supplier_id:
             raise ForbiddenError("Access denied")
+        self._ensure_not_under_dispute(contract)
         if contract.status not in (ContractStatus.active, ContractStatus.pending_payment):
             raise ConflictError("Contract not active")
         assets = [
@@ -506,6 +523,7 @@ class ContractService:
         contract = await self._load(contract_id)
         if contract.buyer_actor_id != buyer_id:
             raise ForbiddenError("Access denied")
+        self._ensure_not_under_dispute(contract)
         sub = next((s for s in contract.submissions if s.id == submission_id), None)
         if not sub:
             raise NotFoundError("Submission not found")
@@ -526,6 +544,7 @@ class ContractService:
         contract = await self._load(contract_id)
         if contract.buyer_actor_id != buyer_id:
             raise ForbiddenError("Access denied")
+        self._ensure_not_under_dispute(contract)
         sub = next((s for s in contract.submissions if s.id == submission_id), None)
         if not sub:
             raise NotFoundError("Submission not found")

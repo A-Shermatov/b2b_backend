@@ -721,6 +721,7 @@ class Dispute(Base):
     )
     buyer_statement: Mapped[str | None] = mapped_column(Text, nullable=True)
     supplier_statement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    admin_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution: Mapped[DisputeResolution | None] = mapped_column(
         Enum(DisputeResolution, name="dispute_resolution"),
         nullable=True,

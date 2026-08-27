@@ -234,6 +234,7 @@ class RfqService:
         rfq = await self._load(rfq_id)
         if rfq.actor_id != actor_id:
             raise ForbiddenError("Access denied")
+        invited_any = False
         for sid in supplier_ids:
             result = await self.db.execute(
                 select(Company).where(Company.id == sid, Company.actor_type == ActorType.supplier)
@@ -242,6 +243,12 @@ class RfqService:
                 continue
             existing = {i.supplier_id for i in rfq.invited_suppliers}
             if sid not in existing:
-                self.db.add(RfqInvitedSupplier(rfq_id=rfq_id, supplier_id=sid))
+                invite = RfqInvitedSupplier(rfq_id=rfq_id, supplier_id=sid)
+                self.db.add(invite)
+                rfq.invited_suppliers.append(invite)
+            invited_any = True
+        if invited_any:
+            rfq.visibility = RfqVisibility.invited_only
+            rfq.updated_at = datetime.now(timezone.utc)
         await self.db.flush()
-        return rfq_to_response(await self._load(rfq_id))
+        return rfq_to_response(rfq)

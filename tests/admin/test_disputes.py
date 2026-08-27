@@ -225,6 +225,13 @@ async def test_admin_dispute_actions(
     assert evidence_res.status_code == 200, evidence_res.text
     assert evidence_res.json()["status"] == "under_review"
 
+    evidence_detail = await client.get(
+        f"{API}/admin/disputes/{evidence_dispute}",
+        headers=admin_auth["headers"],
+    )
+    assert evidence_detail.status_code == 200, evidence_detail.text
+    assert evidence_detail.json()["admin_instructions"] == "Нужны фото и акты"
+
     release_res = await client.post(
         f"{API}/admin/disputes/{release_dispute}/action",
         json={"action": "release_funds", "reason": "Работа выполнена"},
@@ -236,7 +243,7 @@ async def test_admin_dispute_actions(
 
     refund_res = await client.post(
         f"{API}/admin/disputes/{refund_dispute}/action",
-        json={"action": "refund_buyer", "reason": "Поставщик не выполнил условия"},
+        json={"action": "refund_buyer", "reason": "Исполнитель не выполнил условия"},
         headers=admin_auth["headers"],
     )
     assert refund_res.status_code == 200, refund_res.text
@@ -302,6 +309,126 @@ async def test_admin_dispute_actions(
         assert all(
             m.status == PaymentMilestoneStatus.refunded for m in refund_milestones
         )
+
+
+@pytest.mark.asyncio
+async def test_request_evidence_exposes_instructions_on_contract(
+    client, admin_auth, buyer_auth, supplier_auth
+):
+    if not buyer_auth["actor_id"] or not supplier_auth["actor_id"]:
+        pytest.skip("Missing actor fixtures")
+
+    contract_id = await _create_contract(
+        client, buyer_auth, supplier_auth, "Evidence instructions contract"
+    )
+    await _open_dispute(
+        client,
+        buyer_auth,
+        contract_id,
+        "Нужна проверка качества поставки",
+    )
+
+    async with AsyncSessionLocal() as db:
+        dispute_id = (
+            await db.execute(
+                select(Dispute.id).where(Dispute.contract_id == contract_id)
+            )
+        ).scalar_one()
+
+    instructions = "Приложите акты и фото упаковки до пятницы"
+    evidence_res = await client.post(
+        f"{API}/admin/disputes/{dispute_id}/action",
+        json={"action": "request_evidence", "reason": instructions},
+        headers=admin_auth["headers"],
+    )
+    assert evidence_res.status_code == 200, evidence_res.text
+    assert evidence_res.json()["status"] == "under_review"
+
+    admin_detail = await client.get(
+        f"{API}/admin/disputes/{dispute_id}",
+        headers=admin_auth["headers"],
+    )
+    assert admin_detail.status_code == 200, admin_detail.text
+    assert admin_detail.json()["admin_instructions"] == instructions
+
+    buyer_contract = await client.get(
+        f"{API}/buyer/contracts/{contract_id}",
+        headers=buyer_auth["headers"],
+    )
+    assert buyer_contract.status_code == 200, buyer_contract.text
+    buyer_dispute = buyer_contract.json()["dispute"]
+    assert buyer_dispute is not None
+    assert buyer_dispute["status"] == "under_review"
+    assert buyer_dispute["admin_instructions"] == instructions
+
+    supplier_contract = await client.get(
+        f"{API}/supplier/contracts/{contract_id}",
+        headers=supplier_auth["headers"],
+    )
+    assert supplier_contract.status_code == 200, supplier_contract.text
+    supplier_dispute = supplier_contract.json()["dispute"]
+    assert supplier_dispute is not None
+    assert supplier_dispute["status"] == "under_review"
+    assert supplier_dispute["admin_instructions"] == instructions
+
+
+@pytest.mark.asyncio
+async def test_parties_cannot_change_status_while_dispute_open(
+    client, buyer_auth, supplier_auth
+):
+    if not buyer_auth["actor_id"] or not supplier_auth["actor_id"]:
+        pytest.skip("Missing actor fixtures")
+
+    contract_id = await _create_contract(
+        client, buyer_auth, supplier_auth, "Locked while disputed"
+    )
+
+    from src.models import WorkSubmission, WorkSubmissionStatus, WorkSubmissionType
+
+    async with AsyncSessionLocal() as db:
+        submission = WorkSubmission(
+            contract_id=contract_id,
+            type=WorkSubmissionType.work,
+            note="Seeded for approve/reject lock",
+            status=WorkSubmissionStatus.pending,
+            file_names=["seed.pdf"],
+            assets=[],
+        )
+        db.add(submission)
+        await db.commit()
+        await db.refresh(submission)
+        submission_id = submission.id
+
+    await _open_dispute(
+        client,
+        buyer_auth,
+        contract_id,
+        "Спор блокирует действия сторон",
+    )
+
+    submit_res = await client.post(
+        f"{API}/supplier/contracts/{contract_id}/submissions",
+        headers=supplier_auth["headers"],
+        json={
+            "type": "work",
+            "note": "Попытка сдать работу во время спора",
+            "file_names": ["report.pdf"],
+            "assets": [],
+        },
+    )
+    assert submit_res.status_code == 409, submit_res.text
+
+    approve_res = await client.post(
+        f"{API}/buyer/contracts/{contract_id}/submissions/{submission_id}/approve",
+        headers=buyer_auth["headers"],
+    )
+    assert approve_res.status_code == 409, approve_res.text
+
+    reject_res = await client.post(
+        f"{API}/buyer/contracts/{contract_id}/submissions/{submission_id}/reject",
+        headers=buyer_auth["headers"],
+    )
+    assert reject_res.status_code == 409, reject_res.text
 
 
 @pytest.mark.asyncio

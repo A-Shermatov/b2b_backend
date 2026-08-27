@@ -162,7 +162,7 @@ async def seed() -> None:
                 email=DEMO_SUPPLIER_EMAIL,
                 password_hash=hash_password("Supplier123!"),
                 first_name="Пётр",
-                last_name="Поставщик",
+                last_name="Исполнитель",
                 role=UserRole.supplier,
                 status=UserStatus.active,
             )
@@ -177,7 +177,7 @@ async def seed() -> None:
                 legal_name="ООО «ТехноСнаб»",
                 country="Таджикистан",
                 city="Душанбе",
-                description="Поставщик IT-оборудования",
+                description="Исполнитель IT-оборудования",
                 verification_status=VerificationStatus.verified,
                 rating=4.7,
             )

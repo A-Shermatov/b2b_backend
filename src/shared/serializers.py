@@ -1,4 +1,14 @@
-from src.models import Actor, ActorKind, Company, CompanyUser, Contract, Message, Proposal, Rfq
+from src.models import (
+    Actor,
+    ActorKind,
+    Company,
+    CompanyUser,
+    Contract,
+    DisputeStatus,
+    Message,
+    Proposal,
+    Rfq,
+)
 from src.modules.companies.schemas import (
     CompanyCategorySchema,
     CompanyCertificateSchema,
@@ -59,6 +69,48 @@ def _submission_assets(submission) -> list[dict]:
         for name in (submission.file_names or [])
         if name
     ]
+
+
+_ACTIVE_DISPUTE_STATUSES = {
+    DisputeStatus.open,
+    DisputeStatus.under_review,
+    DisputeStatus.appealed,
+}
+
+
+def _dispute_to_dict(contract: Contract) -> dict | None:
+    disputes = getattr(contract, "disputes", None) or []
+    active = next(
+        (d for d in disputes if d.status in _ACTIVE_DISPUTE_STATUSES),
+        None,
+    )
+    if active is None:
+        return None
+    evidence = getattr(active, "evidence", None) or []
+    return {
+        "id": active.id,
+        "status": active.status.value,
+        "opened_by_actor_id": active.opened_by_actor_id,
+        "buyer_statement": active.buyer_statement,
+        "supplier_statement": active.supplier_statement,
+        "admin_instructions": active.admin_instructions,
+        "created_at": active.created_at,
+        "updated_at": active.updated_at,
+        "evidence": [
+            {
+                "id": item.id,
+                "file_name": item.file_name,
+                "file_url": public_file_url(item.file_url),
+                "file_type": item.file_type,
+                "note": item.note,
+                "uploaded_by_actor_id": item.uploaded_by_actor_id,
+                "created_at": item.created_at,
+            }
+            for item in sorted(
+                evidence, key=lambda value: value.created_at, reverse=True
+            )
+        ],
+    }
 
 
 def company_to_schema(company: Company) -> CompanyWithRelations:
@@ -248,6 +300,7 @@ def contract_to_schema(contract: Contract) -> dict:
         "created_at": contract.created_at,
         "payment_plan": payment_plan,
         "conversation": conversation,
+        "dispute": _dispute_to_dict(contract),
         "files": [
             {
                 "id": f.id,

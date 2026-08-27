@@ -159,6 +159,7 @@ class AdminDisputeListResponse(BaseModel):
 class AdminDisputeDetail(AdminDisputeListItem):
     buyer_statement: str | None = None
     supplier_statement: str | None = None
+    admin_instructions: str | None = None
     resolution: str | None = None
     resolution_note: str | None = None
     partial_buyer_amount: float | None = None
