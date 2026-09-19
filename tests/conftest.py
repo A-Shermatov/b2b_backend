@@ -8,7 +8,8 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from src.main import app
+from app.database import pool
+from app.main import app
 from src.utils import redis_client
 
 API = "/api/v1"
@@ -19,6 +20,7 @@ async def client(monkeypatch):
     from src.db.schema import prepare_database
 
     await prepare_database()
+    await pool.init()
 
     async def _allow_rate_limit(*_args, **_kwargs):
         return True
@@ -33,6 +35,7 @@ async def client(monkeypatch):
     from src.db.session import engine
 
     await engine.dispose()
+    await pool.close()
     redis_client._redis_client = None
     redis_client._memory_rate_limit.clear()
 

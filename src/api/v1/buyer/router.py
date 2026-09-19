@@ -7,7 +7,6 @@ from src.api.v1.buyer import (
     notifications,
     payments,
     proposals,
-    reviews,
     rfqs,
 )
 
@@ -18,5 +17,4 @@ router.include_router(rfqs.router)
 router.include_router(proposals.router)
 router.include_router(contracts.router)
 router.include_router(payments.router)
-router.include_router(reviews.router)
 router.include_router(notifications.router)

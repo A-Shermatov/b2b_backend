@@ -133,6 +133,15 @@ def _migrate_legacy_actor_fks_sync(sync_conn) -> None:
             _switch_fk_to_actors(sync_conn, inspector, "rfq_invited_suppliers", "supplier_actor_id")
 
 
+def _ensure_audit_log_context_columns_sync(sync_conn) -> None:
+    sync_conn.execute(
+        text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id INTEGER")
+    )
+    sync_conn.execute(
+        text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS company_id INTEGER")
+    )
+
+
 async def ensure_schema() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -140,6 +149,7 @@ async def ensure_schema() -> None:
         await conn.run_sync(_ensure_admin_disputes_schema_sync)
         await conn.run_sync(_ensure_admin_finance_schema_sync)
         await conn.run_sync(_ensure_admin_reports_schema_sync)
+        await conn.run_sync(_ensure_audit_log_context_columns_sync)
     logger.info("Database schema ensured via metadata.create_all")
 
 

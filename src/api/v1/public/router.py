@@ -9,8 +9,6 @@ from src.modules.catalog.service import CategoryService
 from src.modules.companies.schemas import CompanyWithRelations, PublicSupplier
 from src.modules.companies.service import CompanyService
 from src.modules.catalog_items.service import CatalogItemService
-from src.modules.reviews.schemas import ReviewResponse
-from src.modules.reviews.service import ReviewService
 from src.modules.rfqs.service import RfqService
 
 router = APIRouter(prefix="/public", tags=["public"])
@@ -47,29 +45,12 @@ async def supplier_catalog(
     return await CatalogItemService(db).list_active_for_company_actor(actor_id)
 
 
-@router.get("/suppliers/{actor_id}/reviews", response_model=list[ReviewResponse])
-async def supplier_reviews(
-    actor_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    await CompanyService(db).get_public_supplier(actor_id)
-    return await ReviewService(db).list_for_actor(actor_id)
-
-
 @router.get("/companies/{company_id}", response_model=CompanyWithRelations)
 async def get_company(
     company_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     return await CompanyService(db).get_company(company_id)
-
-
-@router.get("/companies/{company_id}/reviews", response_model=list[ReviewResponse])
-async def company_reviews(
-    company_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    return await ReviewService(db).list_for_company(company_id)
 
 
 @router.get("/companies/{company_id}/catalog")

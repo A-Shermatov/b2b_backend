@@ -836,6 +836,8 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("actors.id"), nullable=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(100))
     resource_type: Mapped[str] = mapped_column(String(100))
     resource_id: Mapped[str] = mapped_column(String(100))

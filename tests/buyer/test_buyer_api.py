@@ -45,6 +45,23 @@ async def test_buyer_reviews_list(client, buyer_auth):
 
 
 @pytest.mark.asyncio
+async def test_buyer_review_missing_contract(client, buyer_auth):
+    if not buyer_auth["actor_id"]:
+        pytest.skip("No buyer actor")
+    res = await client.post(
+        f"{API}/buyer/reviews/",
+        headers=buyer_auth["headers"],
+        json={
+            "contract_id": 999999,
+            "target_actor_id": buyer_auth["actor_id"],
+            "rating": 5,
+            "comment": "test",
+        },
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_public_rfqs(client):
     res = await client.get(f"{API}/public/rfqs")
     assert res.status_code == 200

@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
+
+from app.modules.reviews.schemas import ReviewCreate, ReviewResponse
+
+__all__ = [
+    "PaymentHistoryItem",
+    "PendingPaymentItem",
+    "ReviewCreate",
+    "ReviewResponse",
+    "NotificationSchema",
+]
 
 
 class PaymentHistoryItem(BaseModel):
@@ -21,25 +31,6 @@ class PendingPaymentItem(BaseModel):
     amount: float
     currency: str
     status: str
-
-
-class ReviewCreate(BaseModel):
-    contract_id: int
-    target_actor_id: int
-    rating: int = Field(ge=1, le=5)
-    comment: str | None = None
-
-
-class ReviewResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    contract_id: int
-    reviewer_actor_id: int
-    target_actor_id: int
-    rating: int
-    comment: str | None
-    created_at: datetime
 
 
 class NotificationSchema(BaseModel):
