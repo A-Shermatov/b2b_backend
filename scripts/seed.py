@@ -4,24 +4,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import select
-
-from src.core.security import hash_password
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    ActorType,
-    Category,
-    Company,
-    CompanyProfile,
-    CompanyRole,
-    CompanyStats,
-    CompanyUser,
-    User,
-    UserRole,
-    UserStatus,
-    VerificationStatus,
-)
-from src.modules.actors.service import ActorService
+from app.core.security_core import hash_password
+from app.database import pool
+from app.db.schema import backfill_actors_if_needed, prepare_database
+from app.modules.actors.services import ActorService
 
 DEMO_ADMIN_EMAIL = "admin@example.com"
 DEMO_BUYER_EMAIL = "buyer@example.com"
@@ -47,218 +33,306 @@ CATEGORIES = [
 ]
 
 
-async def migrate_legacy_emails(db) -> None:
+async def migrate_legacy_emails(conn) -> None:
     for old_email, new_email in LEGACY_EMAIL_MAP.items():
-        result = await db.execute(select(User).where(User.email == old_email))
-        user = result.scalar_one_or_none()
-        if not user:
+        old_id = await conn.fetchval("SELECT id FROM users WHERE email = $1", old_email)
+        if not old_id:
             continue
-        conflict = await db.execute(select(User).where(User.email == new_email))
-        if conflict.scalar_one_or_none():
+        conflict = await conn.fetchval("SELECT id FROM users WHERE email = $1", new_email)
+        if conflict:
             continue
-        user.email = new_email
+        await conn.execute("UPDATE users SET email = $1 WHERE id = $2", new_email, old_id)
         print(f"Migrated {old_email} -> {new_email}")
 
 
-async def get_user_by_emails(db, *emails: str) -> User | None:
-    for email in emails:
-        result = await db.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
-        if user:
-            return user
-    return None
+async def user_id_by_emails(conn, *emails: str) -> int | None:
+    return await conn.fetchval(
+        "SELECT id FROM users WHERE email = ANY($1::text[])",
+        list(emails),
+    )
 
 
-async def backfill_actors(db) -> None:
-    from src.models import Actor, ActorKind
-
-    actor_svc = ActorService(db)
-    users = (await db.execute(select(User))).scalars().all()
-    for user in users:
-        await actor_svc.ensure_individual_actors_for_user(user)
-
-    companies = (await db.execute(select(Company))).scalars().all()
-    for company in companies:
-        existing = await db.execute(
-            select(Actor).where(Actor.company_id == company.id, Actor.kind == ActorKind.company)
+async def insert_user(
+    conn,
+    *,
+    email: str,
+    password: str,
+    first_name: str,
+    last_name: str,
+    role: str,
+) -> dict:
+    row = await conn.fetchrow(
+        """
+        INSERT INTO users (
+            email, password_hash, first_name, last_name, role, status,
+            created_at, updated_at
         )
-        if existing.scalars().first():
-            continue
-        await actor_svc.ensure_company_actor(company, company.actor_type)
+        VALUES (
+            $1, $2, $3, $4, $5::user_role, 'active'::user_status, NOW(), NOW()
+        )
+        RETURNING id, email, first_name, last_name, role::text AS role
+        """,
+        email,
+        hash_password(password),
+        first_name,
+        last_name,
+        role,
+    )
+    return dict(row)
+
+
+async def insert_company(
+    conn,
+    *,
+    title: str,
+    actor_type: str,
+    owner_id: int,
+    legal_name: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    description: str | None = None,
+    verification_status: str = "verified",
+    rating: float = 0.0,
+) -> dict:
+    row = await conn.fetchrow(
+        """
+        INSERT INTO companies (
+            title, actor_type, owner_id, legal_name, description,
+            country, city, verification_status, operational_status, rating,
+            created_at, updated_at
+        )
+        VALUES (
+            $1, $2::actor_type, $3, $4, $5, $6, $7,
+            $8::verification_status, 'active'::company_operational_status, $9,
+            NOW(), NOW()
+        )
+        RETURNING id, title, actor_type::text AS actor_type,
+                  verification_status::text AS verification_status
+        """,
+        title,
+        actor_type,
+        owner_id,
+        legal_name,
+        description,
+        country,
+        city,
+        verification_status,
+        rating,
+    )
+    return dict(row)
+
+
+async def insert_company_extras(
+    conn,
+    company_id: int,
+    owner_id: int,
+    *,
+    languages: list[str] | None = None,
+    industries: list[str] | None = None,
+    founded_year: int | None = None,
+    employees_count: int | None = None,
+    completed_contracts: int = 0,
+    active_contracts: int = 0,
+    average_rating: float = 0.0,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO company_profiles (
+            company_id, founded_year, employees_count, languages, industries
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        company_id,
+        founded_year,
+        employees_count,
+        languages or [],
+        industries or [],
+    )
+    await conn.execute(
+        """
+        INSERT INTO company_stats (
+            company_id, completed_contracts, active_contracts,
+            disputes_count, average_rating
+        )
+        VALUES ($1, $2, $3, 0, $4)
+        """,
+        company_id,
+        completed_contracts,
+        active_contracts,
+        average_rating,
+    )
+    await conn.execute(
+        """
+        INSERT INTO company_users (company_id, user_id, role)
+        VALUES ($1, $2, 'director'::company_role)
+        """,
+        company_id,
+        owner_id,
+    )
+
+
+async def seed_categories(conn) -> None:
+    existing = await conn.fetchval("SELECT id FROM categories LIMIT 1")
+    if existing:
+        return
+    slug_to_id: dict[str, int] = {}
+    for name, slug, parent_slug in CATEGORIES:
+        parent_id = slug_to_id.get(parent_slug) if parent_slug else None
+        row = await conn.fetchrow(
+            """
+            INSERT INTO categories (parent_id, name, slug)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            """,
+            parent_id,
+            name,
+            slug,
+        )
+        slug_to_id[slug] = row["id"]
+    print(f"Seeded {len(CATEGORIES)} categories")
 
 
 async def seed() -> None:
-    from src.db.schema import prepare_database
-
     await prepare_database()
+    svc = ActorService()
 
-    async with AsyncSessionLocal() as db:
-        await migrate_legacy_emails(db)
+    async with pool.connection() as conn:
+        await migrate_legacy_emails(conn)
+        await seed_categories(conn)
 
-        existing = await db.execute(select(Category).limit(1))
-        if not existing.scalar_one_or_none():
-            slug_to_id: dict[str, int] = {}
-            for name, slug, parent_slug in CATEGORIES:
-                parent_id = slug_to_id.get(parent_slug) if parent_slug else None
-                cat = Category(parent_id=parent_id, name=name, slug=slug)
-                db.add(cat)
-                await db.flush()
-                slug_to_id[slug] = cat.id
-            print(f"Seeded {len(CATEGORIES)} categories")
-
-        if not await get_user_by_emails(db, DEMO_ADMIN_EMAIL, "admin@brandmarket.local"):
-            db.add(
-                User(
-                    email=DEMO_ADMIN_EMAIL,
-                    password_hash=hash_password("Admin123!"),
-                    first_name="Platform",
-                    last_name="Admin",
-                    role=UserRole.admin,
-                    status=UserStatus.active,
-                )
+        if not await user_id_by_emails(conn, DEMO_ADMIN_EMAIL, "admin@brandmarket.local"):
+            await insert_user(
+                conn,
+                email=DEMO_ADMIN_EMAIL,
+                password="Admin123!",
+                first_name="Platform",
+                last_name="Admin",
+                role="admin",
             )
-            await db.flush()
             print(f"Seeded admin: {DEMO_ADMIN_EMAIL} / Admin123!")
 
-        buyer_user = await get_user_by_emails(db, DEMO_BUYER_EMAIL, "buyer@demo.local")
-        if not buyer_user:
-            buyer_user = User(
+    buyer_id = None
+    async with pool.connection() as conn:
+        buyer_id = await user_id_by_emails(conn, DEMO_BUYER_EMAIL, "buyer@demo.local")
+    if not buyer_id:
+        async with pool.connection() as conn:
+            buyer = await insert_user(
+                conn,
                 email=DEMO_BUYER_EMAIL,
-                password_hash=hash_password("Buyer123!"),
+                password="Buyer123!",
                 first_name="Иван",
                 last_name="Заказчик",
-                role=UserRole.buyer,
-                status=UserStatus.active,
+                role="buyer",
             )
-            db.add(buyer_user)
-            await db.flush()
-            actor_svc = ActorService(db)
-            await actor_svc.ensure_individual_actor(buyer_user, ActorType.buyer)
-            company = Company(
+        await svc.ensure_individual_actor(buyer, "buyer")
+        async with pool.connection() as conn:
+            company = await insert_company(
+                conn,
                 title="ООО Демо Заказчик",
-                actor_type=ActorType.buyer,
-                owner_id=buyer_user.id,
+                actor_type="buyer",
+                owner_id=buyer["id"],
                 legal_name="ООО Демо Заказчик",
                 country="Таджикистан",
                 city="Душанбе",
-                verification_status=VerificationStatus.verified,
-                rating=0.0,
             )
-            db.add(company)
-            await db.flush()
-            db.add(CompanyProfile(company_id=company.id, languages=["ru"], industries=["IT"]))
-            db.add(CompanyStats(company_id=company.id))
-            db.add(
-                CompanyUser(
-                    company_id=company.id, user_id=buyer_user.id, role=CompanyRole.director
-                )
+            await insert_company_extras(
+                conn,
+                company["id"],
+                buyer["id"],
+                languages=["ru"],
+                industries=["IT"],
             )
-            await actor_svc.ensure_company_actor(company, ActorType.buyer)
-            print(f"Seeded buyer: {DEMO_BUYER_EMAIL} / Buyer123! (company id={company.id})")
+        await svc.ensure_company_actor(company, "buyer")
+        print(f"Seeded buyer: {DEMO_BUYER_EMAIL} / Buyer123! (company id={company['id']})")
 
-        supplier_user = await get_user_by_emails(db, DEMO_SUPPLIER_EMAIL, "supplier@demo.local")
-        if not supplier_user:
-            supplier_user = User(
+    supplier_id = None
+    async with pool.connection() as conn:
+        supplier_id = await user_id_by_emails(
+            conn, DEMO_SUPPLIER_EMAIL, "supplier@demo.local"
+        )
+    if not supplier_id:
+        async with pool.connection() as conn:
+            supplier = await insert_user(
+                conn,
                 email=DEMO_SUPPLIER_EMAIL,
-                password_hash=hash_password("Supplier123!"),
+                password="Supplier123!",
                 first_name="Пётр",
                 last_name="Исполнитель",
-                role=UserRole.supplier,
-                status=UserStatus.active,
+                role="supplier",
             )
-            db.add(supplier_user)
-            await db.flush()
-            actor_svc = ActorService(db)
-            await actor_svc.ensure_individual_actor(supplier_user, ActorType.supplier)
-            company = Company(
+        await svc.ensure_individual_actor(supplier, "supplier")
+        async with pool.connection() as conn:
+            company = await insert_company(
+                conn,
                 title="ТехноСнаб",
-                actor_type=ActorType.supplier,
-                owner_id=supplier_user.id,
+                actor_type="supplier",
+                owner_id=supplier["id"],
                 legal_name="ООО «ТехноСнаб»",
                 country="Таджикистан",
                 city="Душанбе",
                 description="Исполнитель IT-оборудования",
-                verification_status=VerificationStatus.verified,
                 rating=4.7,
             )
-            db.add(company)
-            await db.flush()
-            db.add(
-                CompanyProfile(
-                    company_id=company.id,
-                    founded_year=2015,
-                    employees_count=45,
-                    languages=["ru", "en"],
-                    industries=["IT"],
-                )
+            await insert_company_extras(
+                conn,
+                company["id"],
+                supplier["id"],
+                founded_year=2015,
+                employees_count=45,
+                languages=["ru", "en"],
+                industries=["IT"],
+                completed_contracts=28,
+                active_contracts=3,
+                average_rating=4.7,
             )
-            db.add(
-                CompanyStats(
-                    company_id=company.id,
-                    completed_contracts=28,
-                    active_contracts=3,
-                    average_rating=4.7,
-                )
-            )
-            db.add(
-                CompanyUser(
-                    company_id=company.id, user_id=supplier_user.id, role=CompanyRole.director
-                )
-            )
-            await actor_svc.ensure_company_actor(company, ActorType.supplier)
-            print(f"Seeded supplier: {DEMO_SUPPLIER_EMAIL} / Supplier123! (company id={company.id})")
+        await svc.ensure_company_actor(company, "supplier")
+        print(
+            f"Seeded supplier: {DEMO_SUPPLIER_EMAIL} / Supplier123! "
+            f"(company id={company['id']})"
+        )
 
-        both_user = await get_user_by_emails(db, DEMO_BOTH_EMAIL)
-        if not both_user:
-            both_user = User(
+    both_id = None
+    async with pool.connection() as conn:
+        both_id = await user_id_by_emails(conn, DEMO_BOTH_EMAIL)
+    if not both_id:
+        async with pool.connection() as conn:
+            both = await insert_user(
+                conn,
                 email=DEMO_BOTH_EMAIL,
-                password_hash=hash_password("Both123!"),
+                password="Both123!",
                 first_name="Алекс",
                 last_name="Универсал",
-                role=UserRole.both,
-                status=UserStatus.active,
+                role="both",
             )
-            db.add(both_user)
-            await db.flush()
-            actor_svc = ActorService(db)
-            await actor_svc.ensure_individual_actors_for_user(both_user)
-            buyer_co = Company(
+        await svc.ensure_individual_actors_for_user(both)
+        async with pool.connection() as conn:
+            buyer_co = await insert_company(
+                conn,
                 title="ООО Универсал Закупки",
-                actor_type=ActorType.buyer,
-                owner_id=both_user.id,
+                actor_type="buyer",
+                owner_id=both["id"],
                 country="Таджикистан",
                 city="Душанбе",
-                verification_status=VerificationStatus.verified,
             )
-            db.add(buyer_co)
-            await db.flush()
-            db.add(CompanyStats(company_id=buyer_co.id))
-            db.add(
-                CompanyUser(company_id=buyer_co.id, user_id=both_user.id, role=CompanyRole.director)
-            )
-            await actor_svc.ensure_company_actor(buyer_co, ActorType.buyer)
-            supplier_co = Company(
+            await insert_company_extras(conn, buyer_co["id"], both["id"])
+        await svc.ensure_company_actor(buyer_co, "buyer")
+        async with pool.connection() as conn:
+            supplier_co = await insert_company(
+                conn,
                 title="ООО Универсал Поставки",
-                actor_type=ActorType.supplier,
-                owner_id=both_user.id,
+                actor_type="supplier",
+                owner_id=both["id"],
                 country="Таджикистан",
                 city="Душанбе",
-                verification_status=VerificationStatus.pending,
+                verification_status="pending",
             )
-            db.add(supplier_co)
-            await db.flush()
-            db.add(CompanyStats(company_id=supplier_co.id))
-            db.add(
-                CompanyUser(
-                    company_id=supplier_co.id, user_id=both_user.id, role=CompanyRole.director
-                )
-            )
-            await actor_svc.ensure_company_actor(supplier_co, ActorType.supplier)
-            print(f"Seeded both: {DEMO_BOTH_EMAIL} / Both123!")
+            await insert_company_extras(conn, supplier_co["id"], both["id"])
+        await svc.ensure_company_actor(supplier_co, "supplier")
+        print(f"Seeded both: {DEMO_BOTH_EMAIL} / Both123!")
 
-        await backfill_actors(db)
-        await db.commit()
-        print("Seed complete.")
+    await backfill_actors_if_needed()
+    print("Seed complete.")
+    await pool.close()
 
 
 if __name__ == "__main__":

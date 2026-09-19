@@ -1,18 +1,10 @@
 import pytest
-from sqlalchemy import select
 
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    CatalogItemReport,
-    CatalogItemReportReason,
-    CatalogItemReportStatus,
-    Notification,
-    ProposalReport,
-    ProposalReportReason,
-    ProposalReportStatus,
-    RfqReport,
-    RfqReportReason,
-    RfqReportStatus,
+from tests.sql import (
+    fetchrow,
+    insert_catalog_item_report,
+    insert_proposal_report,
+    insert_rfq_report,
 )
 
 API = "/api/v1"
@@ -169,14 +161,15 @@ async def test_admin_report_dismiss_and_warn(
     assert dismiss_res.status_code == 200, dismiss_res.text
     assert dismiss_res.json()["status"] == "dismissed"
 
-    async with AsyncSessionLocal() as db:
-        report = (
-            await db.execute(
-                select(CatalogItemReport).where(CatalogItemReport.id == report_id)
-            )
-        ).scalar_one()
-        assert report.status == CatalogItemReportStatus.dismissed
-        assert report.reason == CatalogItemReportReason.abuse
+    report = await fetchrow(
+        """
+        SELECT status::text AS status, reason::text AS reason
+        FROM catalog_item_reports WHERE id = $1
+        """,
+        report_id,
+    )
+    assert report["status"] == "dismissed"
+    assert report["reason"] == "abuse"
 
     item_id_2 = await _create_pending_item(client, supplier_auth, admin_auth)
     # Rename via second create - title collision ok
@@ -197,22 +190,22 @@ async def test_admin_report_dismiss_and_warn(
     assert warn_res.status_code == 200, warn_res.text
     assert warn_res.json()["status"] == "resolved"
 
-    async with AsyncSessionLocal() as db:
-        report = (
-            await db.execute(
-                select(CatalogItemReport).where(CatalogItemReport.id == report_id_2)
-            )
-        ).scalar_one()
-        assert report.status == CatalogItemReportStatus.resolved
-        notification = (
-            await db.execute(
-                select(Notification)
-                .where(Notification.href == f"/supplier/catalog/{item_id_2}")
-                .order_by(Notification.id.desc())
-            )
-        ).scalars().first()
-        assert notification is not None
-        assert "Предупреждение" in notification.title
+    report = await fetchrow(
+        "SELECT status::text AS status FROM catalog_item_reports WHERE id = $1",
+        report_id_2,
+    )
+    assert report["status"] == "resolved"
+    notification = await fetchrow(
+        """
+        SELECT title FROM notifications
+        WHERE href = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        f"/supplier/catalog/{item_id_2}",
+    )
+    assert notification is not None
+    assert "Предупреждение" in notification["title"]
 
 
 @pytest.mark.asyncio
@@ -240,13 +233,11 @@ async def test_admin_report_suspend_blocks_owner(
     assert suspend_res.status_code == 200, suspend_res.text
     assert suspend_res.json()["status"] == "resolved"
 
-    async with AsyncSessionLocal() as db:
-        report = (
-            await db.execute(
-                select(CatalogItemReport).where(CatalogItemReport.id == report_id)
-            )
-        ).scalar_one()
-        assert report.status == CatalogItemReportStatus.resolved
+    report = await fetchrow(
+        "SELECT status::text AS status FROM catalog_item_reports WHERE id = $1",
+        report_id,
+    )
+    assert report["status"] == "resolved"
 
     # Restore seeded supplier for subsequent tests sharing the account
     detail_res = await client.get(
@@ -280,25 +271,12 @@ async def test_admin_report_delete_removes_object(
         pytest.skip("No supplier actor")
     item_id = await _create_pending_item(client, supplier_auth, admin_auth)
 
-    async with AsyncSessionLocal() as db:
-        db.add(
-            CatalogItemReport(
-                item_id=item_id,
-                reporter_user_id=buyer_auth["me"]["user"]["id"],
-                reason=CatalogItemReportReason.fraud,
-                details="Явный фрод",
-                status=CatalogItemReportStatus.open,
-            )
-        )
-        await db.commit()
-        report_id = (
-            await db.execute(
-                select(CatalogItemReport.id).where(
-                    CatalogItemReport.item_id == item_id,
-                    CatalogItemReport.status == CatalogItemReportStatus.open,
-                )
-            )
-        ).scalar_one()
+    report_id = await insert_catalog_item_report(
+        item_id=item_id,
+        reporter_user_id=buyer_auth["me"]["user"]["id"],
+        reason="fraud",
+        details="Явный фрод",
+    )
 
     delete_res = await client.post(
         f"{API}/admin/reports/catalog/{report_id}/action",
@@ -338,17 +316,12 @@ async def test_admin_reports_include_rfq_and_proposal(
     assert rfq_res.status_code == 200, rfq_res.text
     rfq_id = rfq_res.json()["id"]
 
-    async with AsyncSessionLocal() as db:
-        db.add(
-            RfqReport(
-                rfq_id=rfq_id,
-                reporter_user_id=supplier_auth["me"]["user"]["id"],
-                reason=RfqReportReason.spam,
-                details="RFQ spam report",
-                status=RfqReportStatus.open,
-            )
-        )
-        await db.commit()
+    await insert_rfq_report(
+        rfq_id=rfq_id,
+        reporter_user_id=supplier_auth["me"]["user"]["id"],
+        reason="spam",
+        details="RFQ spam report",
+    )
 
     publish = await client.post(
         f"{API}/buyer/rfqs/{rfq_id}/publish",
@@ -369,17 +342,12 @@ async def test_admin_reports_include_rfq_and_proposal(
     assert proposal_res.status_code == 200, proposal_res.text
     proposal_id = proposal_res.json()["id"]
 
-    async with AsyncSessionLocal() as db:
-        db.add(
-            ProposalReport(
-                proposal_id=proposal_id,
-                reporter_user_id=buyer_auth["me"]["user"]["id"],
-                reason=ProposalReportReason.abuse,
-                details="Proposal abuse report",
-                status=ProposalReportStatus.open,
-            )
-        )
-        await db.commit()
+    await insert_proposal_report(
+        proposal_id=proposal_id,
+        reporter_user_id=buyer_auth["me"]["user"]["id"],
+        reason="abuse",
+        details="Proposal abuse report",
+    )
 
     list_res = await client.get(
         f"{API}/admin/reports",

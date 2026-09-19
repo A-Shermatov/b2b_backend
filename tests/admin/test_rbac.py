@@ -1,9 +1,6 @@
 import pytest
-from sqlalchemy import select
 
-from src.core.security import hash_password
-from src.db.session import AsyncSessionLocal
-from src.models import Actor, AuditLog, Notification, User, UserRole, UserStatus
+from tests.sql import fetch, fetchrow, upsert_moderator
 
 
 @pytest.mark.asyncio
@@ -156,32 +153,33 @@ async def test_admin_company_actions_update_actors_notifications_and_audit(clien
     assert block_res.status_code == 200, block_res.text
     assert block_res.json()["operational_status"] == "blocked"
 
-    async with AsyncSessionLocal() as db:
-        actors = (
-            await db.execute(select(Actor).where(Actor.company_id == company_id))
-        ).scalars().all()
-        assert actors
-        assert all(not actor.is_active for actor in actors)
-        notification = (
-            await db.execute(
-                select(Notification)
-                .where(Notification.company_id == company_id)
-                .order_by(Notification.id.desc())
-            )
-        ).scalars().first()
-        assert notification is not None
-        audit = (
-            await db.execute(
-                select(AuditLog)
-                .where(
-                    AuditLog.resource_type == "company",
-                    AuditLog.resource_id == str(company_id),
-                )
-                .order_by(AuditLog.id.desc())
-            )
-        ).scalars().first()
-        assert audit is not None
-        assert audit.action == "admin.company.block"
+    actors = await fetch(
+        "SELECT is_active FROM actors WHERE company_id = $1",
+        company_id,
+    )
+    assert actors
+    assert all(not actor["is_active"] for actor in actors)
+    notification = await fetchrow(
+        """
+        SELECT id FROM notifications
+        WHERE company_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        company_id,
+    )
+    assert notification is not None
+    audit = await fetchrow(
+        """
+        SELECT action FROM audit_logs
+        WHERE resource_type = 'company' AND resource_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        str(company_id),
+    )
+    assert audit is not None
+    assert audit["action"] == "admin.company.block"
 
     reactivate_res = await client.post(
         f"/api/v1/admin/companies/{company_id}/action",
@@ -216,24 +214,7 @@ async def test_company_negative_actions_require_reason(client, admin_auth):
 
 @pytest.mark.asyncio
 async def test_moderator_can_verify_but_cannot_block_company(client, admin_auth):
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == "moderator@example.com"))
-        moderator = result.scalar_one_or_none()
-        if not moderator:
-            moderator = User(
-                email="moderator@example.com",
-                password_hash=hash_password("Moderator123!"),
-                first_name="Test",
-                last_name="Moderator",
-                role=UserRole.moderator,
-                status=UserStatus.active,
-            )
-            db.add(moderator)
-        else:
-            moderator.password_hash = hash_password("Moderator123!")
-            moderator.role = UserRole.moderator
-            moderator.status = UserStatus.active
-        await db.commit()
+    await upsert_moderator()
 
     login_res = await client.post(
         "/api/v1/auth/login",

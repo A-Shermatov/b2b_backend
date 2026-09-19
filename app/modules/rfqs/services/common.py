@@ -1,0 +1,274 @@
+from app.core.exceptions import NotFoundError
+from app.utils.storage import public_file_url
+
+RFQ_COLUMNS = """
+    r.id,
+    r.actor_id,
+    r.created_by,
+    r.type::text AS type,
+    r.title,
+    r.description,
+    r.category_id,
+    r.budget_type::text AS budget_type,
+    r.budget_from,
+    r.budget_to,
+    r.currency,
+    r.deadline,
+    r.visibility::text AS visibility,
+    r.status::text AS status,
+    r.quantity,
+    r.delivery_country,
+    r.delivery_city,
+    r.delivery_address,
+    r.delivery_date,
+    r.project_duration,
+    r.start_date,
+    r.team_size_required,
+    r.experience_required,
+    r.created_at,
+    r.updated_at
+"""
+
+BUYER_COLUMNS = """
+    a.id AS buyer_id,
+    a.kind::text AS buyer_kind,
+    a.display_name AS buyer_display_name,
+    c.rating AS buyer_rating,
+    c.verification_status::text AS buyer_verification_status,
+    c.city AS buyer_city,
+    c.country AS buyer_country,
+    c.legal_name AS buyer_legal_name,
+    c.description AS buyer_description,
+    c.website AS buyer_website,
+    cs.completed_contracts AS buyer_completed_contracts
+"""
+
+CLOSED_RFQ_STATUSES = [
+    "supplier_selected",
+    "contract_created",
+    "in_progress",
+    "completed",
+    "cancelled",
+    "expired",
+    "disputed",
+]
+
+BUYER_TAB_STATUSES = {
+    "draft": ["draft"],
+    "published": ["published"],
+    "collecting": ["receiving_proposals"],
+    "closed": CLOSED_RFQ_STATUSES,
+    "active": ["published", "receiving_proposals", "in_progress", "disputed"],
+    "completed": ["completed", "cancelled", "expired"],
+}
+
+KNOWN_RFQ_STATUSES = {
+    "draft",
+    "published",
+    "receiving_proposals",
+    "supplier_selected",
+    "contract_created",
+    "in_progress",
+    "completed",
+    "cancelled",
+    "expired",
+    "disputed",
+    "archived",
+}
+
+RFQ_UPDATABLE = {
+    "title",
+    "description",
+    "category_id",
+    "budget_type",
+    "budget_from",
+    "budget_to",
+    "currency",
+    "deadline",
+    "visibility",
+    "status",
+    "quantity",
+    "delivery_country",
+    "delivery_city",
+    "delivery_address",
+    "delivery_date",
+    "project_duration",
+    "start_date",
+    "team_size_required",
+    "experience_required",
+    "created_by",
+}
+
+
+def buyer_summary_from_row(row) -> dict | None:
+    if row["buyer_id"] is None:
+        return None
+    if row["buyer_kind"] == "company":
+        return {
+            "id": row["buyer_id"],
+            "kind": row["buyer_kind"],
+            "display_name": row["buyer_display_name"],
+            "rating": float(row["buyer_rating"] or 0),
+            "verification_status": row["buyer_verification_status"],
+            "city": row["buyer_city"],
+            "country": row["buyer_country"],
+            "legal_name": row["buyer_legal_name"],
+            "description": row["buyer_description"],
+            "website": row["buyer_website"],
+            "completed_contracts": int(row["buyer_completed_contracts"] or 0),
+        }
+    return {
+        "id": row["buyer_id"],
+        "kind": row["buyer_kind"],
+        "display_name": row["buyer_display_name"],
+        "rating": 0.0,
+        "verification_status": None,
+        "city": None,
+        "country": None,
+        "legal_name": None,
+        "description": None,
+        "website": None,
+        "completed_contracts": 0,
+    }
+
+
+def attachment_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "rfq_id": row["rfq_id"],
+        "file_name": row["file_name"],
+        "file_url": public_file_url(row["file_url"]),
+        "file_type": row["file_type"],
+    }
+
+
+def rfq_to_response(
+    row,
+    attachments: list | None = None,
+    invited_ids: list[int] | None = None,
+    *,
+    include_buyer: bool = False,
+) -> dict:
+    base = {
+        "id": row["id"],
+        "actor_id": str(row["actor_id"]),
+        "created_by": row["created_by"],
+        "title": row["title"],
+        "description": row["description"],
+        "category_id": row["category_id"],
+        "budget_type": row["budget_type"],
+        "budget_from": row["budget_from"],
+        "budget_to": row["budget_to"],
+        "currency": row["currency"],
+        "deadline": row["deadline"],
+        "visibility": row["visibility"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "attachments": [attachment_to_dict(item) for item in (attachments or [])],
+        "invited_supplier_ids": list(invited_ids or []),
+    }
+    if include_buyer:
+        base["buyer"] = buyer_summary_from_row(row)
+    if row["type"] == "product":
+        return {
+            **base,
+            "type": "product",
+            "quantity": row["quantity"],
+            "delivery_country": row["delivery_country"],
+            "delivery_city": row["delivery_city"],
+            "delivery_address": row["delivery_address"],
+            "delivery_date": row["delivery_date"],
+        }
+    return {
+        **base,
+        "type": "service",
+        "project_duration": row["project_duration"],
+        "start_date": row["start_date"],
+        "team_size_required": row["team_size_required"],
+        "experience_required": row["experience_required"],
+    }
+
+
+async def fetch_attachments_map(conn, rfq_ids: list[str]) -> dict[str, list]:
+    if not rfq_ids:
+        return {}
+    rows = await conn.fetch(
+        """
+        SELECT id, rfq_id, file_name, file_url, file_type
+        FROM rfq_attachments
+        WHERE rfq_id = ANY($1::text[])
+        ORDER BY id
+        """,
+        rfq_ids,
+    )
+    mapping: dict[str, list] = {rfq_id: [] for rfq_id in rfq_ids}
+    for row in rows:
+        mapping[row["rfq_id"]].append(row)
+    return mapping
+
+
+async def fetch_invites_map(conn, rfq_ids: list[str]) -> dict[str, list[int]]:
+    if not rfq_ids:
+        return {}
+    rows = await conn.fetch(
+        """
+        SELECT rfq_id, supplier_actor_id
+        FROM rfq_invited_suppliers
+        WHERE rfq_id = ANY($1::text[])
+        ORDER BY id
+        """,
+        rfq_ids,
+    )
+    mapping: dict[str, list[int]] = {rfq_id: [] for rfq_id in rfq_ids}
+    for row in rows:
+        mapping[row["rfq_id"]].append(row["supplier_actor_id"])
+    return mapping
+
+
+async def load_rfq_row(conn, rfq_id: str, *, with_buyer: bool = False):
+    extra = f", {BUYER_COLUMNS}" if with_buyer else ""
+    joins = """
+        LEFT JOIN actors a ON a.id = r.actor_id
+        LEFT JOIN companies c ON c.id = a.company_id AND a.kind::text = 'company'
+        LEFT JOIN company_stats cs ON cs.company_id = c.id
+    """ if with_buyer else ""
+    row = await conn.fetchrow(
+        f"""
+        SELECT {RFQ_COLUMNS}{extra}
+        FROM rfqs r
+        {joins}
+        WHERE r.id = $1
+        """,
+        rfq_id,
+    )
+    if not row:
+        raise NotFoundError("RFQ not found")
+    return row
+
+
+async def load_rfq_response(conn, rfq_id: str, *, include_buyer: bool = False) -> dict:
+    row = await load_rfq_row(conn, rfq_id, with_buyer=include_buyer)
+    attachments = await fetch_attachments_map(conn, [rfq_id])
+    invites = await fetch_invites_map(conn, [rfq_id])
+    return rfq_to_response(
+        row,
+        attachments[rfq_id],
+        invites[rfq_id],
+        include_buyer=include_buyer,
+    )
+
+
+async def shape_rfq_rows(conn, rows, *, include_buyer: bool = False) -> list[dict]:
+    rfq_ids = [row["id"] for row in rows]
+    attachments = await fetch_attachments_map(conn, rfq_ids)
+    invites = await fetch_invites_map(conn, rfq_ids)
+    return [
+        rfq_to_response(
+            row,
+            attachments[row["id"]],
+            invites[row["id"]],
+            include_buyer=include_buyer,
+        )
+        for row in rows
+    ]

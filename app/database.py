@@ -46,5 +46,15 @@ class DatabasePool:
         finally:
             await self._pool.release(conn)
 
+    @asynccontextmanager
+    async def connection(self, conn: asyncpg.Connection | None = None):
+        if conn is not None:
+            yield conn
+            return
+        if not self.ready:
+            await self.init()
+        async with self.acquire() as acquired:
+            yield acquired
+
 
 pool = DatabasePool()

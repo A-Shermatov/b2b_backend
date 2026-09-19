@@ -1,0 +1,12 @@
+from fastapi import FastAPI
+
+from app.modules.notifications.api import buyer_router, supplier_router
+from app.modules.notifications.api import read as _read  # noqa: F401
+from app.modules.notifications.api import update as _update  # noqa: F401
+from app.modules.notifications.api.ws import ws_router
+
+
+def register(app: FastAPI, prefix: str = "/api/v1") -> None:
+    app.include_router(buyer_router, prefix=f"{prefix}/buyer")
+    app.include_router(supplier_router, prefix=f"{prefix}/supplier")
+    app.include_router(ws_router, prefix=f"{prefix}/ws", tags=["websocket"])

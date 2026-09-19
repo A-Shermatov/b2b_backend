@@ -1,17 +1,6 @@
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    Contract,
-    ContractStatus,
-    Dispute,
-    DisputeStatus,
-    PaymentMilestone,
-    PaymentMilestoneStatus,
-    PaymentPlan,
-)
+from tests.sql import execute, fetch, fetchrow, fetchval, insert_work_submission
 
 API = "/api/v1"
 
@@ -93,19 +82,21 @@ async def test_open_dispute_creates_dispute_with_statement(
         "Работа не соответствует описанию заявки",
     )
 
-    async with AsyncSessionLocal() as db:
-        dispute = (
-            await db.execute(
-                select(Dispute).where(Dispute.contract_id == contract_id)
-            )
-        ).scalar_one()
-        assert dispute.status == DisputeStatus.open
-        assert dispute.buyer_statement == "Работа не соответствует описанию заявки"
-        assert dispute.supplier_statement is None
-        contract = (
-            await db.execute(select(Contract).where(Contract.id == contract_id))
-        ).scalar_one()
-        assert contract.status == ContractStatus.disputed
+    dispute = await fetchrow(
+        """
+        SELECT status::text AS status, buyer_statement, supplier_statement
+        FROM disputes WHERE contract_id = $1
+        """,
+        contract_id,
+    )
+    assert dispute["status"] == "open"
+    assert dispute["buyer_statement"] == "Работа не соответствует описанию заявки"
+    assert dispute["supplier_statement"] is None
+    contract_status = await fetchval(
+        "SELECT status::text FROM contracts WHERE id = $1",
+        contract_id,
+    )
+    assert contract_status == "disputed"
 
 
 @pytest.mark.asyncio
@@ -125,12 +116,10 @@ async def test_admin_list_and_detail_disputes(
         "Срыв сроков по контракту более двух недель",
     )
 
-    async with AsyncSessionLocal() as db:
-        dispute_id = (
-            await db.execute(
-                select(Dispute.id).where(Dispute.contract_id == contract_id)
-            )
-        ).scalar_one()
+    dispute_id = await fetchval(
+        "SELECT id FROM disputes WHERE contract_id = $1",
+        contract_id,
+    )
 
     list_res = await client.get(
         f"{API}/admin/disputes",
@@ -188,34 +177,27 @@ async def test_admin_dispute_actions(
             "Причина открытия спора для административного решения",
         )
 
-    async with AsyncSessionLocal() as db:
-        for contract_id in (release_id, refund_id, partial_id):
-            result = await db.execute(
-                select(Contract)
-                .where(Contract.id == contract_id)
-                .options(
-                    selectinload(Contract.payment_plan).selectinload(
-                        PaymentPlan.milestones
-                    )
-                )
-            )
-            contract = result.scalar_one()
-            for milestone in contract.payment_plan.milestones:
-                milestone.status = PaymentMilestoneStatus.disputed
-        await db.commit()
+    for contract_id in (release_id, refund_id, partial_id):
+        await execute(
+            """
+            UPDATE payment_milestones
+            SET status = 'disputed'::milestone_status
+            WHERE contract_id = $1
+            """,
+            contract_id,
+        )
 
-        async def dispute_for(contract_id: int) -> int:
-            return (
-                await db.execute(
-                    select(Dispute.id).where(Dispute.contract_id == contract_id)
-                )
-            ).scalar_one()
+    async def dispute_for(contract_id: int) -> int:
+        return await fetchval(
+            "SELECT id FROM disputes WHERE contract_id = $1",
+            contract_id,
+        )
 
-        release_dispute = await dispute_for(release_id)
-        refund_dispute = await dispute_for(refund_id)
-        partial_dispute = await dispute_for(partial_id)
-        evidence_dispute = await dispute_for(evidence_id)
-        close_dispute = await dispute_for(close_id)
+    release_dispute = await dispute_for(release_id)
+    refund_dispute = await dispute_for(refund_id)
+    partial_dispute = await dispute_for(partial_id)
+    evidence_dispute = await dispute_for(evidence_id)
+    close_dispute = await dispute_for(close_id)
 
     evidence_res = await client.post(
         f"{API}/admin/disputes/{evidence_dispute}/action",
@@ -288,27 +270,16 @@ async def test_admin_dispute_actions(
         item["id"] == evidence_dispute for item in list_review.json()["items"]
     )
 
-    async with AsyncSessionLocal() as db:
-        release_milestones = (
-            await db.execute(
-                select(PaymentMilestone).where(
-                    PaymentMilestone.contract_id == release_id
-                )
-            )
-        ).scalars().all()
-        assert all(
-            m.status == PaymentMilestoneStatus.released for m in release_milestones
-        )
-        refund_milestones = (
-            await db.execute(
-                select(PaymentMilestone).where(
-                    PaymentMilestone.contract_id == refund_id
-                )
-            )
-        ).scalars().all()
-        assert all(
-            m.status == PaymentMilestoneStatus.refunded for m in refund_milestones
-        )
+    release_milestones = await fetch(
+        "SELECT status::text AS status FROM payment_milestones WHERE contract_id = $1",
+        release_id,
+    )
+    assert all(m["status"] == "released" for m in release_milestones)
+    refund_milestones = await fetch(
+        "SELECT status::text AS status FROM payment_milestones WHERE contract_id = $1",
+        refund_id,
+    )
+    assert all(m["status"] == "refunded" for m in refund_milestones)
 
 
 @pytest.mark.asyncio
@@ -328,12 +299,10 @@ async def test_request_evidence_exposes_instructions_on_contract(
         "Нужна проверка качества поставки",
     )
 
-    async with AsyncSessionLocal() as db:
-        dispute_id = (
-            await db.execute(
-                select(Dispute.id).where(Dispute.contract_id == contract_id)
-            )
-        ).scalar_one()
+    dispute_id = await fetchval(
+        "SELECT id FROM disputes WHERE contract_id = $1",
+        contract_id,
+    )
 
     instructions = "Приложите акты и фото упаковки до пятницы"
     evidence_res = await client.post(
@@ -383,21 +352,11 @@ async def test_parties_cannot_change_status_while_dispute_open(
         client, buyer_auth, supplier_auth, "Locked while disputed"
     )
 
-    from src.models import WorkSubmission, WorkSubmissionStatus, WorkSubmissionType
-
-    async with AsyncSessionLocal() as db:
-        submission = WorkSubmission(
-            contract_id=contract_id,
-            type=WorkSubmissionType.work,
-            note="Seeded for approve/reject lock",
-            status=WorkSubmissionStatus.pending,
-            file_names=["seed.pdf"],
-            assets=[],
-        )
-        db.add(submission)
-        await db.commit()
-        await db.refresh(submission)
-        submission_id = submission.id
+    submission_id = await insert_work_submission(
+        contract_id=contract_id,
+        note="Seeded for approve/reject lock",
+        file_names=["seed.pdf"],
+    )
 
     await _open_dispute(
         client,

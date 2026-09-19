@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.models import PaymentMilestoneStatus, PaymentMilestoneTrigger, PaymentType
-from src.modules.contracts.service import _custom_milestones, _default_milestones
-from src.modules.proposals.schemas import ProposalAcceptRequest
+from app.enums import PaymentMilestoneStatus, PaymentMilestoneTrigger, PaymentType
+from app.modules.contracts.services import _custom_milestones, _default_milestones
+from app.modules.proposals.schemas import ProposalAcceptRequest
 
 
 def _contract(amount: float):

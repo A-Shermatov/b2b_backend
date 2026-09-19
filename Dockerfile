@@ -11,9 +11,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
-COPY src ./src
-COPY alembic ./alembic
-COPY alembic.ini ./
+COPY app ./app
+COPY migrations ./migrations
 COPY scripts ./scripts
 
 RUN pip install --upgrade pip \
@@ -25,4 +24,4 @@ RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 EXPOSE 8000
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

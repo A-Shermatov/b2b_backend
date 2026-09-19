@@ -1,8 +1,6 @@
 import pytest
-from sqlalchemy import select
 
-from src.db.session import AsyncSessionLocal
-from src.models import Rfq, RfqStatus
+from tests.sql import execute
 
 API = "/api/v1"
 
@@ -28,11 +26,12 @@ async def _create_draft_rfq(client, buyer_auth, title: str) -> str:
     return res.json()["id"]
 
 
-async def _set_rfq_status(rfq_id: str, status: RfqStatus) -> None:
-    async with AsyncSessionLocal() as db:
-        rfq = (await db.execute(select(Rfq).where(Rfq.id == rfq_id))).scalar_one()
-        rfq.status = status
-        await db.commit()
+async def _set_rfq_status(rfq_id: str, status: str) -> None:
+    await execute(
+        "UPDATE rfqs SET status = $1::rfq_status WHERE id = $2",
+        status,
+        rfq_id,
+    )
 
 
 @pytest.mark.asyncio
@@ -91,7 +90,7 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
 
     draft_id = await _create_draft_rfq(client, buyer_auth, "Buyer list draft RFQ")
     completed_id = await _create_draft_rfq(client, buyer_auth, "Buyer list completed RFQ")
-    await _set_rfq_status(completed_id, RfqStatus.completed)
+    await _set_rfq_status(completed_id, "completed")
 
     all_res = await client.get(f"{API}/buyer/rfqs/", headers=buyer_auth["headers"])
     assert all_res.status_code == 200, all_res.text

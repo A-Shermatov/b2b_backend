@@ -1,21 +1,6 @@
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from src.core.security import hash_password
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    AuditLog,
-    Contract,
-    ContractStatus,
-    Notification,
-    PaymentMilestone,
-    PaymentMilestoneStatus,
-    PaymentPlan,
-    User,
-    UserRole,
-    UserStatus,
-)
+from tests.sql import execute, fetch, upsert_moderator
 
 API = "/api/v1"
 
@@ -128,22 +113,19 @@ async def test_admin_contract_actions(
         client, buyer_auth, supplier_auth, "Investigate contract"
     )
 
-    async with AsyncSessionLocal() as db:
-        for contract_id in (freeze_id, force_id):
-            result = await db.execute(
-                select(Contract)
-                .where(Contract.id == contract_id)
-                .options(
-                    selectinload(Contract.payment_plan).selectinload(
-                        PaymentPlan.milestones
-                    )
-                )
-            )
-            contract = result.scalar_one()
-            contract.status = ContractStatus.active
-            for milestone in contract.payment_plan.milestones:
-                milestone.status = PaymentMilestoneStatus.funded
-        await db.commit()
+    for contract_id in (freeze_id, force_id):
+        await execute(
+            "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
+            contract_id,
+        )
+        await execute(
+            """
+            UPDATE payment_milestones
+            SET status = 'funded'::milestone_status
+            WHERE contract_id = $1
+            """,
+            contract_id,
+        )
 
     freeze_res = await client.post(
         f"{API}/admin/contracts/{freeze_id}/action",
@@ -153,16 +135,12 @@ async def test_admin_contract_actions(
     assert freeze_res.status_code == 200, freeze_res.text
     assert freeze_res.json()["status"] == "active"
 
-    async with AsyncSessionLocal() as db:
-        milestones = (
-            await db.execute(
-                select(PaymentMilestone).where(
-                    PaymentMilestone.contract_id == freeze_id
-                )
-            )
-        ).scalars().all()
-        assert milestones
-        assert all(m.status == PaymentMilestoneStatus.disputed for m in milestones)
+    milestones = await fetch(
+        "SELECT status::text AS status FROM payment_milestones WHERE contract_id = $1",
+        freeze_id,
+    )
+    assert milestones
+    assert all(m["status"] == "disputed" for m in milestones)
 
     cancel_res = await client.post(
         f"{API}/admin/contracts/{cancel_id}/action",
@@ -180,16 +158,12 @@ async def test_admin_contract_actions(
     assert force_res.status_code == 200, force_res.text
     assert force_res.json()["status"] == "completed"
 
-    async with AsyncSessionLocal() as db:
-        milestones = (
-            await db.execute(
-                select(PaymentMilestone).where(
-                    PaymentMilestone.contract_id == force_id
-                )
-            )
-        ).scalars().all()
-        assert milestones
-        assert all(m.status == PaymentMilestoneStatus.released for m in milestones)
+    milestones = await fetch(
+        "SELECT status::text AS status FROM payment_milestones WHERE contract_id = $1",
+        force_id,
+    )
+    assert milestones
+    assert all(m["status"] == "released" for m in milestones)
 
     investigate_res = await client.post(
         f"{API}/admin/contracts/{investigate_id}/action",
@@ -220,31 +194,26 @@ async def test_admin_contract_actions(
     )
     assert any(item["id"] == investigate_id for item in list_disputed.json()["items"])
 
-    async with AsyncSessionLocal() as db:
-        audits = (
-            await db.execute(
-                select(AuditLog).where(
-                    AuditLog.resource_type == "contract",
-                    AuditLog.action.like("admin.contract.%"),
-                )
-            )
-        ).scalars().all()
-        assert len(audits) >= 4
-        notifications = (
-            await db.execute(
-                select(Notification).where(
-                    Notification.title.in_(
-                        [
-                            "Escrow заморожен",
-                            "Контракт отменён",
-                            "Контракт принудительно завершён",
-                            "Открыто расследование",
-                        ]
-                    )
-                )
-            )
-        ).scalars().all()
-        assert len(notifications) >= 4
+    audits = await fetch(
+        """
+        SELECT id FROM audit_logs
+        WHERE resource_type = 'contract' AND action LIKE 'admin.contract.%'
+        """
+    )
+    assert len(audits) >= 4
+    notifications = await fetch(
+        """
+        SELECT id FROM notifications
+        WHERE title = ANY($1::text[])
+        """,
+        [
+            "Escrow заморожен",
+            "Контракт отменён",
+            "Контракт принудительно завершён",
+            "Открыто расследование",
+        ],
+    )
+    assert len(notifications) >= 4
 
 
 @pytest.mark.asyncio
@@ -269,21 +238,7 @@ async def test_moderator_cannot_force_complete(
         client, buyer_auth, supplier_auth, "Moderator force complete"
     )
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == "moderator@example.com"))
-        moderator = result.scalar_one_or_none()
-        if not moderator:
-            moderator = User(
-                email="moderator@example.com",
-                password_hash=hash_password("Moderator123!"),
-                first_name="Mod",
-                last_name="Erator",
-                role=UserRole.moderator,
-                status=UserStatus.active,
-            )
-            db.add(moderator)
-            await db.commit()
-            await db.refresh(moderator)
+    await upsert_moderator(first_name="Mod", last_name="Erator")
 
     login_res = await client.post(
         f"{API}/auth/login",

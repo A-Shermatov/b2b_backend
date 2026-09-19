@@ -2,7 +2,6 @@ from typing import Annotated
 
 import asyncpg
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.reviews.api.common import (
     BuyerContext,
@@ -10,7 +9,6 @@ from app.modules.reviews.api.common import (
     ReviewResponse,
     ReviewService,
     buyer_router,
-    get_db,
     public_router,
     raw_db_dependency,
     require_buyer_ctx,
@@ -29,9 +27,8 @@ async def list_my_reviews(
 async def supplier_reviews(
     actor_id: int,
     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
-    session: Annotated[AsyncSession, Depends(get_db)],
 ):
-    await CompanyService(session).get_public_supplier(actor_id)
+    await CompanyService().get_public_supplier(actor_id)
     return await ReviewService(db).list_for_actor(actor_id)
 
 

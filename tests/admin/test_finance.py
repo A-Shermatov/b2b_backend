@@ -1,46 +1,38 @@
 import pytest
 
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    PlatformPayment,
-    PlatformPaymentGateway,
-    PlatformPaymentStatus,
-    PlatformPaymentType,
-)
-from src.modules.finance.ledger import FinanceLedgerService
+from app.modules.finance.services import FinanceLedgerService
+from tests.sql import fetchrow
 
 API = "/api/v1"
 
 
 async def _seed_payment(
     *,
-    payment_type: PlatformPaymentType,
-    status: PlatformPaymentStatus,
+    payment_type: str,
+    status: str,
     title: str,
     amount: float = 1000.0,
     commission: float = 50.0,
     actor_id: int | None = None,
 ) -> int:
-    async with AsyncSessionLocal() as db:
-        payment = await FinanceLedgerService(db).record(
-            payment_type=payment_type,
-            amount=amount,
-            commission=commission,
-            title=title,
-            status=status,
-            gateway=PlatformPaymentGateway.mock,
-            actor_id=actor_id,
-            currency="TJS",
-        )
-        await db.commit()
-        return payment.id
+    payment = await FinanceLedgerService().record(
+        payment_type=payment_type,
+        amount=amount,
+        commission=commission,
+        title=title,
+        status=status,
+        gateway="mock",
+        actor_id=actor_id,
+        currency="TJS",
+    )
+    return payment["id"]
 
 
 @pytest.mark.asyncio
 async def test_admin_finance_list_and_detail(client, admin_auth, buyer_auth):
     payment_id = await _seed_payment(
-        payment_type=PlatformPaymentType.platform_revenue,
-        status=PlatformPaymentStatus.paid,
+        payment_type="platform_revenue",
+        status="paid",
         title="Revenue finance list",
         actor_id=buyer_auth.get("actor_id"),
     )
@@ -71,20 +63,20 @@ async def test_admin_finance_list_and_detail(client, admin_auth, buyer_auth):
 async def test_admin_finance_actions(client, admin_auth, buyer_auth):
     actor_id = buyer_auth.get("actor_id")
     mark_id = await _seed_payment(
-        payment_type=PlatformPaymentType.payout,
-        status=PlatformPaymentStatus.pending,
+        payment_type="payout",
+        status="pending",
         title="Mark paid payout",
         actor_id=actor_id,
     )
     retry_id = await _seed_payment(
-        payment_type=PlatformPaymentType.subscription,
-        status=PlatformPaymentStatus.failed,
+        payment_type="subscription",
+        status="failed",
         title="Retry subscription",
         actor_id=actor_id,
     )
     refund_id = await _seed_payment(
-        payment_type=PlatformPaymentType.commission,
-        status=PlatformPaymentStatus.paid,
+        payment_type="commission",
+        status="paid",
         title="Refund commission",
         actor_id=actor_id,
     )
@@ -113,17 +105,19 @@ async def test_admin_finance_actions(client, admin_auth, buyer_auth):
     assert refund_res.status_code == 200, refund_res.text
     assert refund_res.json()["status"] == "refunded"
 
-    async with AsyncSessionLocal() as db:
-        payment = await db.get(PlatformPayment, refund_id)
-        assert payment is not None
-        assert payment.status == PlatformPaymentStatus.refunded
+    payment = await fetchrow(
+        "SELECT status::text AS status FROM platform_payments WHERE id = $1",
+        refund_id,
+    )
+    assert payment is not None
+    assert payment["status"] == "refunded"
 
 
 @pytest.mark.asyncio
 async def test_admin_finance_export_csv(client, admin_auth):
     await _seed_payment(
-        payment_type=PlatformPaymentType.platform_revenue,
-        status=PlatformPaymentStatus.paid,
+        payment_type="platform_revenue",
+        status="paid",
         title="Export revenue row",
     )
     export_res = await client.get(

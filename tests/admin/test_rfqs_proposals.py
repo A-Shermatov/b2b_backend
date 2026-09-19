@@ -1,24 +1,13 @@
 import pytest
-from sqlalchemy import select
 
-from src.core.security import hash_password
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    AuditLog,
-    Notification,
-    Proposal,
-    ProposalReport,
-    ProposalReportReason,
-    ProposalReportStatus,
-    ProposalStatus,
-    Rfq,
-    RfqReport,
-    RfqReportReason,
-    RfqReportStatus,
-    RfqStatus,
-    User,
-    UserRole,
-    UserStatus,
+from tests.sql import (
+    fetch,
+    fetchrow,
+    fetchval,
+    insert_proposal_report,
+    insert_rfq_report,
+    upsert_moderator,
+    user_id_by_email,
 )
 
 API = "/api/v1"
@@ -87,20 +76,13 @@ async def test_admin_rfq_actions_and_reports(client, admin_auth, buyer_auth):
     )
     assert publish_res.status_code == 200, publish_res.text
 
-    async with AsyncSessionLocal() as db:
-        buyer = (
-            await db.execute(select(User).where(User.email == "buyer@example.com"))
-        ).scalar_one()
-        db.add(
-            RfqReport(
-                rfq_id=rfq_id,
-                reporter_user_id=buyer.id,
-                reason=RfqReportReason.spam,
-                details="Spam RFQ",
-                status=RfqReportStatus.open,
-            )
-        )
-        await db.commit()
+    buyer_id = await user_id_by_email("buyer@example.com")
+    await insert_rfq_report(
+        rfq_id=rfq_id,
+        reporter_user_id=buyer_id,
+        reason="spam",
+        details="Spam RFQ",
+    )
 
     reported_res = await client.get(
         f"{API}/admin/rfqs",
@@ -133,31 +115,38 @@ async def test_admin_rfq_actions_and_reports(client, admin_auth, buyer_auth):
     assert hide_res.status_code == 200, hide_res.text
     assert hide_res.json()["status"] == "archived"
 
-    async with AsyncSessionLocal() as db:
-        rfq = (await db.execute(select(Rfq).where(Rfq.id == rfq_id))).scalar_one()
-        assert rfq.status == RfqStatus.archived
-        reports = (
-            await db.execute(select(RfqReport).where(RfqReport.rfq_id == rfq_id))
-        ).scalars().all()
-        assert reports
-        assert all(report.status != RfqReportStatus.open for report in reports)
-        notification = (
-            await db.execute(
-                select(Notification)
-                .where(Notification.href == f"/customer/rfqs/{rfq_id}")
-                .order_by(Notification.id.desc())
-            )
-        ).scalars().first()
-        assert notification is not None
-        audit = (
-            await db.execute(
-                select(AuditLog)
-                .where(AuditLog.resource_type == "rfq", AuditLog.resource_id == rfq_id)
-                .order_by(AuditLog.id.desc())
-            )
-        ).scalars().first()
-        assert audit is not None
-        assert audit.action == "admin.rfq.hide"
+    rfq_status = await fetchval(
+        "SELECT status::text FROM rfqs WHERE id = $1",
+        rfq_id,
+    )
+    assert rfq_status == "archived"
+    reports = await fetch(
+        "SELECT status::text AS status FROM rfq_reports WHERE rfq_id = $1",
+        rfq_id,
+    )
+    assert reports
+    assert all(report["status"] != "open" for report in reports)
+    notification = await fetchrow(
+        """
+        SELECT id FROM notifications
+        WHERE href = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        f"/customer/rfqs/{rfq_id}",
+    )
+    assert notification is not None
+    audit = await fetchrow(
+        """
+        SELECT action FROM audit_logs
+        WHERE resource_type = 'rfq' AND resource_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        rfq_id,
+    )
+    assert audit is not None
+    assert audit["action"] == "admin.rfq.hide"
 
 
 @pytest.mark.asyncio
@@ -214,20 +203,13 @@ async def test_admin_proposals_list_detail_and_actions(
     assert proposal_res.status_code == 200, proposal_res.text
     proposal_id = proposal_res.json()["id"]
 
-    async with AsyncSessionLocal() as db:
-        buyer = (
-            await db.execute(select(User).where(User.email == "buyer@example.com"))
-        ).scalar_one()
-        db.add(
-            ProposalReport(
-                proposal_id=proposal_id,
-                reporter_user_id=buyer.id,
-                reason=ProposalReportReason.abuse,
-                details="Подозрительная цена",
-                status=ProposalReportStatus.open,
-            )
-        )
-        await db.commit()
+    buyer_id = await user_id_by_email("buyer@example.com")
+    await insert_proposal_report(
+        proposal_id=proposal_id,
+        reporter_user_id=buyer_id,
+        reason="abuse",
+        details="Подозрительная цена",
+    )
 
     list_res = await client.get(
         f"{API}/admin/proposals",
@@ -263,14 +245,12 @@ async def test_admin_proposals_list_detail_and_actions(
     )
     assert investigate_res.status_code == 200, investigate_res.text
 
-    async with AsyncSessionLocal() as db:
-        reports = (
-            await db.execute(
-                select(ProposalReport).where(ProposalReport.proposal_id == proposal_id)
-            )
-        ).scalars().all()
-        assert reports
-        assert all(report.status != ProposalReportStatus.open for report in reports)
+    reports = await fetch(
+        "SELECT status::text AS status FROM proposal_reports WHERE proposal_id = $1",
+        proposal_id,
+    )
+    assert reports
+    assert all(report["status"] != "open" for report in reports)
 
     delete_res = await client.post(
         f"{API}/admin/proposals/{proposal_id}/action",
@@ -310,20 +290,7 @@ async def test_moderator_cannot_delete_proposal(client, admin_auth, buyer_auth, 
     assert proposal_res.status_code == 200, proposal_res.text
     proposal_id = proposal_res.json()["id"]
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == "moderator@example.com"))
-        moderator = result.scalar_one_or_none()
-        if not moderator:
-            moderator = User(
-                email="moderator@example.com",
-                password_hash=hash_password("Moderator123!"),
-                first_name="Test",
-                last_name="Moderator",
-                role=UserRole.moderator,
-                status=UserStatus.active,
-            )
-            db.add(moderator)
-            await db.commit()
+    await upsert_moderator()
 
     login_res = await client.post(
         f"{API}/auth/login",
@@ -339,9 +306,8 @@ async def test_moderator_cannot_delete_proposal(client, admin_auth, buyer_auth, 
     )
     assert delete_res.status_code == 403
 
-    async with AsyncSessionLocal() as db:
-        proposal = (
-            await db.execute(select(Proposal).where(Proposal.id == proposal_id))
-        ).scalar_one_or_none()
-        assert proposal is not None
-        assert proposal.status == ProposalStatus.submitted
+    proposal_status = await fetchval(
+        "SELECT status::text FROM proposals WHERE id = $1",
+        proposal_id,
+    )
+    assert proposal_status == "submitted"

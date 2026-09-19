@@ -10,31 +10,29 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.database import pool
 from app.main import app
-from src.utils import redis_client
+from app.utils import redis_client
 
 API = "/api/v1"
 
 
 @pytest.fixture
 async def client(monkeypatch):
-    from src.db.schema import prepare_database
+    from app.db.schema import prepare_database
 
     await prepare_database()
-    await pool.init()
+    if not pool.ready:
+        await pool.init()
 
     async def _allow_rate_limit(*_args, **_kwargs):
         return True
 
     monkeypatch.setattr(redis_client, "check_rate_limit", _allow_rate_limit)
-    monkeypatch.setattr("src.api.v1.auth.router.check_rate_limit", _allow_rate_limit)
+    monkeypatch.setattr("app.modules.auth.api.create.check_rate_limit", _allow_rate_limit)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
-    from src.db.session import engine
-
-    await engine.dispose()
     await pool.close()
     redis_client._redis_client = None
     redis_client._memory_rate_limit.clear()

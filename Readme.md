@@ -1,6 +1,6 @@
 # BrandMarket Backend
 
-FastAPI + PostgreSQL B2B marketplace API (modular monolith).
+FastAPI + asyncpg + PostgreSQL B2B marketplace API (modular monolith, пакет `app/`).
 
 ## Quick start
 
@@ -10,7 +10,7 @@ cp .env.example .env
 docker compose up -d
 pip install -e ".[dev]"
 python scripts/seed.py
-uvicorn src.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000
 ```
 
 > **Note:** Docker Postgres uses host port **5433** (not 5432) to avoid conflict with a local PostgreSQL installation on Windows.
@@ -53,6 +53,7 @@ Frontend: `NEXT_PUBLIC_FILES_BASE_URL` (same public prefix) for relative/legacy 
 ## Headers
 
 - `Authorization: Bearer <access_token>`
+- `X-Actor-Id: <active_actor_id>`
 - `X-Company-Id: <active_company_id>`
 
 ## Tests

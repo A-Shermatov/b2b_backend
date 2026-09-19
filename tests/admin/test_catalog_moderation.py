@@ -1,19 +1,6 @@
 import pytest
-from sqlalchemy import select
 
-from src.core.security import hash_password
-from src.db.session import AsyncSessionLocal
-from src.models import (
-    AuditLog,
-    CatalogItem,
-    CatalogItemReport,
-    CatalogItemReportStatus,
-    ItemStatus,
-    Notification,
-    User,
-    UserRole,
-    UserStatus,
-)
+from tests.sql import fetch, fetchrow, fetchval, upsert_moderator
 
 
 async def _create_pending_item(client, supplier_auth) -> int:
@@ -131,32 +118,33 @@ async def test_catalog_report_and_admin_actions(client, admin_auth, supplier_aut
     assert hide_res.status_code == 200
     assert hide_res.json()["status"] == "hidden"
 
-    async with AsyncSessionLocal() as db:
-        reports = (
-            await db.execute(select(CatalogItemReport).where(CatalogItemReport.item_id == item_id))
-        ).scalars().all()
-        assert reports
-        assert all(report.status != CatalogItemReportStatus.open for report in reports)
-        audit = (
-            await db.execute(
-                select(AuditLog)
-                .where(
-                    AuditLog.resource_type == "catalog_item",
-                    AuditLog.resource_id == str(item_id),
-                )
-                .order_by(AuditLog.id.desc())
-            )
-        ).scalars().first()
-        assert audit is not None
-        assert audit.action == "admin.catalog.hide"
-        notification = (
-            await db.execute(
-                select(Notification)
-                .where(Notification.href == f"/supplier/catalog/{item_id}")
-                .order_by(Notification.id.desc())
-            )
-        ).scalars().first()
-        assert notification is not None
+    reports = await fetch(
+        "SELECT status::text AS status FROM catalog_item_reports WHERE item_id = $1",
+        item_id,
+    )
+    assert reports
+    assert all(report["status"] != "open" for report in reports)
+    audit = await fetchrow(
+        """
+        SELECT action FROM audit_logs
+        WHERE resource_type = 'catalog_item' AND resource_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        str(item_id),
+    )
+    assert audit is not None
+    assert audit["action"] == "admin.catalog.hide"
+    notification = await fetchrow(
+        """
+        SELECT id FROM notifications
+        WHERE href = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        f"/supplier/catalog/{item_id}",
+    )
+    assert notification is not None
 
     request_res = await client.post(
         f"/api/v1/admin/catalog/{item_id}/action",
@@ -174,11 +162,11 @@ async def test_catalog_report_and_admin_actions(client, admin_auth, supplier_aut
     assert delete_res.status_code == 200
     assert delete_res.json()["status"] == "deleted"
 
-    async with AsyncSessionLocal() as db:
-        item = (
-            await db.execute(select(CatalogItem).where(CatalogItem.id == item_id))
-        ).scalar_one()
-        assert item.status == ItemStatus.deleted
+    item_status = await fetchval(
+        "SELECT status::text FROM catalog_items WHERE id = $1",
+        item_id,
+    )
+    assert item_status == "deleted"
 
     public_res = await client.get(f"/api/v1/public/catalog/items/{item_id}")
     assert public_res.status_code == 404
@@ -190,24 +178,7 @@ async def test_moderator_cannot_delete_catalog_item(client, admin_auth, supplier
         pytest.skip("No supplier actor")
     item_id = await _create_pending_item(client, supplier_auth)
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.email == "moderator@example.com"))
-        moderator = result.scalar_one_or_none()
-        if not moderator:
-            moderator = User(
-                email="moderator@example.com",
-                password_hash=hash_password("Moderator123!"),
-                first_name="Test",
-                last_name="Moderator",
-                role=UserRole.moderator,
-                status=UserStatus.active,
-            )
-            db.add(moderator)
-        else:
-            moderator.password_hash = hash_password("Moderator123!")
-            moderator.role = UserRole.moderator
-            moderator.status = UserStatus.active
-        await db.commit()
+    await upsert_moderator()
 
     login_res = await client.post(
         "/api/v1/auth/login",
