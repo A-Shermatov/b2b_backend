@@ -1622,7 +1622,7 @@ CREATE TABLE public.reviews (
     target_actor_id integer NOT NULL,
     rating integer NOT NULL,
     comment text,
-    created_at timestamp with time zone NOT NULL
+    created_at timestamp with time zone NOT NULL DEFAULT NOW()
 );
 
 

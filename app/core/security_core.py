@@ -28,10 +28,12 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
-def create_refresh_token(subject: str) -> tuple[str, str]:
+def create_refresh_token(subject: str, extra: dict[str, Any] | None = None) -> tuple[str, str]:
     jti = secrets.token_urlsafe(32)
     expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
     payload = {"sub": subject, "exp": expire, "type": "refresh", "jti": jti}
+    if extra:
+        payload.update(extra)
     token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
     return token, hashlib.sha256(jti.encode()).hexdigest()
 

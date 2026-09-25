@@ -47,7 +47,7 @@ async def _login(
 ) -> dict:
     res = await client.post(
         f"{API}/auth/login",
-        json={"email": email, "password": password},
+        json={"email": email, "password": password, "role": side},
     )
     assert res.status_code == 200, res.text
     tokens = res.json()

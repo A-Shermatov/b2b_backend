@@ -38,9 +38,9 @@ class ReviewCreateMixin:
                 row = await self.conn.fetchrow(
                     f"""
                     INSERT INTO reviews (
-                        contract_id, reviewer_actor_id, target_actor_id, rating, comment
+                        contract_id, reviewer_actor_id, target_actor_id, rating, comment, created_at
                     )
-                    VALUES ($1, $2, $3, $4, $5)
+                    VALUES ($1, $2, $3, $4, $5, NOW())
                     RETURNING {REVIEW_COLUMNS}
                     """,
                     data.contract_id,

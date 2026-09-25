@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from app.core.exceptions import ConflictError, UnauthorizedError
+from app.core.exceptions import ConflictError, ForbiddenError, UnauthorizedError
 from app.core.security_core import (
     create_access_token,
     create_refresh_token,
@@ -11,7 +11,7 @@ from app.core.security_core import (
     hash_password,
     verify_password,
 )
-from app.modules.actors.services import ActorService
+from app.modules.actors.services import ActorService, user_capabilities
 from app.modules.auth.schemas import LoginRequest, RegisterRequest, TokenResponse
 from app.modules.auth.services.common import USER_COLUMNS, load_user
 from app.utils.audit import AuditLogger
@@ -73,6 +73,8 @@ class AuthCreateMixin:
                 raise UnauthorizedError("Invalid email or password")
             if user["status"] == "blocked":
                 raise UnauthorizedError("Account is blocked")
+            if data.role and not user_capabilities(user["role"]).get(data.role):
+                raise ForbiddenError("Account cannot sign in with this role")
             await AuditLogger(conn).log_action(
                 user_id=user["id"],
                 actor_id=None,
@@ -82,7 +84,7 @@ class AuthCreateMixin:
                 resource_id=str(user["id"]),
                 ip_address=ip,
             )
-        return self._issue_tokens(dict(user))
+        return self._issue_tokens(dict(user), side=data.role)
 
     async def refresh(self, refresh_token: str) -> TokenResponse:
         try:
@@ -95,11 +97,14 @@ class AuthCreateMixin:
         if await is_refresh_token_blacklisted(jti_hash):
             raise UnauthorizedError("Token revoked")
         user_id = int(payload["sub"])
+        side = payload.get("side")
         async with self.connection() as conn:
             user = await load_user(conn, user_id)
         if not user:
             raise UnauthorizedError("User not found")
-        return self._issue_tokens(user)
+        if side and not user_capabilities(user["role"]).get(side):
+            side = None
+        return self._issue_tokens(user, side=side)
 
     async def logout(self, refresh_token: str) -> None:
         try:
@@ -123,7 +128,10 @@ class AuthCreateMixin:
             )
         await blacklist_refresh_token(jti_hash, expires_at)
 
-    def _issue_tokens(self, user: dict) -> TokenResponse:
-        access = create_access_token(str(user["id"]), {"role": user["role"]})
-        refresh, _ = create_refresh_token(str(user["id"]))
-        return TokenResponse(access_token=access, refresh_token=refresh)
+    def _issue_tokens(self, user: dict, side: str | None = None) -> TokenResponse:
+        extra = {"role": user["role"]}
+        if side:
+            extra["side"] = side
+        access = create_access_token(str(user["id"]), extra)
+        refresh, _ = create_refresh_token(str(user["id"]), {"side": side} if side else None)
+        return TokenResponse(access_token=access, refresh_token=refresh, role=side)

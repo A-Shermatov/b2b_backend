@@ -201,4 +201,5 @@ COMPAT_PATCHES = [
     _migrate_report_reason_sql("proposal_report_reason", "proposal_reports"),
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id INTEGER;",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS company_id INTEGER;",
+    "ALTER TABLE reviews ALTER COLUMN created_at SET DEFAULT NOW();",
 ]

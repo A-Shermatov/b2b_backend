@@ -8,6 +8,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    role: Literal["buyer", "supplier"] | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -22,6 +23,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    role: Literal["buyer", "supplier"] | None = Field(
+        default=None,
+        description="Роль входа: buyer — заказчик, supplier — исполнитель",
+    )
 
 
 class RefreshRequest(BaseModel):
