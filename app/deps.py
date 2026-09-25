@@ -7,6 +7,7 @@ from fastapi import Depends, Header, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.core.permissions import ensure_permission, fetch_permission_names
 from app.core.security_core import decode_token
 from app.database import pool
 from app.modules.actors.services import ActorService
@@ -29,6 +30,8 @@ class CurrentUser:
     phone: str | None
     role: str
     status: str
+    role_id: int | None = None
+    permissions: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -102,6 +105,8 @@ def user_from_row(row: dict) -> CurrentUser:
         phone=row.get("phone"),
         role=row["role"],
         status=row["status"],
+        role_id=row.get("role_id"),
+        permissions=frozenset(row.get("permissions") or ()),
     )
 
 
@@ -138,10 +143,13 @@ async def get_current_user(
     user_id = int(payload["sub"])
     async with pool.connection() as conn:
         row = await load_user(conn, user_id)
-    if not row:
-        raise UnauthorizedError("User not found")
-    if row["status"] == "blocked":
-        raise ForbiddenError("Account is blocked")
+        if not row:
+            raise UnauthorizedError("User not found")
+        if row["status"] == "blocked":
+            raise ForbiddenError("Account is blocked")
+        row["permissions"] = await fetch_permission_names(
+            conn, role_id=row.get("role_id"), role_name=row["role"]
+        )
     return user_from_row(row)
 
 
@@ -204,6 +212,26 @@ async def require_actor(
     if not ctx.actor:
         raise ForbiddenError("X-Actor-Id header required", code="actor_required")
     return ctx
+
+
+def buyer_perm(code: str):
+    async def _check(
+        ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ) -> BuyerContext:
+        ensure_permission(ctx.user, code)
+        return ctx
+
+    return _check
+
+
+def supplier_perm(code: str):
+    async def _check(
+        ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ) -> SupplierContext:
+        ensure_permission(ctx.user, code)
+        return ctx
+
+    return _check
 
 
 def require_company_roles(*roles: str):
@@ -330,6 +358,8 @@ __all__ = [
     "require_company_roles",
     "require_buyer_ctx",
     "require_buyer_company_roles",
+    "buyer_perm",
+    "supplier_perm",
     "require_supplier_ctx",
     "require_admin",
     "get_client_ip",

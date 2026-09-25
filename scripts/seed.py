@@ -64,11 +64,13 @@ async def insert_user(
     row = await conn.fetchrow(
         """
         INSERT INTO users (
-            email, password_hash, first_name, last_name, role, status,
+            email, password_hash, first_name, last_name, role, role_id, status,
             created_at, updated_at
         )
         VALUES (
-            $1, $2, $3, $4, $5::user_role, 'active'::user_status, NOW(), NOW()
+            $1, $2, $3, $4, $5::user_role,
+            (SELECT id FROM roles WHERE name = $5),
+            'active'::user_status, NOW(), NOW()
         )
         RETURNING id, email, first_name, last_name, role::text AS role
         """,

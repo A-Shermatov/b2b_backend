@@ -4,17 +4,14 @@ from fastapi import Depends, File, UploadFile
 
 from app.modules.proposals.schemas import ProposalCreate
 from app.modules.proposals.services import ProposalService
+from app.deps import buyer_perm, supplier_perm
 from app.modules.rfqs.api.common import (
     BuyerContext,
     ProductRfqCreate,
-    RFQ_ROLES,
     RfqService,
     ServiceRfqCreate,
     SupplierContext,
     buyer_router,
-    require_buyer_company_roles,
-    require_buyer_ctx,
-    require_supplier_ctx,
     supplier_router,
 )
 from app.utils.storage import storage_service
@@ -25,7 +22,7 @@ async def create_rfq(
     data: ProductRfqCreate | ServiceRfqCreate,
     ctx: Annotated[
         BuyerContext,
-        Depends(require_buyer_company_roles(*RFQ_ROLES)),
+        Depends(buyer_perm("rfqs.create")),
     ],
 ):
     created_by = f"{ctx.user.first_name} {ctx.user.last_name}".strip()
@@ -35,7 +32,7 @@ async def create_rfq(
 @buyer_router.post("/{rfq_id}/attachments")
 async def upload_attachment(
     rfq_id: str,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("rfqs.update"))],
     file: UploadFile = File(...),
 ):
     key, _ = await storage_service.upload(file, f"rfqs/{rfq_id}")
@@ -52,6 +49,6 @@ async def upload_attachment(
 async def submit_proposal(
     rfq_id: str,
     data: ProposalCreate,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.create"))],
 ):
     return await ProposalService().submit(rfq_id, ctx.actor.id, data)

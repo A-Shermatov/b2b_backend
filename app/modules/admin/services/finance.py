@@ -2,6 +2,7 @@ import csv
 import io
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
     finance_view_sql,
@@ -285,6 +286,7 @@ class AdminFinanceMixin:
         allowed = {"refund", "retry", "mark_paid"}
         if action not in allowed:
             raise ValidationError("Unsupported finance action")
+        ensure_permission(current_user, "admin_finance.update")
         if action in {"refund", "retry"} and not (reason and reason.strip()):
             raise ValidationError("Reason is required for this action")
 

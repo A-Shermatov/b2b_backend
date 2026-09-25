@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
     actor_role_of,
@@ -268,8 +269,10 @@ class AdminCatalogMixin:
         allowed = {"approve", "hide", "request_changes", "delete"}
         if action not in allowed:
             raise ValidationError("Unsupported catalog action")
-        if action == "delete" and actor_role_of(current_user) == "moderator":
-            raise ForbiddenError("Moderator cannot delete catalog items")
+        ensure_permission(
+            current_user,
+            "admin_catalog.delete" if action == "delete" else "admin_catalog.update",
+        )
         if action in {"hide", "request_changes", "delete"} and not (reason and reason.strip()):
             raise ValidationError("Reason is required for this action")
 

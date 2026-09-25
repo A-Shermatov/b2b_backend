@@ -2,14 +2,12 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.deps import buyer_perm
 from app.modules.rfqs.api.common import (
     BuyerContext,
     InviteSuppliersRequest,
-    RFQ_ROLES,
     RfqService,
     buyer_router,
-    require_buyer_company_roles,
-    require_buyer_ctx,
 )
 
 
@@ -19,7 +17,7 @@ async def update_rfq(
     data: dict,
     ctx: Annotated[
         BuyerContext,
-        Depends(require_buyer_company_roles(*RFQ_ROLES)),
+        Depends(buyer_perm("rfqs.update")),
     ],
 ):
     return await RfqService().update(rfq_id, ctx.actor.id, data)
@@ -28,7 +26,7 @@ async def update_rfq(
 @buyer_router.post("/{rfq_id}/publish")
 async def publish_rfq(
     rfq_id: str,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("rfqs.publish"))],
 ):
     return await RfqService().publish(rfq_id, ctx.actor.id)
 
@@ -36,7 +34,7 @@ async def publish_rfq(
 @buyer_router.post("/{rfq_id}/close")
 async def close_rfq(
     rfq_id: str,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("rfqs.close"))],
 ):
     return await RfqService().close(rfq_id, ctx.actor.id)
 
@@ -45,7 +43,7 @@ async def close_rfq(
 async def delete_attachment(
     rfq_id: str,
     attachment_id: str,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("rfqs.update"))],
 ):
     return await RfqService().remove_attachment(rfq_id, ctx.actor.id, attachment_id)
 
@@ -54,6 +52,6 @@ async def delete_attachment(
 async def invite_suppliers(
     rfq_id: str,
     data: InviteSuppliersRequest,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("rfqs.invite"))],
 ):
     return await RfqService().invite_suppliers(rfq_id, ctx.actor.id, data.supplier_ids)

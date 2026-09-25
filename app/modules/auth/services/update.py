@@ -80,9 +80,17 @@ class AuthUpdateMixin:
                 role = "supplier"
             row = await conn.fetchrow(
                 f"""
-                UPDATE users
-                SET role = $1::user_role, updated_at = NOW()
-                WHERE id = $2
+                UPDATE users AS u
+                SET role = $1::user_role,
+                    role_id = CASE
+                        WHEN u.role_id IS NULL OR u.role_id IN (
+                            SELECT id FROM roles WHERE name IN ('buyer', 'supplier', 'both')
+                        )
+                        THEN (SELECT id FROM roles WHERE name = $1)
+                        ELSE u.role_id
+                    END,
+                    updated_at = NOW()
+                WHERE u.id = $2
                 RETURNING {USER_COLUMNS}
                 """,
                 role,

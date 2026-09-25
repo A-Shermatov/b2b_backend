@@ -1,4 +1,5 @@
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
     actor_role_of,
@@ -355,8 +356,12 @@ class AdminContractsMixin:
         allowed = {"freeze", "cancel", "force_complete", "open_investigation"}
         if action not in allowed:
             raise ValidationError("Unsupported contract action")
-        if action == "force_complete" and actor_role_of(current_user) == "moderator":
-            raise ForbiddenError("Moderator cannot force-complete contracts")
+        ensure_permission(
+            current_user,
+            "admin_contracts.force_complete"
+            if action == "force_complete"
+            else "admin_contracts.update",
+        )
         if action in {"cancel", "force_complete", "open_investigation"} and not (
             reason and reason.strip()
         ):
@@ -682,6 +687,7 @@ class AdminContractsMixin:
         }
         if action not in allowed:
             raise ValidationError("Unsupported dispute action")
+        ensure_permission(current_user, "admin_disputes.update")
         if not (reason and reason.strip()):
             raise ValidationError("Reason is required for this action")
 
