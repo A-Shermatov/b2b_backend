@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.permissions import ensure_permission, fetch_permission_names
 from app.modules.companies.schemas import (
     CompanyCategorySchema,
     CompanyCertificateSchema,
@@ -40,18 +41,33 @@ def parse_actor_types(data, extra: str | None = None) -> list[str]:
     return types
 
 
-async def ensure_can_manage(conn, company_id: int, user_id: int) -> None:
-    row = await conn.fetchrow(
+async def ensure_can_manage(
+    conn,
+    company_id: int,
+    user_id: int,
+    permission: str = "company_profile.update",
+) -> None:
+    member = await conn.fetchrow(
         """
-        SELECT role::text AS role
+        SELECT 1
         FROM company_users
         WHERE company_id = $1 AND user_id = $2
         """,
         company_id,
         user_id,
     )
-    if not row or row["role"] not in ("director", "admin"):
+    if not member:
         raise ForbiddenError("Insufficient permissions")
+    user = await conn.fetchrow(
+        "SELECT role::text AS role, role_id FROM users WHERE id = $1",
+        user_id,
+    )
+    if not user:
+        raise ForbiddenError("Insufficient permissions")
+    names = await fetch_permission_names(
+        conn, role_id=user["role_id"], role_name=user["role"]
+    )
+    ensure_permission({"role": user["role"], "permissions": names}, permission)
 
 
 async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:

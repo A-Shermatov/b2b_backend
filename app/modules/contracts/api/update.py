@@ -2,13 +2,12 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.deps import buyer_perm, supplier_perm
 from app.modules.contracts.api.common import (
     BuyerContext,
     ContractService,
     SupplierContext,
     buyer_router,
-    require_buyer_ctx,
-    require_supplier_ctx,
     supplier_router,
 )
 
@@ -16,7 +15,7 @@ from app.modules.contracts.api.common import (
 @buyer_router.post("/{contract_id}/messages/read")
 async def buyer_mark_messages_read(
     contract_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
 ):
     return await ContractService().mark_messages_read(
         contract_id, ctx.user.id, ctx.actor.id
@@ -26,7 +25,7 @@ async def buyer_mark_messages_read(
 @supplier_router.post("/{contract_id}/messages/read")
 async def supplier_mark_messages_read(
     contract_id: int,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
 ):
     return await ContractService().mark_messages_read(
         contract_id, ctx.user.id, ctx.actor.id
@@ -37,7 +36,7 @@ async def supplier_mark_messages_read(
 async def buyer_mark_message_delivered(
     contract_id: int,
     message_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
 ):
     return await ContractService().mark_message_delivered(
         contract_id, message_id, ctx.user.id, ctx.actor.id
@@ -48,7 +47,7 @@ async def buyer_mark_message_delivered(
 async def supplier_mark_message_delivered(
     contract_id: int,
     message_id: int,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
 ):
     return await ContractService().mark_message_delivered(
         contract_id, message_id, ctx.user.id, ctx.actor.id
@@ -59,7 +58,7 @@ async def supplier_mark_message_delivered(
 async def approve_submission(
     contract_id: int,
     submission_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
 ):
     return await ContractService().approve_submission(
         contract_id, submission_id, ctx.actor.id
@@ -70,7 +69,7 @@ async def approve_submission(
 async def reject_submission(
     contract_id: int,
     submission_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
 ):
     return await ContractService().reject_submission(
         contract_id, submission_id, ctx.actor.id

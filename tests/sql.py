@@ -39,6 +39,7 @@ async def upsert_moderator(
             UPDATE users
             SET password_hash = $1,
                 role = 'moderator'::user_role,
+                role_id = (SELECT id FROM roles WHERE name = 'moderator'),
                 status = 'active'::user_status,
                 first_name = $2,
                 last_name = $3,
@@ -54,11 +55,13 @@ async def upsert_moderator(
     row = await fetchrow(
         """
         INSERT INTO users (
-            email, password_hash, first_name, last_name, role, status,
+            email, password_hash, first_name, last_name, role, role_id, status,
             created_at, updated_at
         )
         VALUES (
-            $1, $2, $3, $4, 'moderator'::user_role, 'active'::user_status,
+            $1, $2, $3, $4, 'moderator'::user_role,
+            (SELECT id FROM roles WHERE name = 'moderator'),
+            'active'::user_status,
             NOW(), NOW()
         )
         RETURNING id

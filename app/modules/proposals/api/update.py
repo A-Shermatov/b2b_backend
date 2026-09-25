@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.deps import buyer_perm, supplier_perm
 from app.modules.proposals.api.common import (
     BuyerContext,
     ProposalAcceptRequest,
@@ -9,8 +10,6 @@ from app.modules.proposals.api.common import (
     ProposalUpdate,
     SupplierContext,
     buyer_router,
-    require_buyer_ctx,
-    require_supplier_ctx,
     supplier_router,
 )
 
@@ -18,7 +17,7 @@ from app.modules.proposals.api.common import (
 @buyer_router.post("/proposals/{proposal_id}/shortlist")
 async def shortlist_proposal(
     proposal_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("proposals.accept"))],
 ):
     return await ProposalService().shortlist(proposal_id, ctx.actor.id)
 
@@ -26,7 +25,7 @@ async def shortlist_proposal(
 @buyer_router.post("/proposals/{proposal_id}/reject")
 async def reject_proposal(
     proposal_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("proposals.accept"))],
 ):
     return await ProposalService().reject(proposal_id, ctx.actor.id)
 
@@ -34,7 +33,7 @@ async def reject_proposal(
 @buyer_router.post("/proposals/{proposal_id}/accept")
 async def accept_proposal(
     proposal_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("proposals.accept"))],
     data: ProposalAcceptRequest | None = None,
 ):
     payment_type = data.payment_type if data else None
@@ -54,7 +53,7 @@ async def accept_proposal(
 async def update_proposal(
     proposal_id: int,
     data: ProposalUpdate,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.update"))],
 ):
     return await ProposalService().update_proposal(proposal_id, ctx.actor.id, data)
 
@@ -62,6 +61,6 @@ async def update_proposal(
 @supplier_router.post("/{proposal_id}/withdraw")
 async def withdraw_proposal(
     proposal_id: int,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.update"))],
 ):
     return await ProposalService().withdraw(proposal_id, ctx.actor.id)

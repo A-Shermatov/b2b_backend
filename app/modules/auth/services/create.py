@@ -33,11 +33,13 @@ class AuthCreateMixin:
                     f"""
                     INSERT INTO users (
                         email, password_hash, first_name, last_name, phone,
-                        role, status, created_at, updated_at
+                        role, role_id, status, created_at, updated_at
                     )
                     VALUES (
                         $1, $2, $3, $4, $5,
-                        $6::user_role, 'active', NOW(), NOW()
+                        $6::user_role,
+                        (SELECT id FROM roles WHERE name = $6),
+                        'active', NOW(), NOW()
                     )
                     RETURNING {USER_COLUMNS}
                     """,

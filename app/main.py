@@ -28,6 +28,7 @@ from app.modules.payments.router import register as register_payments
 from app.modules.proposals.router import register as register_proposals
 from app.modules.rfqs.router import register as register_rfqs
 from app.modules.reviews.router import register as register_reviews
+from app.modules.roles.router import register as register_roles
 from app.modules.subscription.router import register as register_subscription
 from app.db.schema import backfill_actors_if_needed, ensure_schema
 
@@ -114,6 +115,7 @@ register_contracts(app, prefix=settings.api_v1_prefix)
 register_payments(app, prefix=settings.api_v1_prefix)
 register_finance(app, prefix=settings.api_v1_prefix)
 register_admin(app, prefix=settings.api_v1_prefix)
+register_roles(app, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health")

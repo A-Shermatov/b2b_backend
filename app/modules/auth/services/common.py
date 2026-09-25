@@ -9,6 +9,7 @@ USER_COLUMNS = """
     last_name,
     phone,
     role::text AS role,
+    role_id,
     status::text AS status,
     created_at,
     updated_at

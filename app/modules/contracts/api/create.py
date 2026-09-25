@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, File, UploadFile
 
+from app.deps import buyer_perm, supplier_perm
 from app.modules.contracts.api.common import (
     BuyerContext,
     ContractService,
@@ -10,8 +11,6 @@ from app.modules.contracts.api.common import (
     SupplierContext,
     WorkSubmissionCreate,
     buyer_router,
-    require_buyer_ctx,
-    require_supplier_ctx,
     supplier_router,
 )
 from app.utils.storage import storage_service
@@ -21,7 +20,7 @@ from app.utils.storage import storage_service
 async def buyer_post_message(
     contract_id: int,
     data: MessageCreate,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
 ):
     return await ContractService().add_message(
         contract_id, ctx.user.id, ctx.actor.id, data
@@ -32,7 +31,7 @@ async def buyer_post_message(
 async def supplier_post_message(
     contract_id: int,
     data: MessageCreate,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
 ):
     return await ContractService().add_message(
         contract_id, ctx.user.id, ctx.actor.id, data
@@ -42,7 +41,7 @@ async def supplier_post_message(
 @buyer_router.post("/{contract_id}/files")
 async def buyer_upload_file(
     contract_id: int,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
     file: UploadFile = File(...),
 ):
     key, _ = await storage_service.upload(file, f"contracts/{contract_id}")
@@ -59,7 +58,7 @@ async def buyer_upload_file(
 @supplier_router.post("/{contract_id}/files")
 async def supplier_upload_file(
     contract_id: int,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
     file: UploadFile = File(...),
 ):
     key, _ = await storage_service.upload(file, f"contracts/{contract_id}")
@@ -77,7 +76,7 @@ async def supplier_upload_file(
 async def submit_work(
     contract_id: int,
     data: WorkSubmissionCreate,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
 ):
     return await ContractService().submit_work(contract_id, ctx.actor.id, data)
 
@@ -86,7 +85,7 @@ async def submit_work(
 async def buyer_open_dispute(
     contract_id: int,
     data: DisputeRequest,
-    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
 ):
     return await ContractService().open_dispute(contract_id, ctx.actor.id, data)
 
@@ -95,6 +94,6 @@ async def buyer_open_dispute(
 async def supplier_open_dispute(
     contract_id: int,
     data: DisputeRequest,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
 ):
     return await ContractService().open_dispute(contract_id, ctx.actor.id, data)

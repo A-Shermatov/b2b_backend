@@ -1,4 +1,5 @@
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
     actor_role_of,
@@ -357,8 +358,10 @@ class AdminMarketplaceMixin:
         allowed = {"hide", "close", "delete", "warn_buyer"}
         if action not in allowed:
             raise ValidationError("Unsupported RFQ action")
-        if action == "delete" and actor_role_of(current_user) == "moderator":
-            raise ForbiddenError("Moderator cannot delete RFQs")
+        ensure_permission(
+            current_user,
+            "admin_rfqs.delete" if action == "delete" else "admin_rfqs.update",
+        )
         if action in {"hide", "close", "delete", "warn_buyer"} and not (
             reason and reason.strip()
         ):
@@ -651,8 +654,12 @@ class AdminMarketplaceMixin:
         allowed = {"delete", "investigate", "block_supplier"}
         if action not in allowed:
             raise ValidationError("Unsupported proposal action")
-        if action in {"delete", "block_supplier"} and actor_role_of(current_user) == "moderator":
-            raise ForbiddenError("Moderator cannot perform this action")
+        ensure_permission(
+            current_user,
+            "admin_proposals.delete"
+            if action in {"delete", "block_supplier"}
+            else "admin_proposals.update",
+        )
         if action in {"delete", "investigate", "block_supplier"} and not (
             reason and reason.strip()
         ):

@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.deps import supplier_perm
 from app.modules.finance.api.common import (
     SupplierContext,
     SupplierFinanceService,
@@ -9,7 +10,6 @@ from app.modules.finance.api.common import (
     WithdrawalDestinationCreate,
     WithdrawalDestinationSchema,
     WithdrawalSchema,
-    require_supplier_ctx,
     supplier_router,
 )
 
@@ -17,7 +17,7 @@ from app.modules.finance.api.common import (
 @supplier_router.post("/destinations", response_model=WithdrawalDestinationSchema)
 async def create_destination(
     data: WithdrawalDestinationCreate,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("finance.create"))],
 ):
     return await SupplierFinanceService().create_destination(ctx.actor.id, data)
 
@@ -25,6 +25,6 @@ async def create_destination(
 @supplier_router.post("/withdrawals", response_model=WithdrawalSchema)
 async def request_withdrawal(
     data: WithdrawalCreate,
-    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("finance.create"))],
 ):
     return await SupplierFinanceService().request_withdrawal(ctx.actor.id, data)

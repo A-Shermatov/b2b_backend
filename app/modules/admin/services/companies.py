@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
     actor_role_of,
@@ -339,8 +340,10 @@ class AdminCompaniesMixin:
         operational_actions = {"block", "deactivate", "reactivate"}
         if action not in verification_actions | operational_actions:
             raise ValidationError("Unsupported company action")
-        if action in operational_actions and actor_role_of(current_user) == "moderator":
-            raise ForbiddenError("Moderator cannot change company operational status")
+        if action in operational_actions:
+            ensure_permission(current_user, "admin_companies.block")
+        else:
+            ensure_permission(current_user, "admin_companies.update")
         if action in {"reject", "request_documents", "block", "deactivate"} and not (
             reason and reason.strip()
         ):

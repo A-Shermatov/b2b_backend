@@ -11,7 +11,7 @@ class CompanyUpdateMixin:
         async with self.connection() as conn:
             async with conn.transaction():
                 await load_company_schema(conn, company_id)
-                await ensure_can_manage(conn, company_id, user_id)
+                await ensure_can_manage(conn, company_id, user_id, "company_profile.update")
                 fields = (
                     "title",
                     "legal_name",
@@ -102,7 +102,7 @@ class CompanyUpdateMixin:
 
     async def remove_team_member(self, company_id: int, user_id: int, target_user_id: int):
         async with self.connection() as conn:
-            await ensure_can_manage(conn, company_id, user_id)
+            await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
             membership = await conn.fetchrow(
                 """
                 SELECT id, role::text AS role

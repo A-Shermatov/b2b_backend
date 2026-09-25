@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.permissions import ensure_permission
 from app.modules.auth.schemas import UserPublic
 from app.modules.admin.services.common import (
     STAFF_RANK,
@@ -83,6 +84,7 @@ class AdminUsersMixin:
         }
 
     async def update_user_status(self, user_id: int, status: str, current_user) -> UserPublic:
+        ensure_permission(current_user, "admin_users.update")
         status_value = status.value if hasattr(status, "value") else status
         async with self.connection() as conn:
             user = await conn.fetchrow(
