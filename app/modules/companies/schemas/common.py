@@ -188,3 +188,7 @@ class PublicSupplier(BaseModel):
     industries: list[str] = []
     active_catalog_count: int = 0
     trust_level: str = "basic"
+    completed_contracts: int = 0
+    active_contracts: int = 0
+    disputed_contracts: int = 0
+    success_rate: float | None = None

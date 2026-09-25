@@ -110,6 +110,31 @@ class NotificationCreateMixin:
             f"/supplier/contracts/{contract_id}",
         )
 
+    async def notify_contract_closed(self, contract) -> list[NotificationSchema]:
+        contract_id = contract["id"]
+        title = "Проект закрыт"
+        body = f"Договор «{contract['title']}» завершён"
+        created: list[NotificationSchema] = []
+        created.extend(
+            await self.notify_actor_members(
+                contract["buyer_actor_id"],
+                "contract",
+                title,
+                body,
+                f"/customer/contracts/{contract_id}",
+            )
+        )
+        created.extend(
+            await self.notify_actor_members(
+                contract["supplier_actor_id"],
+                "contract",
+                title,
+                body,
+                f"/supplier/contracts/{contract_id}",
+            )
+        )
+        return created
+
     async def notify_user(
         self,
         user_id: int,

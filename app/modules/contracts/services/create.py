@@ -16,6 +16,7 @@ from app.modules.contracts.services.common import (
     message_ws_payload,
     proposal_fields,
     resolve_actor_user_ids,
+    resolve_contract_due_date,
 )
 from app.utils.audit import AuditLogger
 from app.enums import PaymentType
@@ -32,8 +33,13 @@ class ContractCreateMixin:
         buyer_user_id: int | None = None,
     ) -> dict:
         data = proposal_fields(proposal)
-        ptype = enum_value(payment_type) if payment_type else PaymentType.split_payment.value
+        ptype = enum_value(payment_type) if payment_type else PaymentType.full_postpayment.value
         start_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        due_date = resolve_contract_due_date(
+            start_date,
+            data.get("delivery_time"),
+            data.get("rfq_deadline"),
+        )
         async with self.connection() as conn:
             contract = await conn.fetchrow(
                 """
@@ -58,7 +64,7 @@ class ContractCreateMixin:
                 data["price"],
                 data["currency"],
                 start_date,
-                data["rfq_deadline"],
+                due_date,
                 ptype,
             )
             plan = await conn.fetchrow(

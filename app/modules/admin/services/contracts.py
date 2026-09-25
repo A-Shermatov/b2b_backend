@@ -15,7 +15,38 @@ from app.modules.admin.services.common import (
     resolve_owner_user_id,
     with_reason,
 )
+from app.modules.contracts.services.common import (
+    file_uploader_side,
+    resolve_actor_user_ids,
+    sender_display_name,
+)
 from app.modules.finance.services import FinanceLedgerService
+
+
+def _shape_admin_contract_file(
+    row,
+    *,
+    buyer_user_ids: set[int],
+    supplier_user_ids: set[int],
+) -> dict:
+    uploaded_by = row["uploaded_by"]
+    return {
+        "id": row["id"],
+        "file_name": row["file_name"],
+        "file_url": file_url(row["file_url"]),
+        "file_type": row["file_type"],
+        "uploaded_by": uploaded_by,
+        "uploaded_by_name": sender_display_name(
+            row["first_name"],
+            row["last_name"],
+            row["email"],
+            uploaded_by,
+        ),
+        "uploaded_by_side": file_uploader_side(
+            uploaded_by, buyer_user_ids, supplier_user_ids
+        ),
+        "created_at": row["created_at"],
+    }
 
 
 def _contract_search_sql(normalized: str, params: list) -> str:
@@ -267,11 +298,22 @@ class AdminContractsMixin:
             milestones = await _load_milestones(conn, contract_id)
             files = await conn.fetch(
                 """
-                SELECT id, file_name, file_url, file_type, uploaded_by, created_at
-                FROM contract_files WHERE contract_id = $1
-                ORDER BY created_at DESC
+                SELECT
+                    cf.id, cf.file_name, cf.file_url, cf.file_type,
+                    cf.uploaded_by, cf.created_at,
+                    u.first_name, u.last_name, u.email
+                FROM contract_files cf
+                LEFT JOIN users u ON u.id = cf.uploaded_by
+                WHERE cf.contract_id = $1
+                ORDER BY cf.created_at DESC
                 """,
                 contract_id,
+            )
+            buyer_user_ids = set(
+                await resolve_actor_user_ids(conn, contract["buyer_actor_id"])
+            )
+            supplier_user_ids = set(
+                await resolve_actor_user_ids(conn, contract["supplier_actor_id"])
             )
             messages = await conn.fetch(
                 """
@@ -328,14 +370,11 @@ class AdminContractsMixin:
                 ),
                 "milestones": milestones,
                 "files": [
-                    {
-                        "id": row["id"],
-                        "file_name": row["file_name"],
-                        "file_url": file_url(row["file_url"]),
-                        "file_type": row["file_type"],
-                        "uploaded_by": row["uploaded_by"],
-                        "created_at": row["created_at"],
-                    }
+                    _shape_admin_contract_file(
+                        row,
+                        buyer_user_ids=buyer_user_ids,
+                        supplier_user_ids=supplier_user_ids,
+                    )
                     for row in files
                 ],
                 "messages": [dict(row) for row in messages],
@@ -589,11 +628,22 @@ class AdminContractsMixin:
             )
             files = await conn.fetch(
                 """
-                SELECT id, file_name, file_url, file_type, uploaded_by, created_at
-                FROM contract_files WHERE contract_id = $1
-                ORDER BY created_at DESC
+                SELECT
+                    cf.id, cf.file_name, cf.file_url, cf.file_type,
+                    cf.uploaded_by, cf.created_at,
+                    u.first_name, u.last_name, u.email
+                FROM contract_files cf
+                LEFT JOIN users u ON u.id = cf.uploaded_by
+                WHERE cf.contract_id = $1
+                ORDER BY cf.created_at DESC
                 """,
                 extra["contract_id"],
+            )
+            buyer_user_ids = set(
+                await resolve_actor_user_ids(conn, dispute["buyer_actor_id"])
+            )
+            supplier_user_ids = set(
+                await resolve_actor_user_ids(conn, dispute["supplier_actor_id"])
             )
             messages = await conn.fetch(
                 """
@@ -648,14 +698,11 @@ class AdminContractsMixin:
                     for row in evidence
                 ],
                 "files": [
-                    {
-                        "id": row["id"],
-                        "file_name": row["file_name"],
-                        "file_url": file_url(row["file_url"]),
-                        "file_type": row["file_type"],
-                        "uploaded_by": row["uploaded_by"],
-                        "created_at": row["created_at"],
-                    }
+                    _shape_admin_contract_file(
+                        row,
+                        buyer_user_ids=buyer_user_ids,
+                        supplier_user_ids=supplier_user_ids,
+                    )
                     for row in files
                 ],
                 "messages": [dict(row) for row in messages],

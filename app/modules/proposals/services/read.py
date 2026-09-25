@@ -33,7 +33,11 @@ class ProposalReadMixin:
         async with self.connection() as conn:
             rows = await conn.fetch(
                 PROPOSAL_SELECT
-                + " WHERE p.supplier_actor_id = $1 ORDER BY p.created_at DESC",
+                + """
+                WHERE p.supplier_actor_id = $1
+                  AND p.status::text <> 'accepted'
+                ORDER BY p.created_at DESC
+                """,
                 supplier_id,
             )
         return [proposal_to_response(row) for row in rows]

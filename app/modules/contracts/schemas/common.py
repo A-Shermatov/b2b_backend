@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
@@ -68,6 +69,8 @@ class ContractFileSchema(FileUrlMixin):
     file_url: str
     file_type: str
     uploaded_by: int
+    uploaded_by_name: str
+    uploaded_by_side: Literal["buyer", "supplier"] | None = None
     created_at: datetime
 
 

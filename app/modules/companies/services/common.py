@@ -132,7 +132,18 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
     )
 
 
+def compute_success_rate(completed: int, disputed: int) -> float | None:
+    total = completed + disputed
+    if total <= 0:
+        return None
+    return round(completed / total * 100, 1)
+
+
 def row_to_public_supplier(row) -> PublicSupplier:
+    completed = int(row["completed_contracts"] or 0)
+    active = int(row["active_contracts"] or 0)
+    disputed = int(row["disputed_contracts"] or 0)
+    success_rate = compute_success_rate(completed, disputed)
     if row["kind"] == "company" and row["company_id"]:
         rating = float(row["average_rating"] or row["rating"] or 0)
         return PublicSupplier(
@@ -150,6 +161,10 @@ def row_to_public_supplier(row) -> PublicSupplier:
             industries=list(row["industries"] or []),
             active_catalog_count=int(row["active_catalog_count"] or 0),
             trust_level=row["trust_level"],
+            completed_contracts=completed,
+            active_contracts=active,
+            disputed_contracts=disputed,
+            success_rate=success_rate,
         )
     display = row["display_name"]
     if not display:
@@ -170,4 +185,8 @@ def row_to_public_supplier(row) -> PublicSupplier:
         industries=[],
         active_catalog_count=int(row["active_catalog_count"] or 0),
         trust_level=row["trust_level"],
+        completed_contracts=completed,
+        active_contracts=active,
+        disputed_contracts=disputed,
+        success_rate=success_rate,
     )

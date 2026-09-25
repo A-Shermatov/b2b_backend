@@ -116,6 +116,7 @@ class ProposalUpdateMixin:
                         "supplier_actor_id": row["supplier_actor_id"],
                         "price": row["price"],
                         "currency": row["currency"],
+                        "delivery_time": row["delivery_time"],
                         "rfq_id": row["rfq_id"],
                         "rfq": {
                             "id": row["rfq_id"],

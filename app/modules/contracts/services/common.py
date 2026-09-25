@@ -1,4 +1,6 @@
 import json
+import re
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
@@ -6,6 +8,7 @@ from app.enums import PaymentMilestoneStatus, PaymentMilestoneTrigger, PaymentTy
 from app.utils.storage import public_file_url
 
 ACTIVE_DISPUTE_STATUSES = ("open", "under_review", "appealed")
+_DELIVERY_DAYS_RE = re.compile(r"(\d+)")
 
 CONTRACT_COLUMNS = """
     c.id, c.rfq_id, c.proposal_id, c.buyer_actor_id, c.supplier_actor_id,
@@ -119,6 +122,33 @@ def _custom_milestones(contract, milestones: list[dict]) -> list[dict]:
     return result
 
 
+def parse_delivery_days(value) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = _DELIVERY_DAYS_RE.search(text)
+    if not match:
+        return None
+    days = int(match.group(1))
+    return days if days > 0 else None
+
+
+def resolve_contract_due_date(
+    start_date: str,
+    delivery_time,
+    fallback: str | None,
+) -> str:
+    days = parse_delivery_days(delivery_time)
+    if days is not None:
+        start = datetime.strptime(start_date[:10], "%Y-%m-%d")
+        return (start + timedelta(days=days)).strftime("%Y-%m-%d")
+    if fallback:
+        return str(fallback)[:10]
+    return start_date[:10]
+
+
 def proposal_fields(proposal) -> dict:
     if isinstance(proposal, dict):
         rfq = proposal.get("rfq") or {}
@@ -128,6 +158,7 @@ def proposal_fields(proposal) -> dict:
             "supplier_actor_id": proposal["supplier_actor_id"],
             "price": proposal["price"],
             "currency": enum_value(currency),
+            "delivery_time": proposal.get("delivery_time"),
             "rfq_id": proposal.get("rfq_id") or rfq.get("id"),
             "rfq_title": rfq.get("title") or proposal.get("title"),
             "rfq_description": rfq.get("description") or proposal.get("description"),
@@ -139,6 +170,7 @@ def proposal_fields(proposal) -> dict:
         "supplier_actor_id": proposal.supplier_actor_id,
         "price": proposal.price,
         "currency": enum_value(proposal.currency),
+        "delivery_time": getattr(proposal, "delivery_time", None),
         "rfq_id": rfq.id,
         "rfq_title": rfq.title,
         "rfq_description": rfq.description,
@@ -149,6 +181,52 @@ def proposal_fields(proposal) -> dict:
 def sender_display_name(first_name, last_name, email, user_id) -> str:
     name = f"{first_name or ''} {last_name or ''}".strip()
     return name or email or f"User #{user_id}"
+
+
+def file_uploader_side(
+    uploaded_by: int | None,
+    buyer_user_ids: set[int],
+    supplier_user_ids: set[int],
+) -> str | None:
+    if uploaded_by is None:
+        return None
+    in_buyer = uploaded_by in buyer_user_ids
+    in_supplier = uploaded_by in supplier_user_ids
+    if in_buyer and not in_supplier:
+        return "buyer"
+    if in_supplier and not in_buyer:
+        return "supplier"
+    return None
+
+
+def shape_contract_file(
+    item,
+    *,
+    buyer_user_ids: set[int],
+    supplier_user_ids: set[int],
+    include_contract_id: bool = True,
+) -> dict:
+    uploaded_by = item["uploaded_by"]
+    payload = {
+        "id": item["id"],
+        "file_name": item["file_name"],
+        "file_url": public_file_url(item["file_url"]),
+        "file_type": item["file_type"],
+        "uploaded_by": uploaded_by,
+        "uploaded_by_name": sender_display_name(
+            item["first_name"],
+            item["last_name"],
+            item["email"],
+            uploaded_by,
+        ),
+        "uploaded_by_side": file_uploader_side(
+            uploaded_by, buyer_user_ids, supplier_user_ids
+        ),
+        "created_at": item["created_at"],
+    }
+    if include_contract_id:
+        payload["contract_id"] = item["contract_id"]
+    return payload
 
 
 def message_to_dict(row) -> dict:
@@ -317,10 +395,20 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
 
     files = await conn.fetch(
         """
-        SELECT id, contract_id, file_name, file_url, file_type, uploaded_by, created_at
-        FROM contract_files WHERE contract_id = $1 ORDER BY id
+        SELECT
+            cf.id, cf.contract_id, cf.file_name, cf.file_url, cf.file_type,
+            cf.uploaded_by, cf.created_at,
+            u.first_name, u.last_name, u.email
+        FROM contract_files cf
+        LEFT JOIN users u ON u.id = cf.uploaded_by
+        WHERE cf.contract_id = $1
+        ORDER BY cf.id
         """,
         contract_id,
+    )
+    buyer_user_ids = set(await resolve_actor_user_ids(conn, contract["buyer_actor_id"]))
+    supplier_user_ids = set(
+        await resolve_actor_user_ids(conn, contract["supplier_actor_id"])
     )
     submissions = await conn.fetch(
         """
@@ -396,15 +484,11 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
         "conversation": conversation,
         "dispute": dispute,
         "files": [
-            {
-                "id": item["id"],
-                "contract_id": item["contract_id"],
-                "file_name": item["file_name"],
-                "file_url": public_file_url(item["file_url"]),
-                "file_type": item["file_type"],
-                "uploaded_by": item["uploaded_by"],
-                "created_at": item["created_at"],
-            }
+            shape_contract_file(
+                item,
+                buyer_user_ids=buyer_user_ids,
+                supplier_user_ids=supplier_user_ids,
+            )
             for item in files
         ],
         "submissions": [

@@ -25,7 +25,20 @@ SUPPLIER_SELECT = """
         (
             SELECT COUNT(*) FROM catalog_items ci
             WHERE ci.actor_id = a.id AND ci.status::text = 'active'
-        ) AS active_catalog_count
+        ) AS active_catalog_count,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.supplier_actor_id = a.id AND ct.status::text = 'completed'
+        ) AS completed_contracts,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.supplier_actor_id = a.id
+              AND ct.status::text IN ('active', 'delivered', 'pending_payment')
+        ) AS active_contracts,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.supplier_actor_id = a.id AND ct.status::text = 'disputed'
+        ) AS disputed_contracts
     FROM actors a
     LEFT JOIN companies c ON c.id = a.company_id
     LEFT JOIN company_stats cs ON cs.company_id = c.id

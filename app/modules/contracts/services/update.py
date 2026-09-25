@@ -8,6 +8,7 @@ from app.modules.contracts.services.common import (
     message_ws_payload,
     resolve_actor_user_ids,
 )
+from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
 
 
@@ -173,7 +174,9 @@ class ContractUpdateMixin:
                     """,
                     contract_id,
                 )
-            return await load_contract_schema(conn, contract_id)
+            result = await load_contract_schema(conn, contract_id)
+        await NotificationService().notify_contract_closed(row)
+        return result
 
     async def reject_submission(self, contract_id: int, submission_id: int, buyer_id: int):
         async with self.connection() as conn:
