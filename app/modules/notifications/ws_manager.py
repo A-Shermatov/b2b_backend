@@ -12,7 +12,7 @@ class NotificationConnectionManager:
         self._connections: dict[int, set[WebSocket]] = defaultdict(set)
 
     async def connect(self, user_id: int, websocket: WebSocket) -> None:
-        await websocket.accept()
+        """Register an already-accepted websocket for the user."""
         self._connections[user_id].add(websocket)
 
     def disconnect(self, user_id: int, websocket: WebSocket) -> None:

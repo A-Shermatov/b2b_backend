@@ -35,6 +35,8 @@ async def _user_id_from_token(token: str) -> int | None:
 
 @ws_router.websocket("/notifications")
 async def notifications_websocket(websocket: WebSocket) -> None:
+    await websocket.accept()
+
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4401)
