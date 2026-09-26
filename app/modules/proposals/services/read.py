@@ -35,7 +35,7 @@ class ProposalReadMixin:
                 PROPOSAL_SELECT
                 + """
                 WHERE p.supplier_actor_id = $1
-                  AND p.status::text <> 'accepted'
+                  AND p.status::text NOT IN ('accepted', 'archived')
                 ORDER BY p.created_at DESC
                 """,
                 supplier_id,

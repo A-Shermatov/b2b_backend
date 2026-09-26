@@ -373,7 +373,8 @@ CREATE TYPE public.proposal_status AS ENUM (
     'shortlisted',
     'accepted',
     'rejected',
-    'withdrawn'
+    'withdrawn',
+    'archived'
 );
 
 

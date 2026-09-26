@@ -14,7 +14,7 @@ PROPOSAL_COLUMNS = """
 """
 
 OPEN_CHAT_STATUSES = ("submitted", "viewed", "shortlisted")
-FINAL_PROPOSAL_STATUSES = ("accepted", "rejected", "withdrawn")
+FINAL_PROPOSAL_STATUSES = ("accepted", "rejected", "withdrawn", "archived")
 
 
 def attachment_from_row(row) -> dict | None:

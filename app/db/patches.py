@@ -71,6 +71,21 @@ COMPAT_PATCHES = [
     END
     $$;
     """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_enum
+            JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+            WHERE pg_type.typname = 'proposal_status'
+              AND pg_enum.enumlabel = 'archived'
+        ) THEN
+            ALTER TYPE proposal_status ADD VALUE 'archived';
+        END IF;
+    END
+    $$;
+    """,
     _create_enum_sql("rfq_report_reason", ("spam", "fraud", "counterfeit", "abuse", "other")),
     _create_enum_sql("proposal_report_reason", ("spam", "fraud", "counterfeit", "abuse", "other")),
     _create_enum_sql("rfq_report_status", ("open", "resolved", "dismissed")),

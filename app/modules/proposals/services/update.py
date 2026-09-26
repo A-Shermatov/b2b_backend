@@ -98,10 +98,10 @@ class ProposalUpdateMixin:
                 await conn.execute(
                     """
                     UPDATE proposals
-                    SET status = 'rejected'::proposal_status
+                    SET status = 'archived'::proposal_status
                     WHERE rfq_id = $1
                       AND id <> $2
-                      AND status::text NOT IN ('rejected', 'withdrawn')
+                      AND status::text NOT IN ('rejected', 'withdrawn', 'archived')
                     """,
                     row["rfq_id"],
                     proposal_id,

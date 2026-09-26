@@ -15,7 +15,8 @@ uvicorn app.main:app --reload --port 8000
 
 > **Note:** Docker Postgres uses host port **5433** (not 5432) to avoid conflict with a local PostgreSQL installation on Windows.
 
-API docs: http://localhost:8000/docs
+API docs (Docker Compose host port): http://localhost:8080/docs  
+Local uvicorn without compose publish remap: http://localhost:8000/docs
 
 ## File storage
 

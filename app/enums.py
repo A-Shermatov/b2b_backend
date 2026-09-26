@@ -111,6 +111,7 @@ class ProposalStatus(str, enum.Enum):
     accepted = "accepted"
     rejected = "rejected"
     withdrawn = "withdrawn"
+    archived = "archived"
 
 
 class ProposalReportReason(str, enum.Enum):
