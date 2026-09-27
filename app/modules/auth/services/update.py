@@ -86,7 +86,7 @@ class AuthUpdateMixin:
                         WHEN u.role_id IS NULL OR u.role_id IN (
                             SELECT id FROM roles WHERE name IN ('buyer', 'supplier', 'both')
                         )
-                        THEN (SELECT id FROM roles WHERE name = $1)
+                        THEN (SELECT id FROM roles WHERE name = $1::text)
                         ELSE u.role_id
                     END,
                     updated_at = NOW()
