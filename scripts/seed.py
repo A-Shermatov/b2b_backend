@@ -69,7 +69,7 @@ async def insert_user(
         )
         VALUES (
             $1, $2, $3, $4, $5::user_role,
-            (SELECT id FROM roles WHERE name = $5),
+            (SELECT id FROM roles WHERE name = $5::text),
             'active'::user_status, NOW(), NOW()
         )
         RETURNING id, email, first_name, last_name, role::text AS role

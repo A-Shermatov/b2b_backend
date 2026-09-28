@@ -38,7 +38,7 @@ class AuthCreateMixin:
                     VALUES (
                         $1, $2, $3, $4, $5,
                         $6::user_role,
-                        (SELECT id FROM roles WHERE name = $6),
+                        (SELECT id FROM roles WHERE name = $6::text),
                         'active', NOW(), NOW()
                     )
                     RETURNING {USER_COLUMNS}
