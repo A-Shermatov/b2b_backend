@@ -18,6 +18,8 @@ from app.modules.contracts.services.common import (
     resolve_actor_user_ids,
     resolve_contract_due_date,
 )
+from app.modules.finance.services.commission import calculate_commission, split_commission
+from app.modules.settings.service import get_platform_settings
 from app.utils.audit import AuditLogger
 from app.enums import PaymentType
 from app.modules.notifications.ws_manager import notification_ws_manager
@@ -41,17 +43,21 @@ class ContractCreateMixin:
             data.get("rfq_deadline"),
         )
         async with self.connection() as conn:
+            settings = await get_platform_settings(conn, use_cache=False)
+            quote = calculate_commission(float(data["price"]), data["currency"], settings)
             contract = await conn.fetchrow(
                 """
                 INSERT INTO contracts (
                     rfq_id, proposal_id, buyer_actor_id, supplier_actor_id,
                     title, description, agreed_amount, currency, start_date, due_date,
-                    payment_type, status, created_at
+                    payment_type, status, created_at,
+                    commission_amount, commission_percent, commission_min
                 )
                 VALUES (
                     $1, $2, $3, $4,
                     $5, $6, $7, $8::contract_currency, $9, $10,
-                    $11::payment_type, 'pending_payment'::contract_status, NOW()
+                    $11::payment_type, 'pending_payment'::contract_status, NOW(),
+                    $12, $13, $14
                 )
                 RETURNING id, agreed_amount
                 """,
@@ -66,6 +72,9 @@ class ContractCreateMixin:
                 start_date,
                 due_date,
                 ptype,
+                quote.amount,
+                quote.percent,
+                quote.minimum,
             )
             plan = await conn.fetchrow(
                 """
@@ -80,15 +89,19 @@ class ContractCreateMixin:
                 plan_milestones = _custom_milestones(contract, milestones)
             else:
                 plan_milestones = _default_milestones(contract, ptype)
-            for item in plan_milestones:
+            commission_parts = split_commission(
+                quote.amount,
+                [float(item["amount"]) for item in plan_milestones],
+            )
+            for item, commission_part in zip(plan_milestones, commission_parts):
                 await conn.execute(
                     """
                     INSERT INTO payment_milestones (
                         payment_plan_id, contract_id, title, percentage, amount,
-                        trigger, status
+                        trigger, status, commission_amount
                     )
                     VALUES (
-                        $1, $2, $3, $4, $5, $6, $7::milestone_status
+                        $1, $2, $3, $4, $5, $6, $7::milestone_status, $8
                     )
                     """,
                     plan["id"],
@@ -98,6 +111,7 @@ class ContractCreateMixin:
                     item["amount"],
                     item["trigger"],
                     enum_value(item["status"]),
+                    commission_part,
                 )
             await conn.execute(
                 "INSERT INTO conversations (contract_id) VALUES ($1)",

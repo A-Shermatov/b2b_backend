@@ -1,8 +1,11 @@
+from app.modules.admin.services.analytics import AdminAnalyticsMixin
 from app.modules.admin.services.base import AdminServiceBase
+from app.modules.admin.services.categories import AdminCategoriesMixin
 from app.modules.admin.services.catalog import AdminCatalogMixin
 from app.modules.admin.services.companies import AdminCompaniesMixin
 from app.modules.admin.services.contracts import AdminContractsMixin
 from app.modules.admin.services.dashboard import AdminDashboardMixin
+from app.modules.admin.services.escrow import AdminEscrowMixin
 from app.modules.admin.services.finance import AdminFinanceMixin
 from app.modules.admin.services.marketplace import AdminMarketplaceMixin
 from app.modules.admin.services.reports import AdminReportsMixin
@@ -18,6 +21,9 @@ class AdminService(
     AdminContractsMixin,
     AdminFinanceMixin,
     AdminReportsMixin,
+    AdminCategoriesMixin,
+    AdminEscrowMixin,
+    AdminAnalyticsMixin,
     AdminServiceBase,
 ):
     pass

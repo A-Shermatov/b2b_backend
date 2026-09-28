@@ -14,7 +14,8 @@ CONTRACT_COLUMNS = """
     c.id, c.rfq_id, c.proposal_id, c.buyer_actor_id, c.supplier_actor_id,
     c.title, c.description, c.agreed_amount, c.currency::text AS currency,
     c.start_date, c.due_date, c.payment_type::text AS payment_type,
-    c.status::text AS status, c.created_at
+    c.status::text AS status, c.created_at,
+    c.commission_amount, c.commission_percent, c.commission_min
 """
 
 
@@ -353,7 +354,7 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
         milestone_rows = await conn.fetch(
             """
             SELECT id, contract_id, title, percentage, amount, trigger,
-                   status::text AS status
+                   status::text AS status, commission_amount
             FROM payment_milestones
             WHERE payment_plan_id = $1
             ORDER BY id
@@ -480,6 +481,9 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
         "payment_type": contract["payment_type"],
         "status": contract["status"],
         "created_at": contract["created_at"],
+        "commission_amount": contract["commission_amount"],
+        "commission_percent": contract["commission_percent"],
+        "commission_min": contract["commission_min"],
         "payment_plan": payment_plan,
         "conversation": conversation,
         "dispute": dispute,

@@ -22,6 +22,7 @@ from app.modules.contracts.services.common import (
     sender_display_name,
 )
 from app.modules.finance.services import FinanceLedgerService
+from app.modules.finance.services.commission import record_milestone_releases
 
 
 def _shape_admin_contract_file(
@@ -448,17 +449,20 @@ class AdminContractsMixin:
                 if contract["status"] == "completed":
                     raise ConflictError("Contract is already completed")
                 status = "completed"
-                await conn.execute(
-                    """
-                    UPDATE payment_milestones m
-                    SET status = 'released'::milestone_status
-                    FROM payment_plans p
-                    WHERE m.payment_plan_id = p.id
-                      AND p.contract_id = $1
-                      AND m.status::text = 'funded'
-                    """,
-                    contract_id,
-                )
+                async with conn.transaction():
+                    released = await conn.fetch(
+                        """
+                        UPDATE payment_milestones m
+                        SET status = 'released'::milestone_status
+                        FROM payment_plans p
+                        WHERE m.payment_plan_id = p.id
+                          AND p.contract_id = $1
+                          AND m.status::text = 'funded'
+                        RETURNING m.id
+                        """,
+                        contract_id,
+                    )
+                    await record_milestone_releases(conn, [item["id"] for item in released])
             elif action == "open_investigation":
                 if contract["status"] in {"completed", "cancelled"}:
                     raise ConflictError("Cannot open investigation on a closed contract")
@@ -787,18 +791,21 @@ class AdminContractsMixin:
                 dispute_status = "resolved"
                 resolution = "release_funds"
                 contract_status = "completed"
-                await conn.execute(
-                    """
-                    UPDATE payment_milestones m
-                    SET status = 'released'::milestone_status
-                    FROM payment_plans p
-                    WHERE m.payment_plan_id = p.id
-                      AND p.contract_id = $1
-                      AND m.status::text = ANY($2::text[])
-                    """,
-                    dispute["contract_id"],
-                    list(movable),
-                )
+                async with conn.transaction():
+                    released = await conn.fetch(
+                        """
+                        UPDATE payment_milestones m
+                        SET status = 'released'::milestone_status
+                        FROM payment_plans p
+                        WHERE m.payment_plan_id = p.id
+                          AND p.contract_id = $1
+                          AND m.status::text = ANY($2::text[])
+                        RETURNING m.id
+                        """,
+                        dispute["contract_id"],
+                        list(movable),
+                    )
+                    await record_milestone_releases(conn, [item["id"] for item in released])
             elif action == "refund_buyer":
                 dispute_status = "resolved"
                 resolution = "refund_buyer"
@@ -837,12 +844,22 @@ class AdminContractsMixin:
                 pool = sum(m["amount"] for m in milestones if m["status"] in movable)
                 if partial_buyer_amount > pool + 1e-6:
                     raise ValidationError("partial_buyer_amount exceeds escrow pool")
+                previous_statuses = {m["id"]: m["status"] for m in milestones}
                 apply_partial_refund(milestones, movable, partial_buyer_amount)
-                for milestone in milestones:
-                    await conn.execute(
-                        "UPDATE payment_milestones SET status = $1::milestone_status WHERE id = $2",
-                        milestone["status"],
-                        milestone["id"],
+                async with conn.transaction():
+                    for milestone in milestones:
+                        await conn.execute(
+                            "UPDATE payment_milestones SET status = $1::milestone_status WHERE id = $2",
+                            milestone["status"],
+                            milestone["id"],
+                        )
+                    await record_milestone_releases(
+                        conn,
+                        [
+                            m["id"]
+                            for m in milestones
+                            if m["status"] == "released" and previous_statuses[m["id"]] != "released"
+                        ],
                     )
                 dispute_status = "resolved"
                 resolution = "partial_refund"

@@ -169,8 +169,14 @@ def finance_view_sql(view: str) -> str | None:
     return f"pp.type::text = '{payment_type}'"
 
 
+ESCROW_HELD_STATUSES = ("funded", "in_progress", "submitted", "approved")
+ESCROW_DISPUTED_STATUSES = ("disputed",)
+ESCROW_AWAITING_STATUSES = ("awaiting_payment",)
+ESCROW_LOCKED_STATUSES = ESCROW_HELD_STATUSES + ESCROW_DISPUTED_STATUSES
+
+
 def escrow_summary(milestones: list, currency: str) -> dict:
-    held_statuses = {"funded", "submitted", "in_progress", "awaiting_payment"}
+    held_statuses = set(ESCROW_HELD_STATUSES)
     held = released = disputed = 0.0
     for milestone in milestones:
         status = milestone["status"] if isinstance(milestone, dict) else enum_value(milestone.status)

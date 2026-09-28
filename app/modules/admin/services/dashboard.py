@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from app.modules.admin.services.common import ESCROW_LOCKED_STATUSES
+
 
 class AdminDashboardMixin:
     async def get_dashboard(self) -> dict:
@@ -39,10 +41,9 @@ class AdminDashboardMixin:
                         """
                         SELECT COALESCE(SUM(amount), 0.0)
                         FROM payment_milestones
-                        WHERE status::text IN (
-                            'funded', 'in_progress', 'submitted', 'approved', 'disputed'
-                        )
-                        """
+                        WHERE status::text = ANY($1::text[])
+                        """,
+                        list(ESCROW_LOCKED_STATUSES),
                     )
                 ),
                 "open_disputes": int(

@@ -217,4 +217,45 @@ COMPAT_PATCHES = [
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id INTEGER;",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS company_id INTEGER;",
     "ALTER TABLE reviews ALTER COLUMN created_at SET DEFAULT NOW();",
+    """
+    CREATE TABLE IF NOT EXISTS platform_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value JSONB,
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    INSERT INTO platform_settings (key, value) VALUES
+        ('commission_percent', '5'::jsonb),
+        ('commission_min', '0'::jsonb),
+        ('max_contract_amount', 'null'::jsonb)
+    ON CONFLICT (key) DO NOTHING;
+    """,
+    """
+    INSERT INTO permissions (name, resource, action)
+    SELECT v.name, v.resource, v.action
+    FROM (VALUES
+        ('platform_settings.view', 'platform_settings', 'view'),
+        ('platform_settings.update', 'platform_settings', 'update')
+    ) AS v(name, resource, action)
+    WHERE NOT EXISTS (SELECT 1 FROM permissions p WHERE p.name = v.name);
+    """,
+    """
+    INSERT INTO role_permissions (role_id, permission_id)
+    SELECT r.id, p.id
+    FROM roles r
+    JOIN permissions p ON (
+        (r.name IN ('admin', 'superadmin') AND p.name IN ('platform_settings.view', 'platform_settings.update'))
+        OR (r.name = 'moderator' AND p.name = 'platform_settings.view')
+    )
+    WHERE NOT EXISTS (
+        SELECT 1 FROM role_permissions rp
+        WHERE rp.role_id = r.id AND rp.permission_id = p.id
+    );
+    """,
+    "ALTER TABLE contracts ADD COLUMN IF NOT EXISTS commission_amount DOUBLE PRECISION NOT NULL DEFAULT 0;",
+    "ALTER TABLE contracts ADD COLUMN IF NOT EXISTS commission_percent DOUBLE PRECISION;",
+    "ALTER TABLE contracts ADD COLUMN IF NOT EXISTS commission_min DOUBLE PRECISION;",
+    "ALTER TABLE payment_milestones ADD COLUMN IF NOT EXISTS commission_amount DOUBLE PRECISION NOT NULL DEFAULT 0;",
 ]

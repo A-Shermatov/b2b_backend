@@ -1,4 +1,5 @@
 from app.core.exceptions import ConflictError, ForbiddenError
+from app.modules.finance.services.commission import ensure_contract_amount_allowed
 from app.modules.notifications.services import NotificationService
 from app.modules.proposals.schemas import ProposalCreate, ProposalMessageCreate
 from app.modules.proposals.services.common import (
@@ -9,6 +10,7 @@ from app.modules.proposals.services.common import (
     proposal_to_response,
 )
 from app.modules.rfqs.services.common import fetch_invites_map, load_rfq_row
+from app.modules.settings.service import get_platform_settings
 
 
 class ProposalCreateMixin:
@@ -31,6 +33,9 @@ class ProposalCreateMixin:
             )
             if existing:
                 raise ConflictError("Proposal already submitted")
+            ensure_contract_amount_allowed(
+                data.price, data.currency, await get_platform_settings(conn)
+            )
             row = await conn.fetchrow(
                 """
                 INSERT INTO proposals (
