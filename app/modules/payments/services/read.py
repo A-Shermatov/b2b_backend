@@ -128,7 +128,8 @@ class PaymentReadMixin:
         async with self.connection() as conn:
             rows = await conn.fetch(
                 """
-                SELECT m.amount, m.status::text AS status, c.currency::text AS currency
+                SELECT m.amount - COALESCE(m.commission_amount, 0) AS amount,
+                       m.status::text AS status, c.currency::text AS currency
                 FROM payment_milestones m
                 JOIN contracts c ON c.id = m.contract_id
                 WHERE c.supplier_actor_id = $1

@@ -8,6 +8,7 @@ from app.modules.contracts.services.common import (
     message_ws_payload,
     resolve_actor_user_ids,
 )
+from app.modules.finance.services.commission import record_milestone_releases
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
 
@@ -158,14 +159,16 @@ class ContractUpdateMixin:
                     "UPDATE rfqs SET status = 'completed'::rfq_status WHERE id = $1",
                     row["rfq_id"],
                 )
-                await conn.execute(
+                released = await conn.fetch(
                     """
                     UPDATE payment_milestones
                     SET status = 'released'::milestone_status
                     WHERE contract_id = $1 AND status::text = 'funded'
+                    RETURNING id
                     """,
                     contract_id,
                 )
+                await record_milestone_releases(conn, [item["id"] for item in released])
                 await conn.execute(
                     """
                     UPDATE payment_milestones

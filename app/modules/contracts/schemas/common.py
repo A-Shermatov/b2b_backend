@@ -16,6 +16,7 @@ class PaymentMilestoneSchema(BaseModel):
     amount: float
     trigger: str
     status: str
+    commission_amount: float = 0.0
 
 
 class PaymentPlanSchema(BaseModel):
@@ -115,6 +116,9 @@ class ContractSchema(BaseModel):
     payment_type: str
     status: str
     created_at: datetime
+    commission_amount: float = 0.0
+    commission_percent: float | None = None
+    commission_min: float | None = None
 
 
 class ContractWithRelations(ContractSchema):

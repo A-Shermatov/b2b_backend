@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from app.core.exceptions import ConflictError, ForbiddenError
 from app.modules.contracts.services import ContractService
+from app.modules.finance.services.commission import ensure_contract_amount_allowed
 from app.modules.notifications.services import NotificationService
 from app.modules.proposals.schemas import ProposalUpdate
 from app.modules.proposals.services.common import (
@@ -10,6 +11,7 @@ from app.modules.proposals.services.common import (
     load_proposal_row,
     proposal_to_response,
 )
+from app.modules.settings.service import get_platform_settings
 from app.enums import PaymentType
 
 
@@ -21,6 +23,12 @@ class ProposalUpdateMixin:
                 raise ForbiddenError("Access denied")
             if row["status"] != "submitted":
                 raise ConflictError("Proposal cannot be edited")
+            if data.price is not None or data.currency is not None:
+                ensure_contract_amount_allowed(
+                    data.price if data.price is not None else row["price"],
+                    data.currency if data.currency is not None else row["currency"],
+                    await get_platform_settings(conn),
+                )
             sets = []
             params: list = []
             if data.price is not None:
@@ -91,6 +99,9 @@ class ProposalUpdateMixin:
                     raise ForbiddenError("Access denied")
                 if row["status"] in FINAL_PROPOSAL_STATUSES:
                     raise ConflictError("Proposal already finalized")
+                ensure_contract_amount_allowed(
+                    row["price"], row["currency"], await get_platform_settings(conn, use_cache=False)
+                )
                 await conn.execute(
                     "UPDATE proposals SET status = 'accepted'::proposal_status WHERE id = $1",
                     proposal_id,

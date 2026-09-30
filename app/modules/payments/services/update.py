@@ -42,27 +42,20 @@ class PaymentUpdateMixin:
         return {"id": milestone_id, "status": "funded"}
 
     async def approve_milestone(self, milestone_id: int, buyer_id: int):
-        async with self.connection() as conn:
-            row = await self._load_milestone_contract(conn, milestone_id)
-            if row["buyer_actor_id"] != buyer_id:
-                raise ForbiddenError("Access denied")
-            if row["status"] != "funded":
-                raise ConflictError("Milestone must be funded first")
-            await conn.execute(
-                "UPDATE payment_milestones SET status = 'released'::milestone_status WHERE id = $1",
-                milestone_id,
-            )
-        if row["supplier_actor_id"]:
-            from app.modules.finance.services import SupplierFinanceService
+        from app.modules.finance.services.commission import record_milestone_release
 
-            await SupplierFinanceService().create_invoice_for_milestone(
-                row["supplier_actor_id"],
-                row["contract_id"],
-                row["id"],
-                row["title"],
-                row["amount"],
-                row["currency"],
-            )
+        async with self.connection() as conn:
+            async with conn.transaction():
+                row = await self._load_milestone_contract(conn, milestone_id)
+                if row["buyer_actor_id"] != buyer_id:
+                    raise ForbiddenError("Access denied")
+                if row["status"] != "funded":
+                    raise ConflictError("Milestone must be funded first")
+                await conn.execute(
+                    "UPDATE payment_milestones SET status = 'released'::milestone_status WHERE id = $1",
+                    milestone_id,
+                )
+                await record_milestone_release(conn, milestone_id)
         return {"id": milestone_id, "status": "released"}
 
     async def mock_confirm_payment(self, milestone_id: int, buyer_id: int) -> dict:

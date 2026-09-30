@@ -44,6 +44,7 @@ RESOURCE_ALIASES_RU: dict[str, str] = {
     "admin_finance": "Финансы платформы",
     "admin_reports": "Жалобы",
     "admin_dashboard": "Дашборд",
+    "platform_settings": "Настройки платформы",
     "roles": "Роли",
 }
 
