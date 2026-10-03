@@ -1,10 +1,11 @@
 from app.core.exceptions import ConflictError, NotFoundError
-from app.core.permissions import PROTECTED_ROLE_NAMES
-from app.modules.roles.services.common import role_from_row
+from app.core.permissions import PROTECTED_ROLE_NAMES, STAFF_RANK, STAFF_ROLE_SCOPE
+from app.modules.admin.services.common import log_admin
+from app.modules.roles.services.common import assign_staff_role, role_from_row
 
 
 class RoleCreateMixin:
-    async def create_role(self, name: str, description: str | None):
+    async def create_role(self, name: str, description: str | None, actor):
         cleaned = name.strip()
         if cleaned.lower() in PROTECTED_ROLE_NAMES:
             raise ConflictError("This role name is reserved")
@@ -17,28 +18,24 @@ class RoleCreateMixin:
                 raise ConflictError("Role already exists")
             row = await conn.fetchrow(
                 """
-                INSERT INTO roles (name, description, is_system, is_active)
-                VALUES ($1, $2, FALSE, TRUE)
+                INSERT INTO roles (name, description, is_system, is_active, scope)
+                VALUES ($1, $2, FALSE, TRUE, $3)
                 RETURNING id, name, description, is_system, is_active
                 """,
                 cleaned,
                 description,
+                STAFF_ROLE_SCOPE,
             )
+            await log_admin(conn, actor.id, "admin.role.create", "role", row["id"], {"name": cleaned})
         return role_from_row(row)
 
-    async def assign_role(self, user_id: int, role_id: int) -> None:
+    async def assign_role(self, user_id: int, role_id: int, actor) -> None:
         async with self.connection() as conn:
-            role = await conn.fetchrow(
-                "SELECT id, name, is_active FROM roles WHERE id = $1",
-                role_id,
-            )
-            if not role or not role["is_active"] or role["name"] in PROTECTED_ROLE_NAMES:
-                raise NotFoundError("Role not found")
-            user = await conn.fetchrow("SELECT id FROM users WHERE id = $1", user_id)
-            if not user:
-                raise NotFoundError("User not found")
-            await conn.execute(
-                "UPDATE users SET role_id = $1, updated_at = NOW() WHERE id = $2",
-                role_id,
+            user = await conn.fetchrow(
+                "SELECT id, role::text AS role FROM users WHERE id = $1",
                 user_id,
             )
+            if not user or user["role"] not in STAFF_RANK:
+                raise NotFoundError("Staff user not found")
+            await assign_staff_role(conn, actor, dict(user), role_id)
+            await log_admin(conn, actor.id, "admin.role.assign", "user", user_id, {"role_id": role_id})

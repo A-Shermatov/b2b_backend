@@ -18,6 +18,7 @@ class RoleResponse(BaseModel):
     description: str | None = None
     is_system: bool
     is_active: bool
+    users_count: int = 0
 
 
 class PermissionActionCell(BaseModel):

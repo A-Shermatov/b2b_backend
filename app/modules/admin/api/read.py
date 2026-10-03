@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, Query
 from fastapi.responses import Response
 
+from app.deps import admin_perm
 from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
     AdminCatalogDetail,
@@ -26,12 +27,20 @@ from app.modules.admin.schemas import (
 )
 
 
-@router.get("/dashboard", response_model=AdminDashboardResponse)
+@router.get(
+    "/dashboard",
+    response_model=AdminDashboardResponse,
+    dependencies=[Depends(admin_perm("admin_dashboard.view"))],
+)
 async def admin_dashboard():
     return await AdminService().get_dashboard()
 
 
-@router.get("/users", response_model=AdminUsersResponse)
+@router.get(
+    "/users",
+    response_model=AdminUsersResponse,
+    dependencies=[Depends(admin_perm("admin_users.view"))],
+)
 async def admin_list_users(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -46,7 +55,11 @@ async def admin_list_users(
     )
 
 
-@router.get("/companies", response_model=AdminCompaniesResponse)
+@router.get(
+    "/companies",
+    response_model=AdminCompaniesResponse,
+    dependencies=[Depends(admin_perm("admin_companies.view"))],
+)
 async def admin_list_companies(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -61,17 +74,28 @@ async def admin_list_companies(
     )
 
 
-@router.get("/companies/pending-verification")
+@router.get(
+    "/companies/pending-verification",
+    dependencies=[Depends(admin_perm("admin_companies.view"))],
+)
 async def admin_pending_verification():
     return await AdminService().list_pending_verification()
 
 
-@router.get("/companies/{company_id}", response_model=AdminCompanyDetail)
+@router.get(
+    "/companies/{company_id}",
+    response_model=AdminCompanyDetail,
+    dependencies=[Depends(admin_perm("admin_companies.view"))],
+)
 async def admin_get_company(company_id: int):
     return await AdminService().get_company_detail(company_id)
 
 
-@router.get("/catalog", response_model=AdminCatalogListResponse)
+@router.get(
+    "/catalog",
+    response_model=AdminCatalogListResponse,
+    dependencies=[Depends(admin_perm("admin_catalog.view"))],
+)
 async def admin_list_catalog(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -86,12 +110,20 @@ async def admin_list_catalog(
     )
 
 
-@router.get("/catalog/{item_id}", response_model=AdminCatalogDetail)
+@router.get(
+    "/catalog/{item_id}",
+    response_model=AdminCatalogDetail,
+    dependencies=[Depends(admin_perm("admin_catalog.view"))],
+)
 async def admin_get_catalog_item(item_id: int):
     return await AdminService().get_catalog_item_detail(item_id)
 
 
-@router.get("/rfqs", response_model=AdminRfqListResponse)
+@router.get(
+    "/rfqs",
+    response_model=AdminRfqListResponse,
+    dependencies=[Depends(admin_perm("admin_rfqs.view"))],
+)
 async def admin_list_rfqs(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -106,12 +138,20 @@ async def admin_list_rfqs(
     )
 
 
-@router.get("/rfqs/{rfq_id}", response_model=AdminRfqDetail)
+@router.get(
+    "/rfqs/{rfq_id}",
+    response_model=AdminRfqDetail,
+    dependencies=[Depends(admin_perm("admin_rfqs.view"))],
+)
 async def admin_get_rfq(rfq_id: str):
     return await AdminService().get_rfq_detail(rfq_id)
 
 
-@router.get("/proposals", response_model=AdminProposalListResponse)
+@router.get(
+    "/proposals",
+    response_model=AdminProposalListResponse,
+    dependencies=[Depends(admin_perm("admin_proposals.view"))],
+)
 async def admin_list_proposals(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -126,12 +166,20 @@ async def admin_list_proposals(
     )
 
 
-@router.get("/proposals/{proposal_id}", response_model=AdminProposalDetail)
+@router.get(
+    "/proposals/{proposal_id}",
+    response_model=AdminProposalDetail,
+    dependencies=[Depends(admin_perm("admin_proposals.view"))],
+)
 async def admin_get_proposal(proposal_id: int):
     return await AdminService().get_proposal_detail(proposal_id)
 
 
-@router.get("/contracts", response_model=AdminContractListResponse)
+@router.get(
+    "/contracts",
+    response_model=AdminContractListResponse,
+    dependencies=[Depends(admin_perm("admin_contracts.view"))],
+)
 async def admin_list_contracts(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -146,12 +194,20 @@ async def admin_list_contracts(
     )
 
 
-@router.get("/contracts/{contract_id}", response_model=AdminContractDetail)
+@router.get(
+    "/contracts/{contract_id}",
+    response_model=AdminContractDetail,
+    dependencies=[Depends(admin_perm("admin_contracts.view"))],
+)
 async def admin_get_contract(contract_id: int):
     return await AdminService().get_contract_detail(contract_id)
 
 
-@router.get("/disputes", response_model=AdminDisputeListResponse)
+@router.get(
+    "/disputes",
+    response_model=AdminDisputeListResponse,
+    dependencies=[Depends(admin_perm("admin_disputes.view"))],
+)
 async def admin_list_disputes(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -166,12 +222,20 @@ async def admin_list_disputes(
     )
 
 
-@router.get("/disputes/{dispute_id}", response_model=AdminDisputeDetail)
+@router.get(
+    "/disputes/{dispute_id}",
+    response_model=AdminDisputeDetail,
+    dependencies=[Depends(admin_perm("admin_disputes.view"))],
+)
 async def admin_get_dispute(dispute_id: int):
     return await AdminService().get_dispute_detail(dispute_id)
 
 
-@router.get("/finance", response_model=AdminFinanceListResponse)
+@router.get(
+    "/finance",
+    response_model=AdminFinanceListResponse,
+    dependencies=[Depends(admin_perm("admin_finance.view"))],
+)
 async def admin_list_finance(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -192,7 +256,10 @@ async def admin_list_finance(
     )
 
 
-@router.get("/finance/export")
+@router.get(
+    "/finance/export",
+    dependencies=[Depends(admin_perm("admin_finance.view"))],
+)
 async def admin_export_finance(
     view: Literal[
         "platform_revenue",
@@ -217,12 +284,20 @@ async def admin_export_finance(
     )
 
 
-@router.get("/finance/{payment_id}", response_model=AdminFinanceDetail)
+@router.get(
+    "/finance/{payment_id}",
+    response_model=AdminFinanceDetail,
+    dependencies=[Depends(admin_perm("admin_finance.view"))],
+)
 async def admin_get_finance(payment_id: int):
     return await AdminService().get_finance_detail(payment_id)
 
 
-@router.get("/reports", response_model=AdminReportListResponse)
+@router.get(
+    "/reports",
+    response_model=AdminReportListResponse,
+    dependencies=[Depends(admin_perm("admin_reports.view"))],
+)
 async def admin_list_reports(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -237,7 +312,11 @@ async def admin_list_reports(
     )
 
 
-@router.get("/reports/{target_type}/{report_id}", response_model=AdminReportDetail)
+@router.get(
+    "/reports/{target_type}/{report_id}",
+    response_model=AdminReportDetail,
+    dependencies=[Depends(admin_perm("admin_reports.view"))],
+)
 async def admin_get_report(
     target_type: Literal["catalog", "rfq", "proposal"],
     report_id: int,

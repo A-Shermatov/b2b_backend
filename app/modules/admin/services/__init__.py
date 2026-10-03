@@ -7,13 +7,16 @@ from app.modules.admin.services.contracts import AdminContractsMixin
 from app.modules.admin.services.dashboard import AdminDashboardMixin
 from app.modules.admin.services.escrow import AdminEscrowMixin
 from app.modules.admin.services.finance import AdminFinanceMixin
+from app.modules.admin.services.logs import AdminLogsMixin
 from app.modules.admin.services.marketplace import AdminMarketplaceMixin
 from app.modules.admin.services.reports import AdminReportsMixin
+from app.modules.admin.services.staff import AdminStaffMixin
 from app.modules.admin.services.users import AdminUsersMixin
 
 
 class AdminService(
     AdminUsersMixin,
+    AdminStaffMixin,
     AdminDashboardMixin,
     AdminCompaniesMixin,
     AdminCatalogMixin,
@@ -24,6 +27,7 @@ class AdminService(
     AdminCategoriesMixin,
     AdminEscrowMixin,
     AdminAnalyticsMixin,
+    AdminLogsMixin,
     AdminServiceBase,
 ):
     pass

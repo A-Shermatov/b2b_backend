@@ -1,5 +1,6 @@
+from app.core.permissions import STAFF_PLATFORM_ROLES, fetch_permission_names
 from app.modules.actors.services import ActorService, user_capabilities
-from app.modules.auth.schemas import CompanySummary, MeResponse
+from app.modules.auth.schemas import CompanySummary, MeResponse, StaffRoleSummary
 from app.modules.auth.services.common import actor_to_summary, load_user, shape_user_public
 
 
@@ -29,6 +30,17 @@ class AuthReadMixin:
                 user_id,
             )
             actors = await actor_svc.list_for_user(user_id)
+            permissions = await fetch_permission_names(
+                conn, role_id=user.get("role_id"), role_name=user["role"]
+            )
+            staff_role = None
+            if user["role"] in STAFF_PLATFORM_ROLES and user.get("role_id"):
+                role_row = await conn.fetchrow(
+                    "SELECT id, name, description FROM roles WHERE id = $1",
+                    user["role_id"],
+                )
+                if role_row:
+                    staff_role = StaffRoleSummary(**dict(role_row))
 
         memberships = {row["company_id"]: dict(row) for row in membership_rows}
         companies = [
@@ -60,4 +72,6 @@ class AuthReadMixin:
             capabilities=user_capabilities(user["role"]),
             companies=companies,
             active_company_id=active_company_id,
+            permissions=sorted(permissions),
+            staff_role=staff_role,
         )

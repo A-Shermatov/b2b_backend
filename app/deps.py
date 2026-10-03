@@ -7,7 +7,12 @@ from fastapi import Depends, Header, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.exceptions import ForbiddenError, UnauthorizedError
-from app.core.permissions import ensure_permission, fetch_permission_names
+from app.core.permissions import (
+    STAFF_PLATFORM_ROLES,
+    ensure_permission,
+    fetch_permission_names,
+    has_permission,
+)
 from app.core.security_core import decode_token
 from app.database import pool
 from app.modules.actors.services import ActorService
@@ -18,7 +23,7 @@ security = HTTPBearer(auto_error=False)
 FINANCE_ROLES = {"director", "admin", "accountant"}
 FULL_COMPANY_ROLES = {"director", "admin"}
 RFQ_ROLES = FULL_COMPANY_ROLES | {"moderator"}
-ADMIN_ROLES = {"admin", "superadmin", "moderator"}
+ADMIN_ROLES = STAFF_PLATFORM_ROLES
 
 
 @dataclass
@@ -255,6 +260,17 @@ async def require_admin(
     return user
 
 
+def admin_perm(*codes: str):
+    async def _check(
+        user: Annotated[CurrentUser, Depends(require_admin)],
+    ) -> CurrentUser:
+        if not any(has_permission(user, code) for code in codes):
+            raise ForbiddenError("Insufficient permissions")
+        return user
+
+    return _check
+
+
 async def require_buyer_ctx(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     x_actor_id: Annotated[int | None, Header(alias="X-Actor-Id")] = None,
@@ -362,6 +378,7 @@ __all__ = [
     "supplier_perm",
     "require_supplier_ctx",
     "require_admin",
+    "admin_perm",
     "get_client_ip",
     "Pagination",
     "PaginationDep",
