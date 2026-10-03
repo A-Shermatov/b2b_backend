@@ -50,6 +50,25 @@ async def test_activate_supplier_role(client, buyer_auth):
 
 
 @pytest.mark.asyncio
+async def test_buyer_list_without_actor_header_uses_individual_actor(client, buyer_auth):
+    headers = {"Authorization": f"Bearer {buyer_auth['token']}"}
+    res = await client.get(f"{API}/buyer/rfqs/", headers=headers)
+    assert res.status_code == 200, res.text
+
+
+@pytest.mark.asyncio
+async def test_buyer_list_with_foreign_actor_header_is_forbidden(client, buyer_auth, supplier_auth):
+    if not supplier_auth["actor_id"]:
+        pytest.skip("No supplier actor")
+    headers = {
+        "Authorization": f"Bearer {buyer_auth['token']}",
+        "X-Actor-Id": str(supplier_auth["actor_id"]),
+    }
+    res = await client.get(f"{API}/buyer/rfqs/", headers=headers)
+    assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
 async def test_invalid_actor_header_does_not_break_me(client, buyer_auth):
     headers = {
         **buyer_auth["headers"],
