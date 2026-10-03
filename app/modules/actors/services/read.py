@@ -119,7 +119,9 @@ class ActorReadMixin:
             return await self.get_company_actor(x_company_id, side)
 
         if strict:
-            return None
+            if side is None:
+                return None
+            return await self.get_individual_actor(user_id, side)
 
         actors = await self.list_for_user(user_id)
         if side:
