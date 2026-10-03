@@ -78,6 +78,12 @@ class CompanySummary(BaseModel):
     role: str | None = None
 
 
+class StaffRoleSummary(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+
+
 class MeResponse(BaseModel):
     user: UserPublic
     actors: list[ActorSummary]
@@ -85,6 +91,8 @@ class MeResponse(BaseModel):
     capabilities: dict[str, bool]
     companies: list[CompanySummary] = []
     active_company_id: int | None = None
+    permissions: list[str] = []
+    staff_role: StaffRoleSummary | None = None
 
 
 class SwitchActorRequest(BaseModel):

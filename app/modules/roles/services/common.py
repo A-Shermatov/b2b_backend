@@ -1,8 +1,15 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.permissions import (
     PROTECTED_ROLE_NAMES,
+    STAFF_ROLE_SCOPE,
     action_bucket,
+    is_staff_resource,
+    is_superadmin,
+    permission_names,
     resource_alias_ru,
+    staff_platform_role_for,
+    staff_role_rank,
+    user_staff_rank,
 )
 from app.modules.roles.schemas.common import (
     PermissionActionCell,
@@ -38,28 +45,91 @@ def role_from_row(row) -> RoleResponse:
         description=row["description"],
         is_system=row["is_system"],
         is_active=row["is_active"],
+        users_count=int(row.get("users_count") or 0),
     )
 
 
-def assert_role_mutable(row, *, renaming: bool = False) -> None:
-    if row["name"] in PROTECTED_ROLE_NAMES and renaming:
-        raise ForbiddenError("This role cannot be renamed")
-    if row["name"] in PROTECTED_ROLE_NAMES and not renaming:
-        raise ForbiddenError("This role cannot be deleted")
-
-
-async def load_role(conn, role_id: int):
+async def load_staff_role(conn, role_id: int):
     row = await conn.fetchrow(
         """
-        SELECT id, name, description, is_system, is_active
+        SELECT id, name, description, is_system, is_active, scope
         FROM roles
         WHERE id = $1 AND is_active = TRUE
         """,
         role_id,
     )
-    if not row:
+    if not row or row["scope"] != STAFF_ROLE_SCOPE or row["name"] in PROTECTED_ROLE_NAMES:
         raise NotFoundError("Role not found")
     return row
+
+
+async def fetch_staff_permissions(conn) -> list[dict]:
+    rows = await conn.fetch(
+        """
+        SELECT id, name, resource, action
+        FROM permissions
+        WHERE is_active = TRUE
+        ORDER BY resource, action
+        """
+    )
+    return [dict(row) for row in rows if is_staff_resource(row["resource"])]
+
+
+async def role_permission_names(conn, role_id: int) -> set[str]:
+    rows = await conn.fetch(
+        """
+        SELECT p.name
+        FROM role_permissions rp
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE rp.role_id = $1 AND rp.is_active = TRUE AND p.is_active = TRUE
+        """,
+        role_id,
+    )
+    return {row["name"] for row in rows}
+
+
+def ensure_can_manage_role(actor, role_row) -> None:
+    """Only staff with a strictly higher rank may change or grant a role."""
+    if is_superadmin(actor):
+        return
+    if staff_role_rank(role_row["name"]) >= user_staff_rank(actor):
+        raise ForbiddenError("You cannot manage this role")
+
+
+def ensure_permissions_subset(actor, names: set[str]) -> None:
+    """Staff cannot grant permissions they do not hold themselves."""
+    if is_superadmin(actor):
+        return
+    missing = names - permission_names(actor)
+    if missing:
+        raise ForbiddenError("You cannot grant permissions you do not have")
+
+
+def ensure_can_manage_staff_user(actor, target) -> None:
+    actor_id = actor["id"] if isinstance(actor, dict) else actor.id
+    if int(target["id"]) == int(actor_id):
+        raise ForbiddenError("You cannot change your own staff account")
+    if user_staff_rank(target) >= user_staff_rank(actor):
+        raise ForbiddenError("You cannot change this staff account")
+
+
+async def assign_staff_role(conn, actor, target, role_id: int):
+    """Set users.role_id and the matching users.role for a staff account."""
+    ensure_can_manage_staff_user(actor, target)
+    role = await load_staff_role(conn, role_id)
+    ensure_can_manage_role(actor, role)
+    ensure_permissions_subset(actor, await role_permission_names(conn, role_id))
+    await conn.execute(
+        """
+        UPDATE users
+        SET role = $1::user_role, role_id = $2, updated_at = NOW()
+        WHERE id = $3
+        """,
+        staff_platform_role_for(role["name"]),
+        role_id,
+        target["id"],
+    )
+    return role
 
 
 def _pick_representative(rows: list[dict], bucket: str) -> dict | None:

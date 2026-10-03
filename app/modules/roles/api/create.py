@@ -11,14 +11,14 @@ from app.modules.roles.services import RoleService
 @router.post("/roles", response_model=RoleResponse, status_code=201)
 async def create_role(
     data: RoleCreate,
-    _: Annotated[CurrentUser, Depends(require_roles_manage)],
+    user: Annotated[CurrentUser, Depends(require_roles_manage)],
 ):
-    return await RoleService().create_role(data.name, data.description)
+    return await RoleService().create_role(data.name, data.description, user)
 
 
 @router.post("/roles/assign", status_code=204)
 async def assign_role(
     data: AssignRoleRequest,
-    _: Annotated[CurrentUser, Depends(require_roles_manage)],
+    user: Annotated[CurrentUser, Depends(require_roles_manage)],
 ):
-    await RoleService().assign_role(data.user_id, data.role_id)
+    await RoleService().assign_role(data.user_id, data.role_id, user)

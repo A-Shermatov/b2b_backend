@@ -44,11 +44,42 @@ RESOURCE_ALIASES_RU: dict[str, str] = {
     "admin_finance": "Финансы платформы",
     "admin_reports": "Жалобы",
     "admin_dashboard": "Дашборд",
+    "admin_staff": "Сотрудники",
+    "audit_logs": "Журнал действий",
     "platform_settings": "Настройки платформы",
     "roles": "Роли",
 }
 
 PROTECTED_ROLE_NAMES = frozenset({"superadmin"})
+STAFF_PLATFORM_ROLES = frozenset({"admin", "superadmin", "moderator"})
+STAFF_RANK = {
+    "moderator": 1,
+    "admin": 2,
+    "superadmin": 3,
+}
+STAFF_ROLE_SCOPE = "staff"
+MARKETPLACE_ROLE_NAMES = frozenset({"buyer", "supplier", "both"})
+STAFF_RESOURCE_PREFIX = "admin_"
+STAFF_EXTRA_RESOURCES = frozenset({"platform_settings", "roles", "audit_logs"})
+
+
+def is_staff_resource(resource: str) -> bool:
+    name = resource or ""
+    return name.startswith(STAFF_RESOURCE_PREFIX) or name in STAFF_EXTRA_RESOURCES
+
+
+def staff_platform_role_for(role_name: str) -> str:
+    """users.role value that matches a staff RBAC role."""
+    return "admin" if role_name == "admin" else "moderator"
+
+
+def staff_role_rank(role_name: str) -> int:
+    return STAFF_RANK[staff_platform_role_for(role_name)]
+
+
+def user_staff_rank(user) -> int:
+    role = user["role"] if isinstance(user, dict) else getattr(user, "role", None)
+    return STAFF_RANK.get((role or "").lower(), 0)
 
 
 def action_bucket(action: str) -> str | None:

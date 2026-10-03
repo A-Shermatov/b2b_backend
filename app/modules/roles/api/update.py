@@ -12,9 +12,9 @@ from app.modules.roles.services import RoleService
 async def update_role(
     role_id: int,
     data: RoleUpdate,
-    _: Annotated[CurrentUser, Depends(require_roles_manage)],
+    user: Annotated[CurrentUser, Depends(require_roles_manage)],
 ):
-    return await RoleService().update_role(role_id, data)
+    return await RoleService().update_role(role_id, data, user)
 
 
 @router.put("/roles/{role_id}/matrix", response_model=RolePermissionMatrixResponse)
@@ -23,12 +23,12 @@ async def update_role_matrix(
     data: RolePermissionMatrixUpdate,
     user: Annotated[CurrentUser, Depends(require_roles_manage)],
 ):
-    return await RoleService().replace_matrix(role_id, data.permission_ids, user.role_id)
+    return await RoleService().replace_matrix(role_id, data.permission_ids, user)
 
 
 @router.delete("/roles/{role_id}", status_code=204)
 async def delete_role(
     role_id: int,
-    _: Annotated[CurrentUser, Depends(require_roles_manage)],
+    user: Annotated[CurrentUser, Depends(require_roles_manage)],
 ):
-    await RoleService().delete_role(role_id)
+    await RoleService().delete_role(role_id, user)

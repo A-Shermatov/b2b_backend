@@ -74,6 +74,40 @@ async def upsert_moderator(
     return row["id"]
 
 
+async def upsert_staff_user(
+    *,
+    email: str,
+    password: str,
+    role_name: str,
+    platform_role: str = "moderator",
+) -> int:
+    pwd = hash_password(password)
+    return await fetchval(
+        """
+        INSERT INTO users (
+            email, password_hash, first_name, last_name, role, role_id, status,
+            created_at, updated_at
+        )
+        VALUES (
+            $1, $2, 'Test', 'Staff', $3::user_role,
+            (SELECT id FROM roles WHERE name = $4 AND is_active = TRUE),
+            'active'::user_status, NOW(), NOW()
+        )
+        ON CONFLICT (email) DO UPDATE SET
+            password_hash = EXCLUDED.password_hash,
+            role = EXCLUDED.role,
+            role_id = EXCLUDED.role_id,
+            status = 'active'::user_status,
+            updated_at = NOW()
+        RETURNING id
+        """,
+        email,
+        pwd,
+        platform_role,
+        role_name,
+    )
+
+
 async def user_id_by_email(email: str) -> int:
     user_id = await fetchval("SELECT id FROM users WHERE email = $1", email)
     if user_id is None:

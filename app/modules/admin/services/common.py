@@ -3,14 +3,9 @@ from typing import Any
 
 from app.utils.storage import public_file_url
 
+from app.core.permissions import STAFF_RANK
 from app.modules.notifications.services import NotificationService
 from app.utils.audit import AuditLogger
-
-STAFF_RANK = {
-    "moderator": 1,
-    "admin": 2,
-    "superadmin": 3,
-}
 
 USER_COLUMNS = """
     id, email, first_name, last_name, phone,

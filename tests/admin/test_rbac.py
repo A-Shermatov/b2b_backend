@@ -1,6 +1,8 @@
 import pytest
 
-from tests.sql import fetch, fetchrow, upsert_moderator
+from tests.admin.test_disputes import _create_contract, _open_dispute
+from tests.sql import fetch, fetchrow, fetchval, upsert_moderator
+from tests.staff import create_role_with_permissions, create_staff, login_headers, unique_suffix
 
 
 @pytest.mark.asyncio
@@ -251,6 +253,89 @@ async def test_moderator_can_verify_but_cannot_block_company(client, admin_auth)
         headers=admin_auth["headers"],
     )
     assert restore_res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispute_only_role_is_limited_to_disputes(
+    client, admin_auth, buyer_auth, supplier_auth
+):
+    if not buyer_auth["actor_id"] or not supplier_auth["actor_id"]:
+        pytest.skip("Missing actor fixtures")
+
+    role_id = await create_role_with_permissions(
+        client,
+        admin_auth["headers"],
+        f"disputes-{unique_suffix()}",
+        ["admin_disputes.view", "admin_disputes.update"],
+    )
+    staff = await create_staff(client, admin_auth["headers"], role_id)
+    assert staff["platform_role"] == "moderator"
+    headers = await login_headers(client, staff["email"])
+
+    me_res = await client.get("/api/v1/auth/me", headers=headers)
+    assert me_res.status_code == 200, me_res.text
+    me = me_res.json()
+    assert me["permissions"] == ["admin_disputes.update", "admin_disputes.view"]
+    assert me["staff_role"]["id"] == role_id
+
+    contract_id = await _create_contract(
+        client, buyer_auth, supplier_auth, "Dispute-only moderator"
+    )
+    await _open_dispute(client, buyer_auth, contract_id, "Проверка доступа модератора споров")
+    dispute_id = await fetchval("SELECT id FROM disputes WHERE contract_id = $1", contract_id)
+
+    list_res = await client.get("/api/v1/admin/disputes", headers=headers)
+    assert list_res.status_code == 200, list_res.text
+    detail_res = await client.get(f"/api/v1/admin/disputes/{dispute_id}", headers=headers)
+    assert detail_res.status_code == 200, detail_res.text
+    action_res = await client.post(
+        f"/api/v1/admin/disputes/{dispute_id}/action",
+        json={"action": "request_evidence", "reason": "Приложите акты"},
+        headers=headers,
+    )
+    assert action_res.status_code == 200, action_res.text
+
+    for path in (
+        "/api/v1/admin/dashboard",
+        "/api/v1/admin/users",
+        "/api/v1/admin/companies",
+        "/api/v1/admin/finance",
+        "/api/v1/admin/contracts",
+        "/api/v1/admin/staff",
+        "/api/v1/admin/roles",
+    ):
+        denied = await client.get(path, headers=headers)
+        assert denied.status_code == 403, f"{path}: {denied.status_code}"
+
+    company_action = await client.post(
+        "/api/v1/admin/companies/1/action",
+        json={"action": "approve"},
+        headers=headers,
+    )
+    assert company_action.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_blocked_staff_loses_access(client, admin_auth):
+    role_id = await create_role_with_permissions(
+        client,
+        admin_auth["headers"],
+        f"blocked-{unique_suffix()}",
+        ["admin_disputes.view"],
+    )
+    staff = await create_staff(client, admin_auth["headers"], role_id)
+    headers = await login_headers(client, staff["email"])
+
+    blocked = await client.patch(
+        f"/api/v1/admin/staff/{staff['id']}",
+        json={"status": "blocked"},
+        headers=admin_auth["headers"],
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["status"] == "blocked"
+
+    res = await client.get("/api/v1/admin/disputes", headers=headers)
+    assert res.status_code in (401, 403)
 
 
 @pytest.mark.asyncio
