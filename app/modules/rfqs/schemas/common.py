@@ -78,6 +78,7 @@ class ProductRfqCreate(BaseModel):
     deadline: str
     visibility: str = "public"
     status: str | None = "draft"
+    invited_supplier_ids: list[int] = Field(default_factory=list, max_length=50)
     quantity: int = Field(ge=1)
     delivery_country: str
     delivery_city: str
@@ -97,6 +98,7 @@ class ServiceRfqCreate(BaseModel):
     deadline: str
     visibility: str = "public"
     status: str | None = "draft"
+    invited_supplier_ids: list[int] = Field(default_factory=list, max_length=50)
     project_duration: str
     start_date: str
     team_size_required: int | None = None
@@ -107,4 +109,4 @@ RfqCreate = Union[ProductRfqCreate, ServiceRfqCreate]
 
 
 class InviteSuppliersRequest(BaseModel):
-    supplier_ids: list[int]
+    supplier_ids: list[int] = Field(min_length=1, max_length=50)

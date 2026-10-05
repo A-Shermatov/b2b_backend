@@ -1,5 +1,14 @@
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from app.modules.rfqs.services.common import RFQ_UPDATABLE, load_rfq_response, load_rfq_row
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.modules.rfqs.services.common import (
+    OPEN_RFQ_STATUSES,
+    RFQ_UPDATABLE,
+    fetch_invites_map,
+    insert_invites,
+    load_rfq_response,
+    load_rfq_row,
+    notify_invited_suppliers,
+    validate_supplier_actor_ids,
+)
 
 
 class RfqUpdateMixin:
@@ -48,6 +57,9 @@ class RfqUpdateMixin:
                 raise ForbiddenError("Access denied")
             if row["status"] != "draft":
                 raise ConflictError("Only draft RFQs can be published")
+            invited = (await fetch_invites_map(conn, [rfq_id]))[rfq_id]
+            if row["visibility"] == "invited_only" and not invited:
+                raise ValidationError("Исполнитель для персональной заявки не найден")
             await conn.execute(
                 """
                 UPDATE rfqs
@@ -56,7 +68,10 @@ class RfqUpdateMixin:
                 """,
                 rfq_id,
             )
-            return await load_rfq_response(conn, rfq_id)
+            response = await load_rfq_response(conn, rfq_id)
+        if invited:
+            await notify_invited_suppliers(rfq_id, row["title"], invited)
+        return response
 
     async def close(self, rfq_id: str, actor_id: int):
         async with self.connection() as conn:
@@ -97,37 +112,25 @@ class RfqUpdateMixin:
                 row = await load_rfq_row(conn, rfq_id)
                 if row["actor_id"] != actor_id:
                     raise ForbiddenError("Access denied")
-                invited_any = False
-                for sid in supplier_ids:
-                    actor = await conn.fetchrow(
-                        """
-                        SELECT id FROM actors
-                        WHERE id = $1
-                          AND kind::text = 'company'
-                          AND side::text = 'supplier'
-                          AND is_active = TRUE
-                        """,
-                        sid,
-                    )
-                    if not actor:
-                        continue
-                    await conn.execute(
-                        """
-                        INSERT INTO rfq_invited_suppliers (rfq_id, supplier_actor_id)
-                        VALUES ($1, $2)
-                        ON CONFLICT (rfq_id, supplier_actor_id) DO NOTHING
-                        """,
-                        rfq_id,
-                        sid,
-                    )
-                    invited_any = True
-                if invited_any:
-                    await conn.execute(
-                        """
-                        UPDATE rfqs
-                        SET visibility = 'invited_only'::rfq_visibility, updated_at = NOW()
-                        WHERE id = $1
-                        """,
-                        rfq_id,
-                    )
-                return await load_rfq_response(conn, rfq_id)
+                if row["status"] not in ("draft", *OPEN_RFQ_STATUSES):
+                    raise ConflictError("RFQ is closed for invitations")
+                valid_ids = await validate_supplier_actor_ids(
+                    conn,
+                    supplier_ids,
+                    exclude_actor_id=actor_id,
+                )
+                if not valid_ids:
+                    raise ValidationError("Исполнитель для персональной заявки не найден")
+                newly_invited = await insert_invites(conn, rfq_id, valid_ids)
+                await conn.execute(
+                    """
+                    UPDATE rfqs
+                    SET visibility = 'invited_only'::rfq_visibility, updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    rfq_id,
+                )
+            response = await load_rfq_response(conn, rfq_id)
+        if newly_invited and row["status"] in OPEN_RFQ_STATUSES:
+            await notify_invited_suppliers(rfq_id, row["title"], newly_invited)
+        return response
