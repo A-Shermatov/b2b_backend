@@ -1,13 +1,17 @@
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.modules.rfqs.services.common import (
     BUYER_COLUMNS,
     BUYER_TAB_STATUSES,
     KNOWN_RFQ_STATUSES,
+    OPEN_RFQ_STATUSES,
     RFQ_COLUMNS,
     load_rfq_response,
     load_rfq_row,
+    shape_for_supplier,
     shape_rfq_rows,
 )
+
+HIDDEN_FROM_SUPPLIERS_STATUSES = {"draft", "archived"}
 
 
 class RfqReadMixin:
@@ -57,10 +61,11 @@ class RfqReadMixin:
                   )
                 ORDER BY r.updated_at DESC
                 """,
-                ["published", "receiving_proposals"],
+                OPEN_RFQ_STATUSES,
                 supplier_id,
             )
-            return await shape_rfq_rows(conn, rows, include_buyer=True)
+            shaped = await shape_rfq_rows(conn, rows, include_buyer=True)
+            return [shape_for_supplier(rfq, supplier_id) for rfq in shaped]
 
     async def list_public_board(self) -> list:
         async with self.connection() as conn:
@@ -73,7 +78,7 @@ class RfqReadMixin:
                 ORDER BY r.updated_at DESC
                 LIMIT 50
                 """,
-                ["published", "receiving_proposals"],
+                OPEN_RFQ_STATUSES,
             )
             return await shape_rfq_rows(conn, rows)
 
@@ -84,24 +89,33 @@ class RfqReadMixin:
         supplier_id: int | None = None,
     ):
         async with self.connection() as conn:
-            row = await load_rfq_row(conn, rfq_id, with_buyer=bool(supplier_id))
+            row = await load_rfq_row(conn, rfq_id)
+            if supplier_id:
+                await self._ensure_supplier_access(conn, row, supplier_id)
+                response = await load_rfq_response(conn, rfq_id, include_buyer=True)
+                return shape_for_supplier(response, supplier_id)
             if actor_id and row["actor_id"] != actor_id:
-                if supplier_id:
-                    if row["visibility"] == "invited_only":
-                        invited = await conn.fetchval(
-                            """
-                            SELECT 1 FROM rfq_invited_suppliers
-                            WHERE rfq_id = $1 AND supplier_actor_id = $2
-                            """,
-                            rfq_id,
-                            supplier_id,
-                        )
-                        if not invited:
-                            raise ForbiddenError("RFQ is invite-only")
-                else:
-                    raise ForbiddenError("Access denied")
-            return await load_rfq_response(
-                conn,
-                rfq_id,
-                include_buyer=bool(supplier_id),
+                raise ForbiddenError("Access denied")
+            return await load_rfq_response(conn, rfq_id)
+
+    async def _ensure_supplier_access(self, conn, row, supplier_id: int) -> None:
+        rfq_id = row["id"]
+        has_link = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM rfq_invited_suppliers
+                WHERE rfq_id = $1 AND supplier_actor_id = $2
+            ) OR EXISTS (
+                SELECT 1 FROM proposals
+                WHERE rfq_id = $1 AND supplier_actor_id = $2
             )
+            """,
+            rfq_id,
+            supplier_id,
+        )
+        if has_link:
+            return
+        if row["status"] in HIDDEN_FROM_SUPPLIERS_STATUSES:
+            raise NotFoundError("RFQ not found")
+        if row["visibility"] == "invited_only":
+            raise ForbiddenError("RFQ is invite-only")

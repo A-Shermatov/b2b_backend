@@ -1,4 +1,5 @@
 from app.core.exceptions import NotFoundError
+from app.modules.notifications.services import NotificationService
 from app.utils.storage import public_file_url
 
 RFQ_COLUMNS = """
@@ -224,6 +225,68 @@ async def fetch_invites_map(conn, rfq_ids: list[str]) -> dict[str, list[int]]:
     for row in rows:
         mapping[row["rfq_id"]].append(row["supplier_actor_id"])
     return mapping
+
+
+OPEN_RFQ_STATUSES = ["published", "receiving_proposals"]
+
+
+async def validate_supplier_actor_ids(
+    conn,
+    supplier_ids: list[int],
+    *,
+    exclude_actor_id: int | None = None,
+) -> list[int]:
+    unique_ids = list(dict.fromkeys(supplier_ids))
+    if not unique_ids:
+        return []
+    rows = await conn.fetch(
+        """
+        SELECT id FROM actors
+        WHERE id = ANY($1::int[])
+          AND side::text = 'supplier'
+          AND is_active = TRUE
+        """,
+        unique_ids,
+    )
+    valid = {row["id"] for row in rows}
+    return [sid for sid in unique_ids if sid in valid and sid != exclude_actor_id]
+
+
+async def insert_invites(conn, rfq_id: str, supplier_ids: list[int]) -> list[int]:
+    if not supplier_ids:
+        return []
+    rows = await conn.fetch(
+        """
+        INSERT INTO rfq_invited_suppliers (rfq_id, supplier_actor_id)
+        SELECT $1, unnest($2::int[])
+        ON CONFLICT (rfq_id, supplier_actor_id) DO NOTHING
+        RETURNING supplier_actor_id
+        """,
+        rfq_id,
+        supplier_ids,
+    )
+    return [row["supplier_actor_id"] for row in rows]
+
+
+async def notify_invited_suppliers(rfq_id: str, title: str, supplier_ids: list[int]) -> None:
+    service = NotificationService()
+    for supplier_id in supplier_ids:
+        await service.notify_actor_members(
+            supplier_id,
+            "rfq",
+            "Персональная заявка",
+            f"Заказчик отправил вам заявку «{title}»",
+            f"/supplier/rfqs/{rfq_id}",
+        )
+
+
+def shape_for_supplier(rfq: dict, supplier_id: int) -> dict:
+    invited_ids = rfq.get("invited_supplier_ids") or []
+    return {
+        **rfq,
+        "is_invited": supplier_id in invited_ids,
+        "invited_supplier_ids": [],
+    }
 
 
 async def load_rfq_row(conn, rfq_id: str, *, with_buyer: bool = False):
