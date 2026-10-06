@@ -10,17 +10,15 @@ from tests.sql import (
 API = "/api/v1"
 
 
-async def _hide_active_catalog_items(client, admin_auth) -> None:
+async def _hide_active_catalog_items(client, admin_auth, supplier_auth) -> None:
     list_res = await client.get(
-        f"{API}/admin/catalog",
-        params={"view": "all", "page_size": 100},
-        headers=admin_auth["headers"],
+        f"{API}/supplier/catalog/items",
+        params={"status": "active"},
+        headers=supplier_auth["headers"],
     )
     if list_res.status_code != 200:
         return
-    for item in list_res.json().get("items", []):
-        if item.get("status") != "active":
-            continue
+    for item in list_res.json():
         await client.post(
             f"{API}/admin/catalog/{item['id']}/action",
             json={"action": "hide", "reason": "Free catalog slots for reports tests"},
@@ -30,7 +28,7 @@ async def _hide_active_catalog_items(client, admin_auth) -> None:
 
 async def _create_pending_item(client, supplier_auth, admin_auth=None) -> int:
     if admin_auth:
-        await _hide_active_catalog_items(client, admin_auth)
+        await _hide_active_catalog_items(client, admin_auth, supplier_auth)
     categories = await client.get(f"{API}/public/categories")
     assert categories.status_code == 200
     category_id = categories.json()[0]["id"]

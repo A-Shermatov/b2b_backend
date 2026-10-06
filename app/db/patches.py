@@ -258,4 +258,27 @@ COMPAT_PATCHES = [
     "ALTER TABLE contracts ADD COLUMN IF NOT EXISTS commission_percent DOUBLE PRECISION;",
     "ALTER TABLE contracts ADD COLUMN IF NOT EXISTS commission_min DOUBLE PRECISION;",
     "ALTER TABLE payment_milestones ADD COLUMN IF NOT EXISTS commission_amount DOUBLE PRECISION NOT NULL DEFAULT 0;",
+    """
+    CREATE TABLE IF NOT EXISTS payment_gateway_transactions (
+        id SERIAL PRIMARY KEY,
+        order_id VARCHAR(64) NOT NULL UNIQUE,
+        gateway VARCHAR(20) NOT NULL,
+        milestone_id INTEGER NOT NULL REFERENCES payment_milestones(id),
+        contract_id INTEGER NOT NULL REFERENCES contracts(id),
+        buyer_actor_id INTEGER NOT NULL REFERENCES actors(id),
+        amount NUMERIC(14, 2) NOT NULL,
+        currency VARCHAR(10) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        external_transaction_id VARCHAR(64),
+        payment_url TEXT,
+        transaction_type VARCHAR(50),
+        account_masked VARCHAR(64),
+        raw_callback JSONB,
+        paid_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_payment_gateway_transactions_milestone_id ON payment_gateway_transactions (milestone_id);",
+    "CREATE INDEX IF NOT EXISTS ix_payment_gateway_transactions_external_id ON payment_gateway_transactions (external_transaction_id);",
 ]

@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.config import get_settings
 from app.modules.payments.api.common import (
     BuyerContext,
     PaymentService,
@@ -11,6 +12,14 @@ from app.modules.payments.api.common import (
     require_supplier_ctx,
     supplier_router,
 )
+
+
+@buyer_router.get("/config")
+async def payment_config(_ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)]):
+    settings = get_settings()
+    if settings.alif_enabled:
+        return {"provider": "alif", "currency": settings.alif_currency}
+    return {"provider": "mock", "currency": None}
 
 
 @buyer_router.get("/contracts/{contract_id}/milestones")

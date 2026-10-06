@@ -66,6 +66,9 @@ def public_file_url(stored: str | None) -> str:
                 return f"{base}/{rest}" if rest else base
         return value
 
+    if base.startswith("/") and (value == base or value.startswith(base + "/")):
+        return value
+
     path = value[1:] if value.startswith("/") else value
     if path.startswith("uploads/"):
         path = path[len("uploads/") :]
@@ -73,6 +76,33 @@ def public_file_url(stored: str | None) -> str:
     if _using_local:
         return f"{base}/uploads/{path}"
     return f"{base}/{path}"
+
+
+def storage_key_from_url(value: str | None) -> str:
+    if value is None:
+        return ""
+    url = value.strip()
+    if not url or url == "#" or url.startswith(("blob:", "data:")):
+        return url
+
+    prefixes = [_files_base()]
+    endpoint = _trim(settings.s3_endpoint_url or "")
+    if endpoint:
+        prefixes.append(f"{endpoint}/{settings.s3_bucket}")
+    prefixes.append(f"http://minio:9000/{settings.s3_bucket}")
+
+    for prefix in prefixes:
+        if prefix and url.startswith(prefix + "/"):
+            url = url[len(prefix) + 1 :]
+            break
+    else:
+        if url.startswith(("http://", "https://")):
+            return url
+
+    url = url.lstrip("/")
+    if url.startswith("uploads/"):
+        url = url[len("uploads/") :]
+    return url
 
 
 class FileUrlMixin(BaseModel):

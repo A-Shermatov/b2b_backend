@@ -69,6 +69,11 @@ async def init_db_schema(retries: int = 5, delay_seconds: float = 2.0) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if settings.alif_requested and not settings.alif_enabled:
+        logger.warning(
+            "PAYMENT_PROVIDER=alif but ALIF_TERMINAL_KEY/ALIF_TERMINAL_PASSWORD are not set; "
+            "milestone funding will fail until they are configured"
+        )
     await init_db_schema()
     if not pool.ready:
         await pool.init()

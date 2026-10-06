@@ -275,7 +275,7 @@ def submission_assets(file_names, raw_assets) -> list[dict]:
             {
                 "kind": kind,
                 "name": name,
-                "url": public_file_url(url),
+                "url": url if kind == "link" else public_file_url(url),
                 "file_type": item.get("file_type"),
             }
         )

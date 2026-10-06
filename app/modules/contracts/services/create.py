@@ -21,6 +21,7 @@ from app.modules.contracts.services.common import (
 from app.modules.finance.services.commission import calculate_commission, split_commission
 from app.modules.settings.service import get_platform_settings
 from app.utils.audit import AuditLogger
+from app.utils.storage import storage_key_from_url
 from app.enums import PaymentType
 from app.modules.notifications.ws_manager import notification_ws_manager
 
@@ -289,7 +290,9 @@ class ContractCreateMixin:
                 {
                     "kind": asset.kind,
                     "name": asset.name,
-                    "url": asset.url,
+                    "url": asset.url
+                    if asset.kind == "link"
+                    else storage_key_from_url(asset.url),
                     "file_type": asset.file_type,
                 }
                 for asset in data.assets
