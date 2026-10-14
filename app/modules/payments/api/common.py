@@ -6,3 +6,4 @@ from app.deps import BuyerContext, SupplierContext
 
 buyer_router = APIRouter(prefix="/payments", tags=["buyer-payments"])
 supplier_router = APIRouter(prefix="/payments", tags=["supplier-payments"])
+public_router = APIRouter(prefix="/payments", tags=["payment-callbacks"])

@@ -42,6 +42,16 @@ class Settings(BaseSettings):
         "application/zip,application/x-zip-compressed,application/octet-stream"
     )
 
+    payment_provider: str = "mock"
+    alif_base_url: str = "https://test-web.alif.tj"
+    alif_terminal_key: str | None = None
+    alif_terminal_password: str | None = None
+    alif_gate: str = "korti_milli"
+    alif_currency: str = "TJS"
+    alif_timeout_seconds: float = 15.0
+    public_api_url: str = "http://localhost:8080"
+    frontend_url: str = "http://localhost:4000"
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors(cls, v: str | List[str]) -> str:
@@ -60,6 +70,18 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def alif_requested(self) -> bool:
+        return self.payment_provider.lower() == "alif"
+
+    @property
+    def alif_enabled(self) -> bool:
+        return (
+            self.alif_requested
+            and bool(self.alif_terminal_key)
+            and bool(self.alif_terminal_password)
+        )
 
 
 @lru_cache

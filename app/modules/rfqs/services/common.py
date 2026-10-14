@@ -280,13 +280,38 @@ async def notify_invited_suppliers(rfq_id: str, title: str, supplier_ids: list[i
         )
 
 
-def shape_for_supplier(rfq: dict, supplier_id: int) -> dict:
+def shape_for_supplier(
+    rfq: dict, supplier_id: int, participation: dict | None = None
+) -> dict:
     invited_ids = rfq.get("invited_supplier_ids") or []
-    return {
+    shaped = {
         **rfq,
         "is_invited": supplier_id in invited_ids,
         "invited_supplier_ids": [],
     }
+    if participation is not None:
+        shaped["my_proposal_status"] = participation.get("proposal_status")
+        shaped["my_contract_id"] = participation.get("contract_id")
+    return shaped
+
+
+async def load_supplier_participation(conn, rfq_id: str, supplier_id: int) -> dict:
+    row = await conn.fetchrow(
+        """
+        SELECT p.status::text AS proposal_status, c.id AS contract_id
+        FROM proposals p
+        LEFT JOIN contracts c
+          ON c.proposal_id = p.id AND c.supplier_actor_id = $2
+        WHERE p.rfq_id = $1 AND p.supplier_actor_id = $2
+        ORDER BY p.id DESC
+        LIMIT 1
+        """,
+        rfq_id,
+        supplier_id,
+    )
+    if row is None:
+        return {"proposal_status": None, "contract_id": None}
+    return {"proposal_status": row["proposal_status"], "contract_id": row["contract_id"]}
 
 
 async def load_rfq_row(conn, rfq_id: str, *, with_buyer: bool = False):

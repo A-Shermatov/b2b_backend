@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Path
 
 from app.deps import buyer_perm
 from app.modules.payments.api.common import (
@@ -16,10 +16,15 @@ async def fund_milestone(
     ctx: Annotated[BuyerContext, Depends(buyer_perm("payments.fund"))],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
-    milestone = await PaymentService().fund_milestone(
-        milestone_id, ctx.actor.id, idempotency_key
-    )
-    return {"id": milestone["id"], "status": milestone["status"]}
+    return await PaymentService().fund_milestone(milestone_id, ctx.actor.id, idempotency_key)
+
+
+@buyer_router.post("/alif/orders/{order_id}/sync")
+async def sync_alif_order(
+    order_id: Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("payments.fund"))],
+):
+    return await PaymentService().sync_alif_order(order_id, ctx.actor.id)
 
 
 @buyer_router.post("/milestones/{milestone_id}/approve")

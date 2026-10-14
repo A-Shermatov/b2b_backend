@@ -7,6 +7,7 @@ from app.modules.rfqs.services.common import (
     RFQ_COLUMNS,
     load_rfq_response,
     load_rfq_row,
+    load_supplier_participation,
     shape_for_supplier,
     shape_rfq_rows,
 )
@@ -93,7 +94,10 @@ class RfqReadMixin:
             if supplier_id:
                 await self._ensure_supplier_access(conn, row, supplier_id)
                 response = await load_rfq_response(conn, rfq_id, include_buyer=True)
-                return shape_for_supplier(response, supplier_id)
+                participation = await load_supplier_participation(
+                    conn, row["id"], supplier_id
+                )
+                return shape_for_supplier(response, supplier_id, participation)
             if actor_id and row["actor_id"] != actor_id:
                 raise ForbiddenError("Access denied")
             return await load_rfq_response(conn, rfq_id)

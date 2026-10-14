@@ -62,3 +62,8 @@ Frontend: `NEXT_PUBLIC_FILES_BASE_URL` (same public prefix) for relative/legacy 
 ```bash
 python -m pytest
 ```
+
+Tests never touch the working database. They run against a separate database whose name is `DATABASE_URL`'s database name with the `_test` suffix (for example `brandmarket` -> `brandmarket_test`). It is created automatically on the first run, then the schema and demo accounts are applied.
+
+- To use a different test database, set `TEST_DATABASE_URL`.
+- If the resolved database name doesn't end with `_test`, the run stops before any test executes.
