@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.pagination import build_page, fetch_page
 from app.modules.contracts.schemas import PaymentPlanSchema
 from app.modules.payments.schemas import SupplierBalanceSchema
 from app.modules.payments.services.common import history_item, pending_item
@@ -46,83 +47,118 @@ class PaymentReadMixin:
             }
         )
 
-    async def payment_history(self, buyer_id: int):
+    async def payment_history(self, buyer_id: int, page: int = 1, page_size: int = 20) -> dict:
+        params = [buyer_id, ["funded", "released", "refunded"]]
+        where = """
+            FROM payment_milestones m
+            JOIN contracts c ON c.id = m.contract_id
+            WHERE c.buyer_actor_id = $1
+              AND m.status::text = ANY($2::text[])
+        """
         async with self.connection() as conn:
-            rows = await conn.fetch(
-                """
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) {where}",
+                f"""
                 SELECT
                     m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
                     c.currency::text AS currency, c.created_at
-                FROM payment_milestones m
-                JOIN contracts c ON c.id = m.contract_id
-                WHERE c.buyer_actor_id = $1
-                  AND m.status::text = ANY($2::text[])
+                {where}
                 ORDER BY c.created_at DESC, m.id
                 """,
-                buyer_id,
-                ["funded", "released", "refunded"],
+                params,
+                page,
+                page_size,
             )
-        return [
-            history_item(
-                row,
-                event="funded" if row["status"] == "funded" else row["status"],
-            )
+        items = [
+            history_item(row, event="funded" if row["status"] == "funded" else row["status"])
             for row in rows
         ]
+        return build_page(items, total, page, page_size)
 
-    async def pending_payments(self, buyer_id: int):
+    async def pending_payments(self, buyer_id: int, page: int = 1, page_size: int = 20) -> dict:
+        params = [buyer_id, ["pending", "awaiting_payment"]]
+        where = """
+            FROM payment_milestones m
+            JOIN contracts c ON c.id = m.contract_id
+            WHERE c.buyer_actor_id = $1
+              AND m.status::text = ANY($2::text[])
+        """
         async with self.connection() as conn:
-            rows = await conn.fetch(
-                """
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) {where}",
+                f"""
                 SELECT
                     m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
                     c.currency::text AS currency
-                FROM payment_milestones m
-                JOIN contracts c ON c.id = m.contract_id
-                WHERE c.buyer_actor_id = $1
-                  AND m.status::text = ANY($2::text[])
+                {where}
                 ORDER BY m.id
                 """,
-                buyer_id,
-                ["pending", "awaiting_payment"],
+                params,
+                page,
+                page_size,
             )
-        return [pending_item(row) for row in rows]
+        return build_page([pending_item(row) for row in rows], total, page, page_size)
 
-    async def supplier_payment_history(self, supplier_actor_id: int):
+    async def supplier_payment_history(
+        self, supplier_actor_id: int, page: int = 1, page_size: int = 20
+    ) -> dict:
+        params = [supplier_actor_id, ["funded", "released", "refunded"]]
+        where = """
+            FROM payment_milestones m
+            JOIN contracts c ON c.id = m.contract_id
+            WHERE c.supplier_actor_id = $1
+              AND m.status::text = ANY($2::text[])
+        """
         async with self.connection() as conn:
-            rows = await conn.fetch(
-                """
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) {where}",
+                f"""
                 SELECT
                     m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
                     c.currency::text AS currency, c.created_at
-                FROM payment_milestones m
-                JOIN contracts c ON c.id = m.contract_id
-                WHERE c.supplier_actor_id = $1
-                  AND m.status::text = ANY($2::text[])
+                {where}
                 ORDER BY c.created_at DESC, m.id
                 """,
-                supplier_actor_id,
-                ["funded", "released", "refunded"],
+                params,
+                page,
+                page_size,
             )
-        return [history_item(row, event=row["status"]) for row in rows]
+        return build_page(
+            [history_item(row, event=row["status"]) for row in rows],
+            total,
+            page,
+            page_size,
+        )
 
-    async def supplier_pending_payouts(self, supplier_actor_id: int):
+    async def supplier_pending_payouts(
+        self, supplier_actor_id: int, page: int = 1, page_size: int = 20
+    ) -> dict:
+        params = [supplier_actor_id, ["funded", "released"]]
+        where = """
+            FROM payment_milestones m
+            JOIN contracts c ON c.id = m.contract_id
+            WHERE c.supplier_actor_id = $1
+              AND m.status::text = ANY($2::text[])
+        """
         async with self.connection() as conn:
-            rows = await conn.fetch(
-                """
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) {where}",
+                f"""
                 SELECT
                     m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
                     c.currency::text AS currency
-                FROM payment_milestones m
-                JOIN contracts c ON c.id = m.contract_id
-                WHERE c.supplier_actor_id = $1
-                  AND m.status::text = ANY($2::text[])
+                {where}
                 ORDER BY m.id
                 """,
-                supplier_actor_id,
-                ["funded", "released"],
+                params,
+                page,
+                page_size,
             )
-        return [pending_item(row) for row in rows]
+        return build_page([pending_item(row) for row in rows], total, page, page_size)
 
     async def supplier_balance(self, supplier_actor_id: int) -> SupplierBalanceSchema:
         async with self.connection() as conn:

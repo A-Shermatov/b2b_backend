@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.pagination import build_page, fetch_page
 from app.modules.rfqs.services.common import (
     BUYER_COLUMNS,
     BUYER_TAB_STATUSES,
@@ -20,7 +21,9 @@ class RfqReadMixin:
         async with self.connection() as conn:
             return await load_rfq_response(conn, rfq_id, include_buyer=include_buyer)
 
-    async def list_for_buyer(self, actor_id: int, tab: str | None = None) -> list:
+    async def list_for_buyer(
+        self, actor_id: int, tab: str | None = None, page: int = 1, page_size: int = 20
+    ) -> dict:
         filters = ["r.actor_id = $1", "r.status::text <> 'archived'"]
         params: list = [actor_id]
         if tab and tab != "all":
@@ -32,56 +35,82 @@ class RfqReadMixin:
                 filters.append(f"r.status::text = ${len(params)}")
         where = " AND ".join(filters)
         async with self.connection() as conn:
-            rows = await conn.fetch(
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) FROM rfqs r WHERE {where}",
                 f"""
                 SELECT {RFQ_COLUMNS}
                 FROM rfqs r
                 WHERE {where}
                 ORDER BY r.updated_at DESC
                 """,
-                *params,
+                params,
+                page,
+                page_size,
             )
-            return await shape_rfq_rows(conn, rows)
+            items = await shape_rfq_rows(conn, rows)
+        return build_page(items, total, page, page_size)
 
-    async def list_board_for_supplier(self, supplier_id: int) -> list:
+    async def list_board_for_supplier(
+        self, supplier_id: int, page: int = 1, page_size: int = 20
+    ) -> dict:
+        board_where = """
+            r.status::text = ANY($1::text[])
+            AND (
+                r.visibility::text = 'public'
+                OR EXISTS (
+                    SELECT 1 FROM rfq_invited_suppliers inv
+                    WHERE inv.rfq_id = r.id AND inv.supplier_actor_id = $2
+                )
+            )
+        """
+        board_from = """
+            FROM rfqs r
+            LEFT JOIN actors a ON a.id = r.actor_id
+            LEFT JOIN companies c ON c.id = a.company_id AND a.kind::text = 'company'
+            LEFT JOIN company_stats cs ON cs.company_id = c.id
+        """
+        params = [OPEN_RFQ_STATUSES, supplier_id]
         async with self.connection() as conn:
-            rows = await conn.fetch(
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) {board_from} WHERE {board_where}",
                 f"""
                 SELECT {RFQ_COLUMNS}, {BUYER_COLUMNS}
-                FROM rfqs r
-                LEFT JOIN actors a ON a.id = r.actor_id
-                LEFT JOIN companies c ON c.id = a.company_id AND a.kind::text = 'company'
-                LEFT JOIN company_stats cs ON cs.company_id = c.id
-                WHERE r.status::text = ANY($1::text[])
-                  AND (
-                    r.visibility::text = 'public'
-                    OR EXISTS (
-                        SELECT 1 FROM rfq_invited_suppliers inv
-                        WHERE inv.rfq_id = r.id AND inv.supplier_actor_id = $2
-                    )
-                  )
+                {board_from}
+                WHERE {board_where}
                 ORDER BY r.updated_at DESC
                 """,
-                OPEN_RFQ_STATUSES,
-                supplier_id,
+                params,
+                page,
+                page_size,
             )
-            shaped = await shape_rfq_rows(conn, rows, include_buyer=True)
-            return [shape_for_supplier(rfq, supplier_id) for rfq in shaped]
+            items = await shape_rfq_rows(conn, rows, include_buyer=True)
+        shaped = [shape_for_supplier(rfq, supplier_id) for rfq in items]
+        return build_page(shaped, total, page, page_size)
 
-    async def list_public_board(self) -> list:
+    async def list_public_board(self, page: int = 1, page_size: int = 20) -> dict:
+        public_where = """
+            r.status::text = ANY($1::text[])
+            AND r.visibility::text = 'public'
+        """
+        params = [OPEN_RFQ_STATUSES]
         async with self.connection() as conn:
-            rows = await conn.fetch(
+            total, rows = await fetch_page(
+                conn,
+                f"SELECT COUNT(*) FROM rfqs r WHERE {public_where}",
                 f"""
                 SELECT {RFQ_COLUMNS}
                 FROM rfqs r
-                WHERE r.status::text = ANY($1::text[])
-                  AND r.visibility::text = 'public'
+                WHERE {public_where}
                 ORDER BY r.updated_at DESC
-                LIMIT 50
                 """,
-                OPEN_RFQ_STATUSES,
+                params,
+                page,
+                page_size,
             )
-            return await shape_rfq_rows(conn, rows)
+            items = await shape_rfq_rows(conn, rows)
+        return build_page(items, total, page, page_size)
 
     async def get(
         self,

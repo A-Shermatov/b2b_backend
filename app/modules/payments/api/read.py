@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from app.config import get_settings
+from app.deps import PaginationDep
 from app.modules.payments.api.common import (
     BuyerContext,
     PaymentService,
@@ -39,27 +40,39 @@ async def supplier_get_milestones(
 
 
 @buyer_router.get("/history")
-async def payment_history(ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)]):
-    return await PaymentService().payment_history(ctx.actor.id)
+async def payment_history(
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    pagination: PaginationDep,
+):
+    return await PaymentService().payment_history(ctx.actor.id, pagination.page, pagination.page_size)
 
 
 @supplier_router.get("/history")
 async def supplier_payment_history(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    pagination: PaginationDep,
 ):
-    return await PaymentService().supplier_payment_history(ctx.actor.id)
+    return await PaymentService().supplier_payment_history(
+        ctx.actor.id, pagination.page, pagination.page_size
+    )
 
 
 @buyer_router.get("/pending")
-async def pending_payments(ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)]):
-    items = await PaymentService().pending_payments(ctx.actor.id)
-    return {"count": len(items), "items": items}
+async def pending_payments(
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    pagination: PaginationDep,
+):
+    return await PaymentService().pending_payments(ctx.actor.id, pagination.page, pagination.page_size)
 
 
 @supplier_router.get("/pending")
-async def pending_payouts(ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)]):
-    items = await PaymentService().supplier_pending_payouts(ctx.actor.id)
-    return {"count": len(items), "items": items}
+async def pending_payouts(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    pagination: PaginationDep,
+):
+    return await PaymentService().supplier_pending_payouts(
+        ctx.actor.id, pagination.page, pagination.page_size
+    )
 
 
 @supplier_router.get("/balance")

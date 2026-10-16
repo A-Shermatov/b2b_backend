@@ -27,7 +27,9 @@ async def test_supplier_payment_history(client, supplier_auth):
         headers=supplier_auth["headers"],
     )
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert "total" in body and "total_pages" in body
 
 
 @pytest.mark.asyncio
@@ -39,7 +41,9 @@ async def test_supplier_list_proposals(client, supplier_auth):
         headers=supplier_auth["headers"],
     )
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert "total" in body and "total_pages" in body
 
 
 @pytest.mark.asyncio
@@ -51,7 +55,9 @@ async def test_supplier_companies_me(client, supplier_auth):
         headers=supplier_auth["headers"],
     )
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert "total" in body and "total_pages" in body
 
 
 @pytest.mark.asyncio
@@ -77,7 +83,9 @@ async def test_supplier_catalog_list(client, supplier_auth):
         headers=supplier_auth["headers"],
     )
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert "total" in body and "total_pages" in body
 
 
 @pytest.mark.asyncio
@@ -89,4 +97,6 @@ async def test_supplier_rfqs_list(client, supplier_auth):
         headers=supplier_auth["headers"],
     )
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert "total" in body and "total_pages" in body

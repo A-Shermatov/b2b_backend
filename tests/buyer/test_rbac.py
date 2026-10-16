@@ -41,7 +41,7 @@ async def test_supplier_can_list_own_proposals(client, supplier_auth):
         pytest.skip("No supplier actor in seed data")
     res = await client.get(f"{API}/supplier/proposals/", headers=supplier_auth["headers"])
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    assert isinstance(res.json()["items"], list)
 
 
 @pytest.mark.asyncio

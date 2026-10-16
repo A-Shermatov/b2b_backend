@@ -40,7 +40,10 @@ async def test_buyer_reviews_list(client, buyer_auth):
         pytest.skip("No buyer actor")
     res = await client.get(f"{API}/buyer/reviews/", headers=buyer_auth["headers"])
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert body["page"] == 1
+    assert body["page_size"] == 20
 
 
 @pytest.mark.asyncio
@@ -64,14 +67,20 @@ async def test_buyer_review_missing_contract(client, buyer_auth):
 async def test_public_rfqs(client):
     res = await client.get(f"{API}/public/rfqs")
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert body["page"] == 1
+    assert body["page_size"] == 20
 
 
 @pytest.mark.asyncio
 async def test_public_catalog(client):
     res = await client.get(f"{API}/public/catalog")
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert body["page"] == 1
+    assert body["page_size"] == 20
 
 
 @pytest.mark.asyncio
@@ -80,7 +89,10 @@ async def test_buyer_rfqs_list(client, buyer_auth):
         pytest.skip("No buyer actor")
     res = await client.get(f"{API}/buyer/rfqs/", headers=buyer_auth["headers"])
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert body["page"] == 1
+    assert body["page_size"] == 20
 
 
 @pytest.mark.asyncio
@@ -94,7 +106,7 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
 
     all_res = await client.get(f"{API}/buyer/rfqs/", headers=buyer_auth["headers"])
     assert all_res.status_code == 200, all_res.text
-    all_ids = {item["id"] for item in all_res.json()}
+    all_ids = {item["id"] for item in all_res.json()["items"]}
     assert draft_id in all_ids
     assert completed_id in all_ids
 
@@ -104,7 +116,7 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
         headers=buyer_auth["headers"],
     )
     assert draft_res.status_code == 200, draft_res.text
-    draft_items = draft_res.json()
+    draft_items = draft_res.json()["items"]
     assert all(item["status"] == "draft" for item in draft_items)
     assert draft_id in {item["id"] for item in draft_items}
     assert completed_id not in {item["id"] for item in draft_items}
@@ -115,7 +127,7 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
         headers=buyer_auth["headers"],
     )
     assert completed_res.status_code == 200, completed_res.text
-    completed_items = completed_res.json()
+    completed_items = completed_res.json()["items"]
     assert all(item["status"] == "completed" for item in completed_items)
     assert completed_id in {item["id"] for item in completed_items}
     assert draft_id not in {item["id"] for item in completed_items}
@@ -125,4 +137,7 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
 async def test_public_suppliers_category_filter(client):
     res = await client.get(f"{API}/public/suppliers?category=it")
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert body["page"] == 1
+    assert body["page_size"] == 20

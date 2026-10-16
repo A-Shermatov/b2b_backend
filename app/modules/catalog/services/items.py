@@ -1,6 +1,7 @@
 import json
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.pagination import build_page, fetch_page
 from app.modules.catalog.schemas import (
     CatalogItemInput,
     CatalogItemReportCreate,
@@ -210,42 +211,80 @@ class CatalogItemMixin:
                 media.sort_order or idx,
             )
 
-    async def list_for_supplier(self, actor_id: int, status: str | None = None):
+    async def _page_item_ids(
+        self,
+        conn,
+        count_sql: str,
+        rows_sql: str,
+        params: list,
+        page: int,
+        page_size: int,
+    ) -> dict:
+        total, rows = await fetch_page(conn, count_sql, rows_sql, params, page, page_size)
+        items = await self._load_many(conn, rows)
+        return build_page(items, total, page, page_size)
+
+    async def list_for_supplier(
+        self, actor_id: int, status: str | None = None, page: int = 1, page_size: int = 20
+    ):
         async with self.connection() as conn:
             if status:
-                items = await conn.fetch(
+                return await self._page_item_ids(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM catalog_items
+                    WHERE actor_id = $1 AND status::text != 'deleted' AND status::text = $2
+                    """,
                     """
                     SELECT id FROM catalog_items
                     WHERE actor_id = $1 AND status::text != 'deleted' AND status::text = $2
                     ORDER BY created_at DESC
                     """,
-                    actor_id,
-                    status,
+                    [actor_id, status],
+                    page,
+                    page_size,
                 )
-            else:
-                items = await conn.fetch(
-                    """
-                    SELECT id FROM catalog_items
-                    WHERE actor_id = $1 AND status::text != 'deleted'
-                    ORDER BY created_at DESC
-                    """,
-                    actor_id,
-                )
-            return await self._load_many(conn, items)
+            return await self._page_item_ids(
+                conn,
+                """
+                SELECT COUNT(*) FROM catalog_items
+                WHERE actor_id = $1 AND status::text != 'deleted'
+                """,
+                """
+                SELECT id FROM catalog_items
+                WHERE actor_id = $1 AND status::text != 'deleted'
+                ORDER BY created_at DESC
+                """,
+                [actor_id],
+                page,
+                page_size,
+            )
 
-    async def list_active_for_company_actor(self, actor_id: int):
+    async def list_active_for_company_actor(self, actor_id: int, page: int = 1, page_size: int = 20):
         async with self.connection() as conn:
-            items = await conn.fetch(
+            return await self._page_item_ids(
+                conn,
+                """
+                SELECT COUNT(*) FROM catalog_items
+                WHERE actor_id = $1 AND status::text = 'active'
+                """,
                 """
                 SELECT id FROM catalog_items
                 WHERE actor_id = $1 AND status::text = 'active'
                 ORDER BY created_at DESC
                 """,
-                actor_id,
+                [actor_id],
+                page,
+                page_size,
             )
-            return await self._load_many(conn, items)
 
-    async def list_public(self, query: str | None = None, category_slug: str | None = None):
+    async def list_public(
+        self,
+        query: str | None = None,
+        category_slug: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
         clauses = ["ci.status::text = 'active'"]
         params: list = []
         if query:
@@ -255,19 +294,24 @@ class CatalogItemMixin:
             params.append(category_slug)
             clauses.append(f"cat.slug = ${len(params)}")
         where = " AND ".join(clauses)
+        from_sql = """
+            FROM catalog_items ci
+            JOIN categories cat ON cat.id = ci.category_id
+        """
         async with self.connection() as conn:
-            items = await conn.fetch(
+            return await self._page_item_ids(
+                conn,
+                f"SELECT COUNT(*) {from_sql} WHERE {where}",
                 f"""
                 SELECT ci.id
-                FROM catalog_items ci
-                JOIN categories cat ON cat.id = ci.category_id
+                {from_sql}
                 WHERE {where}
                 ORDER BY ci.created_at DESC
-                LIMIT 100
                 """,
-                *params,
+                params,
+                page,
+                page_size,
             )
-            return await self._load_many(conn, items)
 
     async def get_public(self, item_id: int):
         async with self.connection() as conn:

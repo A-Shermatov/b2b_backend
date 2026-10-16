@@ -18,6 +18,8 @@ uvicorn app.main:app --reload --port 8000
 API docs (Docker Compose host port): http://localhost:8080/docs  
 Local uvicorn without compose publish remap: http://localhost:8000/docs
 
+Обзор модулей, сущностей и уже реализованных ручек для нового бэкенд-разработчика: [docs/backend.md](docs/backend.md)
+
 ## File storage
 
 Uploads go to S3-compatible storage (MinIO locally, Cloudflare R2 or AWS S3 in production). The API stores the **object key** and returns a public URL built from `FILES_BASE_URL`.

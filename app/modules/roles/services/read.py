@@ -1,3 +1,4 @@
+from app.core.pagination import build_page, fetch_page
 from app.core.permissions import STAFF_ROLE_SCOPE
 from app.modules.roles.services.common import (
     build_matrix_rows,
@@ -8,9 +9,15 @@ from app.modules.roles.services.common import (
 
 
 class RoleReadMixin:
-    async def list_roles(self) -> list:
+    async def list_roles(self, page: int = 1, page_size: int = 20) -> dict:
         async with self.connection() as conn:
-            rows = await conn.fetch(
+            total, rows = await fetch_page(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM roles r
+                WHERE r.name <> 'superadmin' AND r.is_active = TRUE AND r.scope = $1
+                """,
                 """
                 SELECT
                     r.id, r.name, r.description, r.is_system, r.is_active,
@@ -21,9 +28,11 @@ class RoleReadMixin:
                 GROUP BY r.id
                 ORDER BY r.id
                 """,
-                STAFF_ROLE_SCOPE,
+                [STAFF_ROLE_SCOPE],
+                page,
+                page_size,
             )
-        return [role_from_row(row) for row in rows]
+        return build_page([role_from_row(row) for row in rows], total, page, page_size)
 
     async def get_role(self, role_id: int):
         async with self.connection() as conn:

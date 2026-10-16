@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.deps import PaginationDep
 from app.modules.contracts.api.common import (
     BuyerContext,
     ContractService,
@@ -14,13 +15,23 @@ from app.modules.contracts.api.common import (
 
 
 @buyer_router.get("/")
-async def buyer_list_contracts(ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)]):
-    return await ContractService().list_for_actor(ctx.actor.id, "buyer")
+async def buyer_list_contracts(
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    pagination: PaginationDep,
+):
+    return await ContractService().list_for_actor(
+        ctx.actor.id, "buyer", pagination.page, pagination.page_size
+    )
 
 
 @supplier_router.get("/")
-async def supplier_list_contracts(ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)]):
-    return await ContractService().list_for_actor(ctx.actor.id, "supplier")
+async def supplier_list_contracts(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    pagination: PaginationDep,
+):
+    return await ContractService().list_for_actor(
+        ctx.actor.id, "supplier", pagination.page, pagination.page_size
+    )
 
 
 @buyer_router.get("/{contract_id}")

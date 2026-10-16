@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.core.pagination import build_page, fetch_page
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
@@ -434,17 +435,26 @@ class AdminCompaniesMixin:
             "operational_status": operational,
         }
 
-    async def list_pending_verification(self) -> list[dict]:
+    async def list_pending_verification(self, page: int = 1, page_size: int = 20) -> dict:
         async with self.connection() as conn:
-            rows = await conn.fetch(
+            total, rows = await fetch_page(
+                conn,
+                """
+                SELECT COUNT(*) FROM companies
+                WHERE verification_status::text = 'pending'
+                """,
                 """
                 SELECT id, title, actor_type::text AS actor_type, owner_id,
                        verification_status::text AS verification_status
                 FROM companies
                 WHERE verification_status::text = 'pending'
-                """
+                ORDER BY id
+                """,
+                [],
+                page,
+                page_size,
             )
-        return [dict(row) for row in rows]
+        return build_page([dict(row) for row in rows], total, page, page_size)
 
     async def verify_company(self, company_id: int, approved: bool) -> dict:
         async with self.connection() as conn:

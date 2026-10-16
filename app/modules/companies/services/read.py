@@ -1,4 +1,5 @@
 from app.core.exceptions import NotFoundError
+from app.core.pagination import build_page, fetch_page
 from app.modules.companies.schemas import CompanyWithRelations, PublicSupplier
 from app.modules.companies.services.common import load_company_schema, row_to_public_supplier
 
@@ -53,9 +54,16 @@ class CompanyReadMixin:
         async with self.connection() as conn:
             return await load_company_schema(conn, company_id)
 
-    async def get_my_companies(self, user_id: int) -> list[CompanyWithRelations]:
+    async def get_my_companies(self, user_id: int, page: int = 1, page_size: int = 20) -> dict:
         async with self.connection() as conn:
-            rows = await conn.fetch(
+            total, rows = await fetch_page(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM companies c
+                JOIN company_users cu ON cu.company_id = c.id
+                WHERE cu.user_id = $1
+                """,
                 """
                 SELECT c.id
                 FROM companies c
@@ -63,13 +71,20 @@ class CompanyReadMixin:
                 WHERE cu.user_id = $1
                 ORDER BY c.id
                 """,
-                user_id,
+                [user_id],
+                page,
+                page_size,
             )
-            return [await load_company_schema(conn, row["id"]) for row in rows]
+            items = [await load_company_schema(conn, row["id"]) for row in rows]
+        return build_page(items, total, page, page_size)
 
     async def list_suppliers(
-        self, query: str | None = None, category_slug: str | None = None
-    ) -> list[PublicSupplier]:
+        self,
+        query: str | None = None,
+        category_slug: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
         filters = []
         params: list = []
         if query:
@@ -99,10 +114,11 @@ class CompanyReadMixin:
                 """
             )
         where = (" AND " + " AND ".join(filters)) if filters else ""
-        sql = SUPPLIER_SELECT + where + " ORDER BY a.display_name ASC"
+        count_sql = f"SELECT COUNT(*) FROM ({SUPPLIER_SELECT + where}) AS listed"
+        rows_sql = SUPPLIER_SELECT + where + " ORDER BY a.display_name ASC"
         async with self.connection() as conn:
-            rows = await conn.fetch(sql, *params)
-        return [row_to_public_supplier(row) for row in rows]
+            total, rows = await fetch_page(conn, count_sql, rows_sql, params, page, page_size)
+        return build_page([row_to_public_supplier(row) for row in rows], total, page, page_size)
 
     async def get_public_supplier(self, actor_id: int) -> PublicSupplier:
         async with self.connection() as conn:

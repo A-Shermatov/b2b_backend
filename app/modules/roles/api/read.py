@@ -2,15 +2,19 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.deps import CurrentUser
+from app.core.pagination import Page
+from app.deps import CurrentUser, PaginationDep
 from app.modules.roles.api.common import require_roles_manage, require_roles_view, router
 from app.modules.roles.schemas import PermissionCatalogResponse, RolePermissionMatrixResponse, RoleResponse
 from app.modules.roles.services import RoleService
 
 
-@router.get("/roles", response_model=list[RoleResponse])
-async def list_roles(_: Annotated[CurrentUser, Depends(require_roles_view)]):
-    return await RoleService().list_roles()
+@router.get("/roles", response_model=Page[RoleResponse])
+async def list_roles(
+    _: Annotated[CurrentUser, Depends(require_roles_view)],
+    pagination: PaginationDep,
+):
+    return await RoleService().list_roles(pagination.page, pagination.page_size)
 
 
 @router.get("/roles/{role_id}", response_model=RoleResponse)

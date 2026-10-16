@@ -98,14 +98,14 @@ async def test_invite_makes_rfq_exclusive_on_supplier_board(
         headers=invited_headers,
     )
     assert before_invited.status_code == 200, before_invited.text
-    assert any(item["id"] == rfq_id for item in before_invited.json())
+    assert any(item["id"] == rfq_id for item in before_invited.json()["items"])
 
     before_other = await client.get(
         f"{API}/supplier/rfqs/board",
         headers=other_headers,
     )
     assert before_other.status_code == 200, before_other.text
-    assert any(item["id"] == rfq_id for item in before_other.json())
+    assert any(item["id"] == rfq_id for item in before_other.json()["items"])
 
     invite_res = await client.post(
         f"{API}/buyer/rfqs/{rfq_id}/invite",
@@ -122,18 +122,18 @@ async def test_invite_makes_rfq_exclusive_on_supplier_board(
         headers=invited_headers,
     )
     assert after_invited.status_code == 200, after_invited.text
-    assert any(item["id"] == rfq_id for item in after_invited.json())
+    assert any(item["id"] == rfq_id for item in after_invited.json()["items"])
 
     after_other = await client.get(
         f"{API}/supplier/rfqs/board",
         headers=other_headers,
     )
     assert after_other.status_code == 200, after_other.text
-    assert all(item["id"] != rfq_id for item in after_other.json())
+    assert all(item["id"] != rfq_id for item in after_other.json()["items"])
 
     public_board = await client.get(f"{API}/public/rfqs")
     assert public_board.status_code == 200, public_board.text
-    assert all(item["id"] != rfq_id for item in public_board.json())
+    assert all(item["id"] != rfq_id for item in public_board.json()["items"])
 
 
 @pytest.mark.asyncio
@@ -178,7 +178,7 @@ async def test_create_personal_rfq_for_individual_supplier(
     }
     board = await client.get(f"{API}/supplier/rfqs/board", headers=invited_headers)
     assert board.status_code == 200, board.text
-    item = next((r for r in board.json() if r["id"] == rfq_id), None)
+    item = next((r for r in board.json()["items"] if r["id"] == rfq_id), None)
     assert item is not None
     assert item["is_invited"] is True
     assert item["invited_supplier_ids"] == []
@@ -191,7 +191,7 @@ async def test_create_personal_rfq_for_individual_supplier(
         f"{API}/supplier/rfqs/board", headers=other_supplier["headers"]
     )
     assert other_board.status_code == 200, other_board.text
-    assert all(r["id"] != rfq_id for r in other_board.json())
+    assert all(r["id"] != rfq_id for r in other_board.json()["items"])
 
     other_detail = await client.get(
         f"{API}/supplier/rfqs/{rfq_id}", headers=other_supplier["headers"]
@@ -200,7 +200,7 @@ async def test_create_personal_rfq_for_individual_supplier(
 
     public_board = await client.get(f"{API}/public/rfqs")
     assert public_board.status_code == 200, public_board.text
-    assert all(r["id"] != rfq_id for r in public_board.json())
+    assert all(r["id"] != rfq_id for r in public_board.json()["items"])
 
 
 @pytest.mark.asyncio

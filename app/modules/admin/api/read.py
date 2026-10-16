@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, Query
 from fastapi.responses import Response
 
-from app.deps import admin_perm
+from app.deps import PaginationDep, admin_perm
 from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
     AdminCatalogDetail,
@@ -78,8 +78,8 @@ async def admin_list_companies(
     "/companies/pending-verification",
     dependencies=[Depends(admin_perm("admin_companies.view"))],
 )
-async def admin_pending_verification():
-    return await AdminService().list_pending_verification()
+async def admin_pending_verification(pagination: PaginationDep):
+    return await AdminService().list_pending_verification(pagination.page, pagination.page_size)
 
 
 @router.get(

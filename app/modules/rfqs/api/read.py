@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Query
 
+from app.deps import PaginationDep
 from app.modules.rfqs.api.common import (
     BuyerContext,
     RfqService,
@@ -17,9 +18,12 @@ from app.modules.rfqs.api.common import (
 @buyer_router.get("/")
 async def list_rfqs(
     ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    pagination: PaginationDep,
     tab: str | None = Query(None),
 ):
-    return await RfqService().list_for_buyer(ctx.actor.id, tab)
+    return await RfqService().list_for_buyer(
+        ctx.actor.id, tab, pagination.page, pagination.page_size
+    )
 
 
 @buyer_router.get("/{rfq_id}")
@@ -33,8 +37,11 @@ async def get_buyer_rfq(
 @supplier_router.get("/board")
 async def rfq_board(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    pagination: PaginationDep,
 ):
-    return await RfqService().list_board_for_supplier(ctx.actor.id)
+    return await RfqService().list_board_for_supplier(
+        ctx.actor.id, pagination.page, pagination.page_size
+    )
 
 
 @supplier_router.get("/{rfq_id}")
@@ -46,5 +53,5 @@ async def get_supplier_rfq(
 
 
 @public_router.get("/rfqs")
-async def public_rfqs():
-    return await RfqService().list_public_board()
+async def public_rfqs(pagination: PaginationDep):
+    return await RfqService().list_public_board(pagination.page, pagination.page_size)

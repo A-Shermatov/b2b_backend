@@ -1,4 +1,5 @@
 from app.core.exceptions import ForbiddenError
+from app.core.pagination import build_page, fetch_page
 from app.modules.proposals.services.common import (
     PROPOSAL_SELECT,
     assert_chat_access,
@@ -10,7 +11,31 @@ from app.modules.rfqs.services.common import load_rfq_row
 
 
 class ProposalReadMixin:
-    async def list_for_rfq(self, rfq_id: str, buyer_actor_id: int) -> list:
+    async def _page_proposals(self, conn, where_sql: str, params: list, page: int, page_size: int):
+        total, id_rows = await fetch_page(
+            conn,
+            f"SELECT COUNT(*) FROM proposals p WHERE {where_sql}",
+            f"""
+            SELECT p.id
+            FROM proposals p
+            WHERE {where_sql}
+            ORDER BY p.created_at DESC
+            """,
+            params,
+            page,
+            page_size,
+        )
+        if not id_rows:
+            return build_page([], total, page, page_size)
+        rows = await conn.fetch(
+            PROPOSAL_SELECT + " WHERE p.id = ANY($1::int[]) ORDER BY p.created_at DESC",
+            [row["id"] for row in id_rows],
+        )
+        return build_page([proposal_to_response(row) for row in rows], total, page, page_size)
+
+    async def list_for_rfq(
+        self, rfq_id: str, buyer_actor_id: int, page: int = 1, page_size: int = 20
+    ) -> dict:
         async with self.connection() as conn:
             rfq = await load_rfq_row(conn, rfq_id)
             if rfq["actor_id"] != buyer_actor_id:
@@ -23,24 +48,20 @@ class ProposalReadMixin:
                 """,
                 rfq_id,
             )
-            rows = await conn.fetch(
-                PROPOSAL_SELECT + " WHERE p.rfq_id = $1 ORDER BY p.created_at DESC",
-                rfq_id,
-            )
-        return [proposal_to_response(row) for row in rows]
+            return await self._page_proposals(conn, "p.rfq_id = $1", [rfq_id], page, page_size)
 
-    async def list_for_supplier(self, supplier_id: int) -> list:
+    async def list_for_supplier(self, supplier_id: int, page: int = 1, page_size: int = 20) -> dict:
         async with self.connection() as conn:
-            rows = await conn.fetch(
-                PROPOSAL_SELECT
-                + """
-                WHERE p.supplier_actor_id = $1
+            return await self._page_proposals(
+                conn,
+                """
+                p.supplier_actor_id = $1
                   AND p.status::text NOT IN ('accepted', 'archived')
-                ORDER BY p.created_at DESC
                 """,
-                supplier_id,
+                [supplier_id],
+                page,
+                page_size,
             )
-        return [proposal_to_response(row) for row in rows]
 
     async def list_messages(self, proposal_id: int, actor_id: int, as_buyer: bool) -> list:
         async with self.connection() as conn:
