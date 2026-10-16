@@ -77,13 +77,39 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 
 При логине можно передать `role`: `buyer` (заказчик) или `supplier` (исполнитель). Если у аккаунта нет этой стороны, ответ 403. Выбранная сторона кладётся в access- и refresh-токен как `side` и возвращается в `TokenResponse.role`. Для админов поле необязательное.
 
-Списки каталогов, запросов, откликов, контрактов, платежей, финансов, отзывов, уведомлений, своих компаний, ролей и очереди верификации отвечают страницей:
+## Пагинация списков
+
+Коллекции, которые раньше были JSON-массивом, отвечают объектом `Page` из `app/core/pagination.py`. Query-параметры те же, что у `PaginationDep` в `app/deps.py`: `page` (с 1) и `page_size` (от 1 до 100, по умолчанию 20). Срез считается в SQL (`COUNT` и `LIMIT`/`OFFSET`), а не после загрузки всей таблицы.
 
 ```json
-{ "items": [], "total": 0, "page": 1, "page_size": 20, "total_pages": 0 }
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 0
+}
 ```
 
-Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пустой список даёт `total_pages: 0`. Дерево категорий, переписка, этапы одного контракта и уже пагинированная админка (`pages`, не `total_pages`) остаются как были.
+При `total = 0` поле `total_pages` тоже `0`. В таблицах ниже такие ручки помечены словом «страница».
+
+Страницей отвечают:
+
+- свои компании и публичный список исполнителей;
+- витрина, каталог актора, каталог компании и свои карточки исполнителя;
+- свои RFQ, доска исполнителя и публичные RFQ;
+- отклики на RFQ и свои отклики исполнителя;
+- списки контрактов обеих сторон;
+- история платежей и ожидающие платежи обеих сторон;
+- реквизиты, выводы и счета исполнителя;
+- свои отзывы и публичные отзывы актора и компании;
+- уведомления обеих сторон;
+- `GET /admin/roles`;
+- `GET /admin/companies/pending-verification`.
+
+Массивом остаются дерево категорий, переписка по отклику и контракту, этапы оплаты одного контракта и вложенные списки внутри карточки (команда, файлы, таймлайн).
+
+Админские списки пользователей, компаний, каталога, RFQ, откликов, контрактов, споров, финансов, жалоб, журнала и эскроу пагинируются отдельно. У них поле называется `pages`, а не `total_pages`, и у части ответов рядом есть счётчики вроде `status_counts`. Пустая выборка там даёт `pages: 1`. Категории админки — это `{ "items": [...] }` без страницы. Сотрудники — `{ "items", "total" }` без `page`.
 
 ## Сквозной сценарий сделки
 
@@ -127,13 +153,13 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Сторона | Что делает |
 |---|---|---|---|
-| GET | `/companies/me` | buyer, supplier | Компании текущего пользователя |
+| GET | `/companies/me` | buyer, supplier | Страница компаний текущего пользователя |
 | POST | `/companies` | buyer, supplier | Создать компанию (мастер) |
 | PATCH | `/companies/{company_id}` | buyer, supplier | Обновить карточку |
 | POST | `/companies/{company_id}/certificates` | buyer, supplier | Сертификат |
 | POST | `/companies/{company_id}/team` | buyer, supplier | Добавить сотрудника |
 | DELETE | `/companies/{company_id}/team/{target_user_id}` | buyer, supplier | Убрать из команды. 204 |
-| GET | `/public/suppliers` | публично | Список исполнителей |
+| GET | `/public/suppliers` | публично | Страница исполнителей. Фильтры `q` и `category` |
 | GET | `/public/suppliers/{actor_id}` | публично | Карточка исполнителя |
 | GET | `/public/companies/{company_id}` | публично | Карточка компании |
 
@@ -147,12 +173,12 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/public/categories` | публично | Дерево категорий |
-| GET | `/public/catalog` | публично | Публичная витрина |
+| GET | `/public/categories` | публично | Дерево категорий, без страницы |
+| GET | `/public/catalog` | публично | Страница витрины. Фильтры `q` и `category` |
 | GET | `/public/catalog/items/{item_id}` | публично | Карточка |
-| GET | `/public/suppliers/{actor_id}/catalog` | публично | Каталог актора |
-| GET | `/public/companies/{company_id}/catalog` | публично | Каталог компании |
-| GET | `/supplier/catalog/items` | supplier | Свои карточки |
+| GET | `/public/suppliers/{actor_id}/catalog` | публично | Страница каталога актора |
+| GET | `/public/companies/{company_id}/catalog` | публично | Страница каталога компании. Нет supplier-актора — пустая страница |
+| GET | `/supplier/catalog/items` | supplier | Страница своих карточек. Фильтр `status` |
 | GET | `/supplier/catalog/items/{item_id}` | supplier | Своя карточка |
 | POST | `/supplier/catalog/items` | supplier, `catalog.create` | Создать. `active` и `pending_review` упираются в лимит подписки |
 | PATCH | `/supplier/catalog/items/{item_id}` | supplier, `catalog.update` | Править |
@@ -169,7 +195,7 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/buyer/rfqs` | buyer | Свои запросы |
+| GET | `/buyer/rfqs` | buyer | Страница своих запросов. Фильтр `tab` |
 | GET | `/buyer/rfqs/{rfq_id}` | buyer | Карточка |
 | POST | `/buyer/rfqs` | buyer, `rfqs.create` | Черновик |
 | PATCH | `/buyer/rfqs/{rfq_id}` | buyer, `rfqs.update` | Правка |
@@ -178,10 +204,10 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 | POST | `/buyer/rfqs/{rfq_id}/attachments` | buyer, `rfqs.update` | Вложение |
 | DELETE | `/buyer/rfqs/{rfq_id}/attachments/{attachment_id}` | buyer, `rfqs.update` | Снять вложение |
 | POST | `/buyer/rfqs/{rfq_id}/invite` | buyer, `rfqs.invite` | Пригласить исполнителей |
-| GET | `/supplier/rfqs/board` | supplier | Доска доступных запросов |
+| GET | `/supplier/rfqs/board` | supplier | Страница доски |
 | GET | `/supplier/rfqs/{rfq_id}` | supplier | Запрос, если он виден исполнителю |
 | POST | `/supplier/rfqs/{rfq_id}/proposals` | supplier, `proposals.create` | Отклик. Создаёт proposal, не живёт в модуле proposals |
-| GET | `/public/rfqs` | публично | Открытые запросы |
+| GET | `/public/rfqs` | публично | Страница открытых запросов |
 
 Приватный или invite-only запрос на доске исполнителя виден только приглашённому.
 
@@ -193,13 +219,13 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/buyer/rfqs/{rfq_id}/proposals` | buyer | Отклики на запрос |
+| GET | `/buyer/rfqs/{rfq_id}/proposals` | buyer | Страница откликов. Просмотр помечает `submitted` как `viewed` |
 | POST | `/buyer/proposals/{proposal_id}/shortlist` | buyer, `proposals.accept` | В шорт-лист |
 | POST | `/buyer/proposals/{proposal_id}/reject` | buyer, `proposals.accept` | Отклонить |
 | POST | `/buyer/proposals/{proposal_id}/accept` | buyer, `proposals.accept` | Принять и создать контракт |
 | GET | `/buyer/proposals/{proposal_id}/messages` | buyer | Переписка |
 | POST | `/buyer/proposals/{proposal_id}/messages` | buyer, `proposals.update` | Сообщение |
-| GET | `/supplier/proposals` | supplier | Свои отклики |
+| GET | `/supplier/proposals` | supplier | Страница своих откликов. `accepted` и `archived` в список не попадают |
 | PATCH | `/supplier/proposals/{proposal_id}` | supplier, `proposals.update` | Правка, пока можно |
 | POST | `/supplier/proposals/{proposal_id}/withdraw` | supplier, `proposals.update` | Отозвать |
 | GET | `/supplier/proposals/{proposal_id}/messages` | supplier | Переписка |
@@ -215,7 +241,7 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/contracts` | buyer, supplier | Список своих |
+| GET | `/contracts` | buyer, supplier | Страница своих контрактов |
 | GET | `/contracts/{contract_id}` | buyer, supplier | Карточка |
 | GET | `/contracts/{contract_id}/messages` | buyer, supplier | Чат сделки |
 | POST | `/contracts/{contract_id}/messages` | обе стороны, `contracts.update` | Сообщение |
@@ -237,15 +263,18 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/payments/contracts/{contract_id}/milestones` | buyer, supplier | Этапы контракта |
-| GET | `/payments/history` | buyer, supplier | История |
-| GET | `/payments/pending` | buyer, supplier | Ожидающие действия |
+| GET | `/payments/config` | buyer | Какой шлюз включён: `alif` или `mock` |
+| GET | `/payments/contracts/{contract_id}/milestones` | buyer, supplier | План этапов одного контракта, без страницы |
+| GET | `/payments/history` | buyer, supplier | Страница истории |
+| GET | `/payments/pending` | buyer, supplier | Страница ожидающих действий |
 | GET | `/payments/balance` | supplier | Баланс исполнителя |
-| POST | `/payments/milestones/{milestone_id}/fund` | buyer, `payments.fund` | Заморозить оплату этапа |
+| POST | `/payments/milestones/{milestone_id}/fund` | buyer, `payments.fund` | Заморозить оплату этапа. Заголовок `Idempotency-Key` необязателен |
+| POST | `/payments/alif/orders/{order_id}/sync` | buyer, `payments.fund` | Подтянуть статус заказа Alif |
+| POST | `/payments/alif/callback` | шлюз Alif | Вебхук. В OpenAPI не публикуется. Если Alif выключен — 404 |
 | POST | `/payments/milestones/{milestone_id}/approve` | buyer, `payments.approve` | Подтвердить и отпустить средства |
 | POST | `/payments/mock/confirm/{milestone_id}` | buyer, `payments.fund` | Подтверждение мок-платежа для разработки |
 
-Боевой шлюз в этой ручке не подключён: подтверждение идёт через mock. Реальные проводки платформы смотрит админ в finance.
+Если `alif_enabled` выключен, фондирование идёт через mock (`POST /payments/mock/confirm/{milestone_id}`). Комиссия сделки берётся из настроек платформы. Проводки смотрит админ в finance и escrow.
 
 ### Finance — `app/modules/finance`
 
@@ -253,11 +282,11 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/finance/destinations` | supplier | Куда выводить |
+| GET | `/finance/destinations` | supplier | Страница реквизитов |
 | POST | `/finance/destinations` | supplier, `finance.create` | Добавить реквизиты |
-| GET | `/finance/withdrawals` | supplier | Заявки на вывод |
+| GET | `/finance/withdrawals` | supplier | Страница заявок на вывод |
 | POST | `/finance/withdrawals` | supplier, `finance.create` | Создать вывод |
-| GET | `/finance/invoices` | supplier | Счета |
+| GET | `/finance/invoices` | supplier | Страница счетов |
 
 ### Subscription — `app/modules/subscription`
 
@@ -275,10 +304,10 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/buyer/reviews` | buyer | Свои отзывы |
+| GET | `/buyer/reviews` | buyer | Страница своих отзывов |
 | POST | `/buyer/reviews` | buyer, `reviews.create` | Оставить отзыв |
-| GET | `/public/suppliers/{actor_id}/reviews` | публично | Отзывы об акторе |
-| GET | `/public/companies/{company_id}/reviews` | публично | Отзывы о компании |
+| GET | `/public/suppliers/{actor_id}/reviews` | публично | Страница отзывов об акторе |
+| GET | `/public/companies/{company_id}/reviews` | публично | Страница отзывов о компании |
 
 ### Notifications — `app/modules/notifications`
 
@@ -286,18 +315,18 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/notifications` | buyer, supplier | Список |
+| GET | `/notifications` | buyer, supplier | Страница уведомлений |
 | PATCH | `/notifications/{notification_id}/read` | buyer, supplier | Прочитать одно |
 | POST | `/notifications/read-all` | buyer, supplier | Прочитать все. 204 |
 | WS | `/api/v1/ws/notifications?token=<access_token>` | по токену | Пуш. Без токена сокет закрывается с кодом 4401. Каждые 30 с сервер шлёт `{"event":"ping"}` |
 
 ### Roles — `app/modules/roles`
 
-Матрица прав админки. Все ручки под `/api/v1/admin`, нужен админ и permission `roles.manage`. Роль `superadmin` удалить нельзя.
+Матрица прав сотрудников админки (`roles.scope = staff`). Все ручки под `/api/v1/admin`. Чтение списка и карточки — `roles.view`, изменение — `roles.manage`. Роль `superadmin` в список не входит и удалить её нельзя. В элементе страницы есть `users_count`.
 
 | Метод | Путь | Что делает |
 |---|---|---|
-| GET | `/admin/roles` | Список ролей |
+| GET | `/admin/roles` | Страница ролей сотрудников. Нужен `roles.view` |
 | GET | `/admin/roles/{role_id}` | Роль |
 | POST | `/admin/roles` | Создать. 201 |
 | PUT | `/admin/roles/{role_id}` | Переименовать / обновить |
@@ -307,13 +336,23 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 | GET | `/admin/roles/{role_id}/matrix` | Матрица роли |
 | PUT | `/admin/roles/{role_id}/matrix` | Сохранить матрицу |
 
-Ресурсы матрицы и русские подписи — `RESOURCE_ALIASES_RU` в `app/core/permissions.py`.
+Ресурсы матрицы и русские подписи — `RESOURCE_ALIASES_RU` в `app/core/permissions.py`. Туда же входят `admin_staff`, `audit_logs` и `platform_settings`.
+
+### Settings — `app/modules/settings`
+
+Комиссия и потолок суммы контракта. Публичная ручка без авторизации, админские — под `require_admin`.
+
+| Метод | Путь | Кто | Что делает |
+|---|---|---|---|
+| GET | `/public/platform-settings` | публично | Процент комиссии, минимум и максимальная сумма контракта |
+| GET | `/admin/settings` | admin, `platform_settings.view` | Те же поля плюс кто и когда менял, и флаг `can_update` |
+| PUT | `/admin/settings` | admin, `platform_settings.update` | Сохранить `commission_percent`, `commission_min`, `max_contract_amount` |
 
 ### Admin — `app/modules/admin`
 
 Модерация. Весь роутер закрыт `require_admin`: роли `admin`, `superadmin`, `moderator`. Отдельные действия дополнительно проверяют permission (`admin_catalog.delete` и похожие). Префикс `/api/v1/admin`.
 
-Списки с пагинацией: query `page` (с 1) и `page_size` (1–100).
+Списки ниже, кроме очереди верификации, отвечают своим конвертом: `items`, `total`, `page`, `page_size`, `pages`. У пользователей и компаний рядом есть `status_counts`. Очередь верификации использует общий `Page` с `total_pages`. Query у всех один: `page` и `page_size`.
 
 | Метод | Путь | Что делает |
 |---|---|---|
@@ -321,7 +360,7 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 | GET | `/users` | Пользователи |
 | PATCH | `/users/{user_id}/status` | `pending` / `active` / `blocked` |
 | GET | `/companies` | Компании |
-| GET | `/companies/pending-verification` | Очередь верификации |
+| GET | `/companies/pending-verification` | Страница очереди верификации (`total_pages`) |
 | GET | `/companies/{company_id}` | Карточка: команда, контракты, отзывы, чеклист |
 | POST | `/companies/{company_id}/verify` | Одобрить или отклонить верификацию |
 | POST | `/companies/{company_id}/action` | `approve`, `reject`, `request_documents`, `block`, `deactivate`, `reactivate` |
@@ -338,9 +377,20 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 | GET | `/finance`, `/finance/{payment_id}` | Платежи платформы |
 | GET | `/finance/export` | Выгрузка |
 | POST | `/finance/{payment_id}/action` | `refund`, `retry`, `mark_paid` |
-| GET | `/reports` | Жалобы на каталог, RFQ и proposal |
+| GET | `/reports` | Жалобы на каталог, RFQ и proposal. Конверт с `pages` |
 | GET | `/reports/{target_type}/{report_id}` | `target_type`: `catalog`, `rfq`, `proposal` |
 | POST | `/reports/{target_type}/{report_id}/action` | `dismiss`, `warn`, `suspend`, `delete` |
+| GET | `/staff` | Сотрудники админки, `{ items, total }`. Фильтр `query`. Право `admin_staff.view` |
+| POST | `/staff` | Создать сотрудника. 201. `admin_staff.create` |
+| PATCH | `/staff/{user_id}` | Обновить сотрудника. `admin_staff.update` |
+| GET | `/logs` | Журнал. Конверт с `pages` и `audience_counts`. Фильтры `audience`, `kind`, `section`, `status`, `period`, `query`. Право `audit_logs.view` |
+| GET | `/logs/{log_id}` | Карточка записи журнала |
+| GET | `/categories` | Дерево категорий для модерации, только `items`. `admin_catalog.view` |
+| POST | `/categories` | Создать категорию. 201 |
+| PATCH | `/categories/{category_id}` | Переименовать, сменить slug или родителя |
+| DELETE | `/categories/{category_id}` | Удалить категорию |
+| GET | `/escrow` | Эскроу: сводка, счётчики `held` / `disputed` / `awaiting` и страница контрактов с полем `pages`. `admin_finance.view` |
+| GET | `/analytics` | Сводка за `period`: `30d`, `90d` или `12m`. `admin_dashboard.view` |
 
 Жалобу на карточку каталога создаёт пользователь (`POST /catalog/items/{item_id}/reports`). Жалобы на RFQ и proposal в админке читаются, отдельных публичных ручек создания в коде нет: таблицы `rfq_reports` и `proposal_reports` наполняются тем кодом, который пишет в них напрямую.
 
@@ -349,6 +399,7 @@ Query: `page` (с 1) и `page_size` (1–100, по умолчанию 20). Пу�
 | Задача | Куда смотреть |
 |---|---|
 | Новый URL | `api/` модуля и `router.py`. Импорт `api/create.py` в `router.py` через `# noqa: F401` нужен: декоратор вешается при импорте. |
+| Новый список со страницей | `PaginationDep` на ручке и `fetch_page` / `build_page` в сервисе. Тип ответа — `Page[...]` из `app/core/pagination.py`. |
 | Правило сделки | `services/` того модуля, чья сущность меняет статус. Принятие отклика — `proposals`, сдача и спор — `contracts`, деньги этапа — `payments`. |
 | Кто имеет право | `app/deps.py` (актор и роль в компании) и `buyer_perm` / `supplier_perm` на ручке. |
 | Новое право в матрице | Сид permissions и `RESOURCE_ALIASES_RU`. |
