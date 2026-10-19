@@ -52,7 +52,8 @@ Thumbs.db
 
 # Logs
 *.log
-branch_structure.json
-temp_auto_push.bat
-temp_interactive_push.bat
-STRUCTURE.md.gitignore
+
+# Block accidental Windows helper / push scripts
+*.bat
+*.cmd
+*.ps1
