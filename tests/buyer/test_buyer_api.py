@@ -82,6 +82,19 @@ async def test_public_catalog(client):
     assert body["page"] == 1
     assert body["page_size"] == 20
 
+    filtered = await client.get(
+        f"{API}/public/catalog",
+        params={"category_id": 1, "catalog_type": "product"},
+    )
+    assert filtered.status_code == 200
+    assert isinstance(filtered.json()["items"], list)
+
+    invalid = await client.get(
+        f"{API}/public/catalog",
+        params={"catalog_type": "invalid"},
+    )
+    assert invalid.status_code == 422
+
 
 @pytest.mark.asyncio
 async def test_buyer_rfqs_list(client, buyer_auth):

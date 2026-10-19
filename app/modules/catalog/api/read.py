@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 import asyncpg
 from fastapi import Depends, Query
@@ -51,9 +51,16 @@ async def public_catalog(
     pagination: PaginationDep,
     q: str | None = Query(None),
     category: str | None = Query(None),
+    category_id: int | None = Query(None),
+    catalog_type: Literal["product", "service"] | None = Query(None),
 ):
     return await CatalogItemService().list_public(
-        q, category, pagination.page, pagination.page_size
+        q,
+        category,
+        pagination.page,
+        pagination.page_size,
+        category_id=category_id,
+        catalog_type=catalog_type,
     )
 
 

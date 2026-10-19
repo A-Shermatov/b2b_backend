@@ -284,6 +284,9 @@ class CatalogItemMixin:
         category_slug: str | None = None,
         page: int = 1,
         page_size: int = 20,
+        *,
+        category_id: int | None = None,
+        catalog_type: str | None = None,
     ):
         clauses = ["ci.status::text = 'active'"]
         params: list = []
@@ -293,6 +296,12 @@ class CatalogItemMixin:
         if category_slug:
             params.append(category_slug)
             clauses.append(f"cat.slug = ${len(params)}")
+        if category_id is not None:
+            params.append(category_id)
+            clauses.append(f"ci.category_id = ${len(params)}")
+        if catalog_type:
+            params.append(catalog_type)
+            clauses.append(f"ci.type::text = ${len(params)}")
         where = " AND ".join(clauses)
         from_sql = """
             FROM catalog_items ci
