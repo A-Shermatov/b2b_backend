@@ -117,9 +117,9 @@ class ProposalCreateMixin:
             )
         recipient_actor_id = row["supplier_actor_id"] if as_buyer else row["rfq_actor_id"]
         href = (
-            f"/supplier/rfqs/{row['rfq_id']}"
+            f"/supplier/messages?proposal={proposal_id}"
             if as_buyer
-            else f"/customer/rfqs/{row['rfq_id']}/proposals"
+            else f"/customer/messages?proposal={proposal_id}"
         )
         await NotificationService().notify_actor_members(
             recipient_actor_id,

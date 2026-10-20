@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, File, UploadFile
 
 from app.modules.companies.api.common import (
     AddTeamMemberRequest,
@@ -15,7 +15,9 @@ from app.modules.companies.api.common import (
     require_supplier_ctx,
     supplier_router,
 )
+from app.modules.companies.schemas import CompanyLogoUploadResponse
 from app.modules.subscription.services import SubscriptionService
+from app.utils.storage import storage_service
 
 
 @buyer_router.post("/", response_model=CompanyWithRelations)
@@ -33,6 +35,24 @@ async def supplier_create_company(
 ):
     await SubscriptionService().check_company_limit(ctx.user)
     return await CompanyService().create_from_wizard(ctx.user, data, "supplier")
+
+
+@buyer_router.post("/logo", response_model=CompanyLogoUploadResponse)
+async def buyer_upload_logo(
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    file: UploadFile = File(...),
+):
+    key, _ = await storage_service.upload(file, f"logos/{ctx.user.id}")
+    return CompanyLogoUploadResponse(logo=key)
+
+
+@supplier_router.post("/logo", response_model=CompanyLogoUploadResponse)
+async def supplier_upload_logo(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    file: UploadFile = File(...),
+):
+    key, _ = await storage_service.upload(file, f"logos/{ctx.user.id}")
+    return CompanyLogoUploadResponse(logo=key)
 
 
 @buyer_router.post("/{company_id}/certificates")

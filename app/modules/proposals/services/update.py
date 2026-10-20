@@ -82,7 +82,15 @@ class ProposalUpdateMixin:
                 "UPDATE proposals SET status = 'rejected'::proposal_status WHERE id = $1",
                 proposal_id,
             )
-            return proposal_to_response(await load_proposal_row(conn, proposal_id))
+            rejected = proposal_to_response(await load_proposal_row(conn, proposal_id))
+        await NotificationService().notify_actor_members(
+            row["supplier_actor_id"],
+            "proposal",
+            "Предложение отклонено",
+            f"Заказчик отклонил ваше предложение по заявке «{row['rfq_title']}»",
+            f"/supplier/rfqs/{row['rfq_id']}",
+        )
+        return rejected
 
     async def accept(
         self,

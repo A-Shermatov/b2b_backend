@@ -9,6 +9,7 @@ from app.modules.rfqs.services.common import (
     load_rfq_response,
     load_rfq_row,
     load_supplier_participation,
+    load_supplier_participation_map,
     shape_for_supplier,
     shape_rfq_rows,
 )
@@ -86,7 +87,17 @@ class RfqReadMixin:
                 page_size,
             )
             items = await shape_rfq_rows(conn, rows, include_buyer=True)
-        shaped = [shape_for_supplier(rfq, supplier_id) for rfq in items]
+            participation_map = await load_supplier_participation_map(
+                conn, [rfq["id"] for rfq in items], supplier_id
+            )
+        shaped = [
+            shape_for_supplier(
+                rfq,
+                supplier_id,
+                participation_map.get(rfq["id"]),
+            )
+            for rfq in items
+        ]
         return build_page(shaped, total, page, page_size)
 
     async def list_public_board(self, page: int = 1, page_size: int = 20) -> dict:

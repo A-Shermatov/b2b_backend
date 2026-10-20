@@ -3,6 +3,7 @@ from app.modules.catalog.schemas.common import (
     CatalogItemReportCreate,
     CatalogItemReportResponse,
     CatalogItemWithRelations,
+    CatalogMediaUploadResponse,
     CategorySchema,
     CategoryTree,
 )
@@ -14,4 +15,5 @@ __all__ = [
     "CatalogItemWithRelations",
     "CatalogItemReportCreate",
     "CatalogItemReportResponse",
+    "CatalogMediaUploadResponse",
 ]

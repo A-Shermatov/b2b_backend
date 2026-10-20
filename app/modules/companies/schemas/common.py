@@ -106,6 +106,14 @@ class CompanyWithRelations(CompanySchema):
     company_users: list[CompanyUserSchema] = []
 
 
+class CompanyLogoUploadResponse(BaseModel):
+    logo: str
+
+    @field_serializer("logo")
+    def serialize_logo(self, value: str) -> str:
+        return public_file_url(value)
+
+
 class CompanyWizardCertificate(BaseModel):
     title: str
     issuer: str

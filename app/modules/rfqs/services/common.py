@@ -296,22 +296,37 @@ def shape_for_supplier(
 
 
 async def load_supplier_participation(conn, rfq_id: str, supplier_id: int) -> dict:
-    row = await conn.fetchrow(
+    mapping = await load_supplier_participation_map(conn, [rfq_id], supplier_id)
+    return mapping.get(rfq_id, {"proposal_status": None, "contract_id": None})
+
+
+async def load_supplier_participation_map(
+    conn, rfq_ids: list[str], supplier_id: int
+) -> dict[str, dict]:
+    if not rfq_ids:
+        return {}
+    rows = await conn.fetch(
         """
-        SELECT p.status::text AS proposal_status, c.id AS contract_id
+        SELECT DISTINCT ON (p.rfq_id)
+            p.rfq_id,
+            p.status::text AS proposal_status,
+            c.id AS contract_id
         FROM proposals p
         LEFT JOIN contracts c
           ON c.proposal_id = p.id AND c.supplier_actor_id = $2
-        WHERE p.rfq_id = $1 AND p.supplier_actor_id = $2
-        ORDER BY p.id DESC
-        LIMIT 1
+        WHERE p.rfq_id = ANY($1::text[]) AND p.supplier_actor_id = $2
+        ORDER BY p.rfq_id, p.id DESC
         """,
-        rfq_id,
+        rfq_ids,
         supplier_id,
     )
-    if row is None:
-        return {"proposal_status": None, "contract_id": None}
-    return {"proposal_status": row["proposal_status"], "contract_id": row["contract_id"]}
+    return {
+        row["rfq_id"]: {
+            "proposal_status": row["proposal_status"],
+            "contract_id": row["contract_id"],
+        }
+        for row in rows
+    }
 
 
 async def load_rfq_row(conn, rfq_id: str, *, with_buyer: bool = False):

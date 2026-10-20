@@ -117,6 +117,12 @@ class ItemMediaInput(BaseModel):
     sort_order: int = 0
 
 
+class CatalogMediaUploadResponse(FileUrlMixin):
+    file_name: str
+    file_url: str
+    media_type: str
+
+
 class CatalogItemInput(BaseModel):
     type: str
     category_id: int

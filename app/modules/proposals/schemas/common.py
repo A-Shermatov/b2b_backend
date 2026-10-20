@@ -69,6 +69,25 @@ class ProposalMessageCreate(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class ProposalMessageThreadLastMessage(BaseModel):
+    id: int
+    text: str
+    sender_id: int
+    sender_name: str = ""
+    created_at: datetime
+
+
+class ProposalMessageThread(BaseModel):
+    proposal_id: int
+    rfq_id: str
+    rfq_title: str
+    status: str
+    counterpart_actor_id: int
+    counterpart_name: str
+    message_count: int = 0
+    last_message: ProposalMessageThreadLastMessage | None = None
+
+
 class ProposalAcceptRequest(BaseModel):
     payment_type: PaymentType
     milestones: list[MilestoneInput] | None = None
