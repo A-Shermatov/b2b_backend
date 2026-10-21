@@ -1756,6 +1756,7 @@ CREATE TABLE public.rfqs (
     start_date character varying(30),
     team_size_required integer,
     experience_required character varying(255),
+    catalog_item_id integer,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL
 );

@@ -7,6 +7,7 @@ from app.modules.catalog.schemas.common import (
     CategorySchema,
     CategoryTree,
 )
+from app.modules.catalog.schemas.offers import CatalogOfferCreate, CatalogOfferResponse
 
 __all__ = [
     "CategorySchema",
@@ -16,4 +17,6 @@ __all__ = [
     "CatalogItemReportCreate",
     "CatalogItemReportResponse",
     "CatalogMediaUploadResponse",
+    "CatalogOfferCreate",
+    "CatalogOfferResponse",
 ]

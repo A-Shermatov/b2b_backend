@@ -86,6 +86,21 @@ COMPAT_PATCHES = [
     END
     $$;
     """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_enum
+            JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+            WHERE pg_type.typname = 'proposal_status'
+              AND pg_enum.enumlabel = 'pending_supplier'
+        ) THEN
+            ALTER TYPE proposal_status ADD VALUE 'pending_supplier';
+        END IF;
+    END
+    $$;
+    """,
     _create_enum_sql("rfq_report_reason", ("spam", "fraud", "counterfeit", "abuse", "other")),
     _create_enum_sql("proposal_report_reason", ("spam", "fraud", "counterfeit", "abuse", "other")),
     _create_enum_sql("rfq_report_status", ("open", "resolved", "dismissed")),
@@ -281,4 +296,9 @@ COMPAT_PATCHES = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_transactions_milestone_id ON payment_gateway_transactions (milestone_id);",
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_transactions_external_id ON payment_gateway_transactions (external_transaction_id);",
+    """
+    ALTER TABLE rfqs
+    ADD COLUMN IF NOT EXISTS catalog_item_id INTEGER REFERENCES catalog_items(id);
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_rfqs_catalog_item_id ON rfqs (catalog_item_id);",
 ]

@@ -13,7 +13,7 @@ PROPOSAL_COLUMNS = """
     p.created_at
 """
 
-OPEN_CHAT_STATUSES = ("submitted", "viewed", "shortlisted")
+OPEN_CHAT_STATUSES = ("submitted", "viewed", "shortlisted", "pending_supplier")
 FINAL_PROPOSAL_STATUSES = ("accepted", "rejected", "withdrawn", "archived")
 
 

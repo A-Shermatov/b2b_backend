@@ -56,11 +56,44 @@ class ProposalUpdateMixin:
             row = await load_proposal_row(conn, proposal_id)
             if row["supplier_actor_id"] != supplier_id:
                 raise ForbiddenError("Access denied")
+            if row["status"] == "pending_supplier":
+                raise ConflictError("Buyer-initiated offer cannot be withdrawn by supplier")
+            if row["status"] not in ("submitted", "viewed", "shortlisted"):
+                raise ConflictError("Proposal cannot be withdrawn")
             await conn.execute(
                 "UPDATE proposals SET status = 'withdrawn'::proposal_status WHERE id = $1",
                 proposal_id,
             )
             return proposal_to_response(await load_proposal_row(conn, proposal_id))
+
+    async def buyer_withdraw_offer(self, proposal_id: int, buyer_actor_id: int):
+        async with self.connection() as conn:
+            row = await load_proposal_context(conn, proposal_id)
+            if row["rfq_actor_id"] != buyer_actor_id:
+                raise ForbiddenError("Access denied")
+            if row["status"] != "pending_supplier":
+                raise ConflictError("Only pending catalog offers can be withdrawn")
+            await conn.execute(
+                "UPDATE proposals SET status = 'withdrawn'::proposal_status WHERE id = $1",
+                proposal_id,
+            )
+            await conn.execute(
+                """
+                UPDATE rfqs
+                SET status = 'cancelled'::rfq_status, updated_at = NOW()
+                WHERE id = $1 AND status::text = 'receiving_proposals'
+                """,
+                row["rfq_id"],
+            )
+            withdrawn = proposal_to_response(await load_proposal_row(conn, proposal_id))
+        await NotificationService().notify_actor_members(
+            row["supplier_actor_id"],
+            "proposal",
+            "Запрос отозван",
+            f"Заказчик отозвал запрос по заявке «{row['rfq_title']}»",
+            f"/supplier/rfqs/{row['rfq_id']}",
+        )
+        return withdrawn
 
     async def shortlist(self, proposal_id: int, buyer_actor_id: int):
         async with self.connection() as conn:
@@ -92,6 +125,92 @@ class ProposalUpdateMixin:
         )
         return rejected
 
+    async def supplier_reject(self, proposal_id: int, supplier_id: int):
+        async with self.connection() as conn:
+            row = await load_proposal_context(conn, proposal_id)
+            if row["supplier_actor_id"] != supplier_id:
+                raise ForbiddenError("Access denied")
+            if row["status"] != "pending_supplier":
+                raise ConflictError("Only pending catalog offers can be rejected")
+            await conn.execute(
+                "UPDATE proposals SET status = 'rejected'::proposal_status WHERE id = $1",
+                proposal_id,
+            )
+            await conn.execute(
+                """
+                UPDATE rfqs
+                SET status = 'cancelled'::rfq_status, updated_at = NOW()
+                WHERE id = $1 AND status::text = 'receiving_proposals'
+                """,
+                row["rfq_id"],
+            )
+            rejected = proposal_to_response(await load_proposal_row(conn, proposal_id))
+        await NotificationService().notify_actor_members(
+            row["rfq_actor_id"],
+            "proposal",
+            "Запрос отклонён",
+            f"Исполнитель отклонил ваш запрос по «{row['rfq_title']}»",
+            f"/customer/rfqs/{row['rfq_id']}",
+        )
+        return rejected
+
+    async def supplier_accept(self, proposal_id: int, supplier_id: int):
+        async with self.connection() as conn:
+            async with conn.transaction():
+                row = await load_proposal_context(conn, proposal_id)
+                if row["supplier_actor_id"] != supplier_id:
+                    raise ForbiddenError("Access denied")
+                if row["status"] != "pending_supplier":
+                    raise ConflictError("Only pending catalog offers can be accepted")
+                ensure_contract_amount_allowed(
+                    row["price"],
+                    row["currency"],
+                    await get_platform_settings(conn, use_cache=False),
+                )
+                await conn.execute(
+                    "UPDATE proposals SET status = 'accepted'::proposal_status WHERE id = $1",
+                    proposal_id,
+                )
+                await conn.execute(
+                    "UPDATE rfqs SET status = 'supplier_selected'::rfq_status WHERE id = $1",
+                    row["rfq_id"],
+                )
+                contract = await ContractService(conn).create_from_proposal(
+                    {
+                        "id": row["id"],
+                        "supplier_actor_id": row["supplier_actor_id"],
+                        "price": row["price"],
+                        "currency": row["currency"],
+                        "delivery_time": row["delivery_time"],
+                        "rfq_id": row["rfq_id"],
+                        "rfq": {
+                            "id": row["rfq_id"],
+                            "title": row["rfq_title"],
+                            "description": row["rfq_description"],
+                            "deadline": row["rfq_deadline"],
+                        },
+                    },
+                    row["rfq_actor_id"],
+                    payment_type=PaymentType.full_postpayment,
+                    milestones=None,
+                    buyer_user_id=None,
+                )
+                await conn.execute(
+                    "UPDATE rfqs SET status = 'contract_created'::rfq_status WHERE id = $1",
+                    row["rfq_id"],
+                )
+                updated = await load_proposal_row(conn, proposal_id)
+                contract_id = contract["id"]
+
+        await NotificationService().notify_actor_members(
+            row["rfq_actor_id"],
+            "contract",
+            "Исполнитель принял запрос",
+            f"По заявке «{row['rfq_title']}» открыта сделка",
+            f"/customer/contracts/{contract_id}",
+        )
+        return {"proposal": proposal_to_response(updated), "contract_id": contract_id}
+
     async def accept(
         self,
         proposal_id: int,
@@ -105,6 +224,8 @@ class ProposalUpdateMixin:
                 row = await load_proposal_context(conn, proposal_id)
                 if row["rfq_actor_id"] != buyer_actor_id:
                     raise ForbiddenError("Access denied")
+                if row["status"] == "pending_supplier":
+                    raise ConflictError("Catalog offer must be accepted by the supplier")
                 if row["status"] in FINAL_PROPOSAL_STATUSES:
                     raise ConflictError("Proposal already finalized")
                 ensure_contract_amount_allowed(

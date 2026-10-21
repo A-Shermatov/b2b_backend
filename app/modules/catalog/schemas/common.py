@@ -92,6 +92,7 @@ class CatalogItemWithRelations(CatalogItemSchema):
     pricing: ItemPricingSchema | None = None
     media: list[ItemMediaSchema] = []
     stats: ItemStatsSchema | None = None
+    rejection_reason: str | None = None
 
 
 class ItemAttributeInput(BaseModel):

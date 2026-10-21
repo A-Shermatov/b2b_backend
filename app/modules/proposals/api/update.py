@@ -49,6 +49,14 @@ async def accept_proposal(
     )
 
 
+@buyer_router.post("/proposals/{proposal_id}/withdraw")
+async def buyer_withdraw_offer(
+    proposal_id: int,
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("proposals.accept"))],
+):
+    return await ProposalService().buyer_withdraw_offer(proposal_id, ctx.actor.id)
+
+
 @supplier_router.patch("/{proposal_id}")
 async def update_proposal(
     proposal_id: int,
@@ -64,3 +72,19 @@ async def withdraw_proposal(
     ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.update"))],
 ):
     return await ProposalService().withdraw(proposal_id, ctx.actor.id)
+
+
+@supplier_router.post("/{proposal_id}/accept")
+async def supplier_accept_offer(
+    proposal_id: int,
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.update"))],
+):
+    return await ProposalService().supplier_accept(proposal_id, ctx.actor.id)
+
+
+@supplier_router.post("/{proposal_id}/reject")
+async def supplier_reject_offer(
+    proposal_id: int,
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.update"))],
+):
+    return await ProposalService().supplier_reject(proposal_id, ctx.actor.id)

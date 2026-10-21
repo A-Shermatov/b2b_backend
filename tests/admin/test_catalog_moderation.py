@@ -146,13 +146,38 @@ async def test_catalog_report_and_admin_actions(client, admin_auth, supplier_aut
     )
     assert notification is not None
 
-    request_res = await client.post(
+    reject_res = await client.post(
         f"/api/v1/admin/catalog/{item_id}/action",
-        json={"action": "request_changes", "reason": "Уточните описание"},
+        json={"action": "reject", "reason": "Уточните описание"},
         headers=admin_auth["headers"],
     )
-    assert request_res.status_code == 200
-    assert request_res.json()["status"] == "changes_requested"
+    assert reject_res.status_code == 200
+    assert reject_res.json()["status"] == "changes_requested"
+    assert reject_res.json()["action"] == "reject"
+    reject_notification = await fetchrow(
+        """
+        SELECT title, body FROM notifications
+        WHERE href = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        f"/supplier/catalog/{item_id}",
+    )
+    assert reject_notification is not None
+    assert reject_notification["title"] == "Позиция отклонена"
+    assert "отклонён(а) модератором" in reject_notification["body"]
+    assert "Причина: Уточните описание" in reject_notification["body"]
+    reject_audit = await fetchrow(
+        """
+        SELECT action FROM audit_logs
+        WHERE resource_type = 'catalog_item' AND resource_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        str(item_id),
+    )
+    assert reject_audit is not None
+    assert reject_audit["action"] == "admin.catalog.reject"
 
     delete_res = await client.post(
         f"/api/v1/admin/catalog/{item_id}/action",

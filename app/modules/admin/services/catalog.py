@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
@@ -52,13 +54,20 @@ def _serialize_catalog_list_item(item, owner) -> dict:
 
 
 def _catalog_action_notification(action: str, item_title: str, reason: str | None):
+    when = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    if action == "reject":
+        reason_text = (reason or "").strip() or "не указана"
+        return (
+            "Позиция отклонена",
+            (
+                f"Ваш товар/услуга «{item_title}» отклонён(а) модератором {when}. "
+                f"Причина: {reason_text}. "
+                "Исправьте карточку и снова отправьте на модерацию."
+            ),
+        )
     messages = {
         "approve": ("Позиция одобрена", f"Позиция «{item_title}» опубликована в каталоге."),
         "hide": ("Позиция скрыта", f"Позиция «{item_title}» скрыта модератором."),
-        "request_changes": (
-            "Нужны изменения",
-            f"Для позиции «{item_title}» запрошены правки перед публикацией.",
-        ),
         "delete": ("Позиция удалена", f"Позиция «{item_title}» удалена администратором."),
     }
     title, body = messages[action]
@@ -266,14 +275,14 @@ class AdminCatalogMixin:
         current_user,
         reason: str | None = None,
     ) -> dict:
-        allowed = {"approve", "hide", "request_changes", "delete"}
+        allowed = {"approve", "hide", "reject", "delete"}
         if action not in allowed:
             raise ValidationError("Unsupported catalog action")
         ensure_permission(
             current_user,
             "admin_catalog.delete" if action == "delete" else "admin_catalog.update",
         )
-        if action in {"hide", "request_changes", "delete"} and not (reason and reason.strip()):
+        if action in {"hide", "reject", "delete"} and not (reason and reason.strip()):
             raise ValidationError("Reason is required for this action")
 
         async with self.connection() as conn:
@@ -293,7 +302,7 @@ class AdminCatalogMixin:
             elif action == "hide":
                 status = "hidden"
                 report_status = "resolved"
-            elif action == "request_changes":
+            elif action == "reject":
                 status = "changes_requested"
                 report_status = None
             else:

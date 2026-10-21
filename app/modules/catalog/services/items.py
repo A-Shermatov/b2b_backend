@@ -47,7 +47,14 @@ ITEM_COLUMNS = """
 """
 
 
-def _item_to_schema(item, attributes, pricing, media, stats) -> CatalogItemWithRelations:
+def _item_to_schema(
+    item,
+    attributes,
+    pricing,
+    media,
+    stats,
+    rejection_reason: str | None = None,
+) -> CatalogItemWithRelations:
     return CatalogItemWithRelations(
         id=item["id"],
         actor_id=item["actor_id"],
@@ -98,6 +105,7 @@ def _item_to_schema(item, attributes, pricing, media, stats) -> CatalogItemWithR
             views=stats["views"] if stats else 0,
             leads=stats["leads"] if stats else 0,
         ),
+        rejection_reason=rejection_reason,
     )
 
 
@@ -140,7 +148,39 @@ class CatalogItemMixin:
             "SELECT item_id, views, leads FROM item_stats WHERE item_id = $1",
             item_id,
         )
-        return _item_to_schema(item, attributes, pricing, media, stats)
+        rejection_reason = None
+        if item["status"] == "changes_requested":
+            audit = await conn.fetchrow(
+                """
+                SELECT details
+                FROM audit_logs
+                WHERE resource_type = 'catalog_item'
+                  AND resource_id = $1
+                  AND action = 'admin.catalog.reject'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                str(item_id),
+            )
+            if audit and audit["details"]:
+                details = audit["details"]
+                if isinstance(details, str):
+                    try:
+                        details = json.loads(details)
+                    except json.JSONDecodeError:
+                        details = {}
+                if isinstance(details, dict):
+                    reason = details.get("reason")
+                    if isinstance(reason, str) and reason.strip():
+                        rejection_reason = reason.strip()
+        return _item_to_schema(
+            item,
+            attributes,
+            pricing,
+            media,
+            stats,
+            rejection_reason=rejection_reason,
+        )
 
     async def _load_many(self, conn, items) -> list[CatalogItemWithRelations]:
         return [await self._load_item_schema(conn, item["id"]) for item in items]

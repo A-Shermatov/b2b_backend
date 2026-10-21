@@ -313,7 +313,7 @@ class AdminCatalogDetail(AdminCatalogListItem):
 
 
 class CatalogAdminActionRequest(BaseModel):
-    action: Literal["approve", "hide", "request_changes", "delete"]
+    action: Literal["approve", "hide", "reject", "delete"]
     reason: str | None = Field(default=None, max_length=2000)
 
 
