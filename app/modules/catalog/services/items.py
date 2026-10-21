@@ -426,7 +426,7 @@ class CatalogItemMixin:
                 raise ForbiddenError("Access denied")
             if status_value == "active":
                 next_status = "pending_review"
-            elif status_value in {"archived", "draft"}:
+            elif status_value in {"pending_review", "archived", "draft"}:
                 next_status = status_value
             else:
                 raise ForbiddenError("Supplier cannot set this status")
