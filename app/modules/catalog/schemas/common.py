@@ -93,6 +93,7 @@ class CatalogItemWithRelations(CatalogItemSchema):
     media: list[ItemMediaSchema] = []
     stats: ItemStatsSchema | None = None
     rejection_reason: str | None = None
+    completeness_percent: int = Field(ge=0, le=100, description="Заполненность карточки, 0–100")
 
 
 class ItemAttributeInput(BaseModel):

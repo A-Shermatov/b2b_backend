@@ -205,8 +205,8 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 | GET | `/public/catalog/items/{item_id}` | публично | Карточка |
 | GET | `/public/suppliers/{actor_id}/catalog` | публично | Страница каталога актора |
 | GET | `/public/companies/{company_id}/catalog` | публично | Страница каталога компании. Нет supplier-актора — пустая страница |
-| GET | `/supplier/catalog/items` | supplier | Страница своих карточек. Фильтр `status` |
-| GET | `/supplier/catalog/items/{item_id}` | supplier | Своя карточка |
+| GET | `/supplier/catalog/items` | supplier | Страница своих карточек. Фильтр `status`. В ответе `completeness_percent` (0–100) |
+| GET | `/supplier/catalog/items/{item_id}` | supplier | Своя карточка. Тоже с `completeness_percent` |
 | POST | `/supplier/catalog/items` | supplier, `catalog.create` | Создать. `active` и `pending_review` упираются в лимит подписки |
 | PATCH | `/supplier/catalog/items/{item_id}` | supplier, `catalog.update` | Править |
 | POST | `/supplier/catalog/items/{item_id}/publish` | supplier, `catalog.publish` | Опубликовать |

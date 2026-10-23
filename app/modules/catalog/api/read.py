@@ -64,7 +64,7 @@ async def public_catalog(
     )
 
 
-@public_router.get("/catalog/items/{item_id}")
+@public_router.get("/catalog/items/{item_id}", response_model=CatalogItemWithRelations)
 async def public_catalog_item(item_id: int):
     return await CatalogItemService().get_public(item_id)
 

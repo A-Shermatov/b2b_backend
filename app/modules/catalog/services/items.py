@@ -12,6 +12,7 @@ from app.modules.catalog.schemas.common import (
     CategoryRefSchema,
     ItemStatsSchema,
 )
+from app.modules.catalog.services.quality import catalog_item_completeness_percent
 from app.utils.storage import public_file_url
 
 SUPPLIER_WRITABLE_STATUSES = {
@@ -55,6 +56,31 @@ def _item_to_schema(
     stats,
     rejection_reason: str | None = None,
 ) -> CatalogItemWithRelations:
+    pricing_dict = (
+        {
+            "id": pricing["id"],
+            "item_id": pricing["item_id"],
+            "pricing_type": pricing["pricing_type"],
+            "currency": pricing["currency"],
+            "fixed_price": pricing["fixed_price"],
+            "hourly_rate": pricing["hourly_rate"],
+            "monthly_rate": pricing["monthly_rate"],
+            "tiers": _parse_tiers(pricing["tiers"]),
+        }
+        if pricing
+        else None
+    )
+    media_list = [
+        {
+            "id": row["id"],
+            "item_id": row["item_id"],
+            "file_name": row["file_name"],
+            "file_url": public_file_url(row["file_url"]),
+            "media_type": row["media_type"],
+            "sort_order": row["sort_order"],
+        }
+        for row in media
+    ]
     return CatalogItemWithRelations(
         id=item["id"],
         actor_id=item["actor_id"],
@@ -75,37 +101,23 @@ def _item_to_schema(
             else None
         ),
         attributes=[dict(row) for row in attributes],
-        pricing=(
-            {
-                "id": pricing["id"],
-                "item_id": pricing["item_id"],
-                "pricing_type": pricing["pricing_type"],
-                "currency": pricing["currency"],
-                "fixed_price": pricing["fixed_price"],
-                "hourly_rate": pricing["hourly_rate"],
-                "monthly_rate": pricing["monthly_rate"],
-                "tiers": _parse_tiers(pricing["tiers"]),
-            }
-            if pricing
-            else None
-        ),
-        media=[
-            {
-                "id": row["id"],
-                "item_id": row["item_id"],
-                "file_name": row["file_name"],
-                "file_url": public_file_url(row["file_url"]),
-                "media_type": row["media_type"],
-                "sort_order": row["sort_order"],
-            }
-            for row in media
-        ],
+        pricing=pricing_dict,
+        media=media_list,
         stats=ItemStatsSchema(
             item_id=stats["item_id"] if stats else item["id"],
             views=stats["views"] if stats else 0,
             leads=stats["leads"] if stats else 0,
         ),
         rejection_reason=rejection_reason,
+        completeness_percent=catalog_item_completeness_percent(
+            title=item["title"],
+            description=item["description"],
+            category_id=item["category_id"],
+            status=item["status"],
+            attributes_count=len(attributes),
+            media=media_list,
+            pricing=pricing_dict,
+        ),
     )
 
 
