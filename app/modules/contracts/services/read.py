@@ -15,6 +15,7 @@ class ContractReadMixin:
         page_size: int = 20,
         *,
         status: str | None = None,
+        completed: bool | None = None,
     ) -> dict:
         column = "buyer_actor_id" if actor_type == "buyer" else "supplier_actor_id"
         clauses = [f"c.{column} = $1"]
@@ -22,6 +23,12 @@ class ContractReadMixin:
         if status:
             params.append(status)
             clauses.append(f"c.status::text = ${len(params)}")
+        elif completed is True:
+            params.append("completed")
+            clauses.append(f"c.status::text = ${len(params)}")
+        elif completed is False:
+            params.append("completed")
+            clauses.append(f"c.status::text <> ${len(params)}")
         where = " AND ".join(clauses)
         async with self.connection() as conn:
             total, rows = await fetch_page(

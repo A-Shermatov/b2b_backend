@@ -20,6 +20,7 @@ async def buyer_list_contracts(
     ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     pagination: PaginationDep,
     status: ContractStatus | None = Query(None),
+    completed: bool | None = Query(None),
 ):
     return await ContractService().list_for_actor(
         ctx.actor.id,
@@ -27,6 +28,7 @@ async def buyer_list_contracts(
         pagination.page,
         pagination.page_size,
         status=status.value if status else None,
+        completed=completed,
     )
 
 
@@ -35,6 +37,7 @@ async def supplier_list_contracts(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
     pagination: PaginationDep,
     status: ContractStatus | None = Query(None),
+    completed: bool | None = Query(None),
 ):
     return await ContractService().list_for_actor(
         ctx.actor.id,
@@ -42,6 +45,7 @@ async def supplier_list_contracts(
         pagination.page,
         pagination.page_size,
         status=status.value if status else None,
+        completed=completed,
     )
 
 
