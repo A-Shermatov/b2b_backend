@@ -1,20 +1,18 @@
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_type WHERE typname = 'support_ticket_status'
-    ) THEN
-        CREATE TYPE public.support_ticket_status AS ENUM ('open', 'closed');
-    END IF;
-END $$;
+    CREATE TYPE public.support_ticket_status AS ENUM ('open', 'closed');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$$;
 
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_type WHERE typname = 'support_side'
-    ) THEN
-        CREATE TYPE public.support_side AS ENUM ('buyer', 'supplier');
-    END IF;
-END $$;
+    CREATE TYPE public.support_side AS ENUM ('buyer', 'supplier');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$$;
 
 ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'support';
 
