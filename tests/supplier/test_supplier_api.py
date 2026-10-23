@@ -51,6 +51,13 @@ async def test_supplier_list_proposals(client, supplier_auth):
     )
     assert filtered.status_code == 200
     assert all(item["status"] == "submitted" for item in filtered.json()["items"])
+    pending = await client.get(
+        f"{API}/supplier/proposals/",
+        headers=supplier_auth["headers"],
+        params={"status": "pending_supplier"},
+    )
+    assert pending.status_code == 200, pending.text
+    assert all(item["status"] == "pending_supplier" for item in pending.json()["items"])
     invalid = await client.get(
         f"{API}/supplier/proposals/",
         headers=supplier_auth["headers"],

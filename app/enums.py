@@ -108,6 +108,7 @@ class ProposalStatus(str, enum.Enum):
     submitted = "submitted"
     viewed = "viewed"
     shortlisted = "shortlisted"
+    pending_supplier = "pending_supplier"
     accepted = "accepted"
     rejected = "rejected"
     withdrawn = "withdrawn"
