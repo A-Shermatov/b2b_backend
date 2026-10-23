@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Query
 
 from app.deps import PaginationDep
+from app.enums import ProposalStatus
 from app.modules.proposals.api.common import (
     BuyerContext,
     ProposalService,
@@ -30,9 +31,13 @@ async def list_proposals(
 async def list_my_proposals(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
     pagination: PaginationDep,
+    status: ProposalStatus | None = Query(None),
 ):
     return await ProposalService().list_for_supplier(
-        ctx.actor.id, pagination.page, pagination.page_size
+        ctx.actor.id,
+        pagination.page,
+        pagination.page_size,
+        status.value if status else None,
     )
 
 

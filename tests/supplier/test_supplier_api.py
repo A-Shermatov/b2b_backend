@@ -44,6 +44,19 @@ async def test_supplier_list_proposals(client, supplier_auth):
     body = res.json()
     assert isinstance(body["items"], list)
     assert "total" in body and "total_pages" in body
+    filtered = await client.get(
+        f"{API}/supplier/proposals/",
+        headers=supplier_auth["headers"],
+        params={"status": "submitted"},
+    )
+    assert filtered.status_code == 200
+    assert all(item["status"] == "submitted" for item in filtered.json()["items"])
+    invalid = await client.get(
+        f"{API}/supplier/proposals/",
+        headers=supplier_auth["headers"],
+        params={"status": "unknown"},
+    )
+    assert invalid.status_code == 422
 
 
 @pytest.mark.asyncio

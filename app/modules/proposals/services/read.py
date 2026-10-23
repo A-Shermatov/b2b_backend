@@ -73,15 +73,25 @@ class ProposalReadMixin:
             )
             return await self._page_proposals(conn, "p.rfq_id = $1", [rfq_id], page, page_size)
 
-    async def list_for_supplier(self, supplier_id: int, page: int = 1, page_size: int = 20) -> dict:
+    async def list_for_supplier(
+        self,
+        supplier_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        status: str | None = None,
+    ) -> dict:
+        filters = ["p.supplier_actor_id = $1"]
+        params: list = [supplier_id]
+        if status:
+            params.append(status)
+            filters.append(f"p.status::text = ${len(params)}")
+        else:
+            filters.append("p.status::text NOT IN ('accepted', 'archived')")
         async with self.connection() as conn:
             return await self._page_proposals(
                 conn,
-                """
-                p.supplier_actor_id = $1
-                  AND p.status::text NOT IN ('accepted', 'archived')
-                """,
-                [supplier_id],
+                " AND ".join(filters),
+                params,
                 page,
                 page_size,
             )

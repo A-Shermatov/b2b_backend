@@ -225,7 +225,7 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 | POST | `/buyer/proposals/{proposal_id}/accept` | buyer, `proposals.accept` | Принять и создать контракт |
 | GET | `/buyer/proposals/{proposal_id}/messages` | buyer | Переписка |
 | POST | `/buyer/proposals/{proposal_id}/messages` | buyer, `proposals.update` | Сообщение |
-| GET | `/supplier/proposals` | supplier | Страница своих откликов. `accepted` и `archived` в список не попадают |
+| GET | `/supplier/proposals` | supplier | Страница своих откликов. Query `status`: `submitted`, `viewed`, `shortlisted`, `accepted`, `rejected`, `withdrawn`, `archived`. Без параметра `accepted` и `archived` не возвращаются |
 | PATCH | `/supplier/proposals/{proposal_id}` | supplier, `proposals.update` | Правка, пока можно |
 | POST | `/supplier/proposals/{proposal_id}/withdraw` | supplier, `proposals.update` | Отозвать |
 | GET | `/supplier/proposals/{proposal_id}/messages` | supplier | Переписка |
