@@ -1,7 +1,17 @@
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.modules.actors.services import ActorService
-from app.modules.companies.schemas import CompanyUpdateRequest, CompanyWithRelations
-from app.modules.companies.services.common import ensure_can_manage, load_company_schema
+from app.modules.companies.schemas import (
+    CertificateUpdateRequest,
+    CompanyCertificateSchema,
+    CompanyUpdateRequest,
+    CompanyWithRelations,
+    UpdateTeamMemberRequest,
+)
+from app.modules.companies.services.common import (
+    COMPANY_ROLES,
+    ensure_can_manage,
+    load_company_schema,
+)
 
 
 class CompanyUpdateMixin:
@@ -117,3 +127,101 @@ class CompanyUpdateMixin:
             if membership["role"] == "director":
                 raise ForbiddenError("Cannot remove company director")
             await conn.execute("DELETE FROM company_users WHERE id = $1", membership["id"])
+
+    async def update_team_member(
+        self, company_id: int, user_id: int, target_user_id: int, data: UpdateTeamMemberRequest
+    ):
+        if data.role not in COMPANY_ROLES:
+            raise ValidationError("Invalid company role")
+        async with self.connection() as conn:
+            await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
+            membership = await conn.fetchrow(
+                """
+                SELECT id, role::text AS role, u.email
+                FROM company_users cu
+                JOIN users u ON u.id = cu.user_id
+                WHERE cu.company_id = $1 AND cu.user_id = $2
+                """,
+                company_id,
+                target_user_id,
+            )
+            if not membership:
+                raise NotFoundError("Team member not found")
+            if membership["role"] == "director" and data.role != "director":
+                raise ForbiddenError("Cannot change company director role")
+            if data.role == "director" and membership["role"] != "director":
+                raise ForbiddenError("Cannot assign director role")
+            row = await conn.fetchrow(
+                """
+                UPDATE company_users
+                SET role = $1::company_role
+                WHERE id = $2
+                RETURNING id, company_id, user_id, role::text AS role
+                """,
+                data.role,
+                membership["id"],
+            )
+        return {
+            "id": row["id"],
+            "company_id": row["company_id"],
+            "user_id": row["user_id"],
+            "role": row["role"],
+            "email": membership["email"],
+        }
+
+    async def update_certificate(
+        self,
+        company_id: int,
+        user_id: int,
+        certificate_id: int,
+        data: CertificateUpdateRequest,
+    ) -> CompanyCertificateSchema:
+        async with self.connection() as conn:
+            await ensure_can_manage(conn, company_id, user_id, "company_certificates.manage")
+            current = await conn.fetchrow(
+                """
+                SELECT id, company_id, title, issuer, issue_date, expiry_date, file_url
+                FROM company_certificates
+                WHERE id = $1 AND company_id = $2
+                """,
+                certificate_id,
+                company_id,
+            )
+            if not current:
+                raise NotFoundError("Certificate not found")
+            fields = ("title", "issuer", "issue_date", "expiry_date", "file_url")
+            sets = []
+            params: list = []
+            for field in fields:
+                val = getattr(data, field)
+                if val is not None:
+                    params.append(val)
+                    sets.append(f"{field} = ${len(params)}")
+            if sets:
+                params.extend([certificate_id, company_id])
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE company_certificates
+                    SET {', '.join(sets)}
+                    WHERE id = ${len(params) - 1} AND company_id = ${len(params)}
+                    RETURNING id, company_id, title, issuer, issue_date, expiry_date, file_url
+                    """,
+                    *params,
+                )
+            else:
+                row = current
+        return CompanyCertificateSchema.model_validate(dict(row))
+
+    async def remove_certificate(self, company_id: int, user_id: int, certificate_id: int):
+        async with self.connection() as conn:
+            await ensure_can_manage(conn, company_id, user_id, "company_certificates.manage")
+            result = await conn.execute(
+                """
+                DELETE FROM company_certificates
+                WHERE id = $1 AND company_id = $2
+                """,
+                certificate_id,
+                company_id,
+            )
+            if result == "DELETE 0":
+                raise NotFoundError("Certificate not found")

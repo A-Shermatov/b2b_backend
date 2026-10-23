@@ -114,6 +114,14 @@ class CompanyLogoUploadResponse(BaseModel):
         return public_file_url(value)
 
 
+class CompanyCertificateUploadResponse(BaseModel):
+    file_url: str
+
+    @field_serializer("file_url")
+    def serialize_file_url(self, value: str) -> str:
+        return public_file_url(value)
+
+
 class CompanyWizardCertificate(BaseModel):
     title: str
     issuer: str
@@ -173,12 +181,24 @@ class AddTeamMemberRequest(BaseModel):
     role: str
 
 
+class UpdateTeamMemberRequest(BaseModel):
+    role: str
+
+
 class CertificateCreateRequest(BaseModel):
     title: str
     issuer: str
     issue_date: str
     expiry_date: str | None = None
     file_url: str
+
+
+class CertificateUpdateRequest(BaseModel):
+    title: str | None = None
+    issuer: str | None = None
+    issue_date: str | None = None
+    expiry_date: str | None = None
+    file_url: str | None = None
 
 
 class PublicSupplier(BaseModel):

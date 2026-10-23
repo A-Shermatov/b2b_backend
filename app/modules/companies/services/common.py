@@ -16,6 +16,8 @@ COMPANY_COLUMNS = """
     verification_status::text AS verification_status, rating, created_at, updated_at
 """
 
+COMPANY_ROLES = frozenset({"director", "admin", "moderator", "accountant"})
+
 
 def user_as_dict(user) -> dict:
     if isinstance(user, dict):
@@ -41,12 +43,7 @@ def parse_actor_types(data, extra: str | None = None) -> list[str]:
     return types
 
 
-async def ensure_can_manage(
-    conn,
-    company_id: int,
-    user_id: int,
-    permission: str = "company_profile.update",
-) -> None:
+async def ensure_company_member(conn, company_id: int, user_id: int) -> None:
     member = await conn.fetchrow(
         """
         SELECT 1
@@ -58,6 +55,15 @@ async def ensure_can_manage(
     )
     if not member:
         raise ForbiddenError("Insufficient permissions")
+
+
+async def ensure_can_manage(
+    conn,
+    company_id: int,
+    user_id: int,
+    permission: str = "company_profile.update",
+) -> None:
+    await ensure_company_member(conn, company_id, user_id)
     user = await conn.fetchrow(
         "SELECT role::text AS role, role_id FROM users WHERE id = $1",
         user_id,

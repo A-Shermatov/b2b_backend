@@ -74,6 +74,45 @@ async def test_supplier_companies_me(client, supplier_auth):
 
 
 @pytest.mark.asyncio
+async def test_supplier_create_company(client, supplier_auth):
+    if not supplier_auth["actor_id"]:
+        pytest.skip("No supplier actor")
+    res = await client.post(
+        f"{API}/supplier/companies/",
+        headers=supplier_auth["headers"],
+        json={
+            "title": "Supplier Co Create",
+            "legal_name": "Supplier Co Create LLC",
+            "tax_number": "987654321",
+            "description": "Supplier company",
+            "country": "Таджикистан",
+            "city": "Душанбе",
+            "address": "ул. Поставщик, 2",
+            "website": "https://supplier.example.com",
+            "founded_year": "2019",
+            "employees_count": "25",
+            "languages": ["ru", "tg"],
+            "industries": ["Logistics"],
+            "category_ids": [],
+            "certificates": [],
+            "team": [],
+            "actor_types": ["supplier"],
+        },
+    )
+    assert res.status_code == 200, res.text
+    company = res.json()
+    assert company["title"] == "Supplier Co Create"
+    assert "supplier" in company["actor_types"]
+
+    get_res = await client.get(
+        f"{API}/supplier/companies/{company['id']}",
+        headers=supplier_auth["headers"],
+    )
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == company["id"]
+
+
+@pytest.mark.asyncio
 async def test_supplier_subscription_get(client, supplier_auth):
     if not supplier_auth["actor_id"]:
         pytest.skip("No supplier actor")

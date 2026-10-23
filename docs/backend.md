@@ -154,16 +154,43 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 | Метод | Путь | Сторона | Что делает |
 |---|---|---|---|
 | GET | `/companies/me` | buyer, supplier | Страница компаний текущего пользователя |
+| GET | `/companies/{company_id}` | buyer, supplier | Карточка своей компании (только участник) |
 | POST | `/companies` | buyer, supplier | Создать компанию (мастер) |
 | PATCH | `/companies/{company_id}` | buyer, supplier | Обновить карточку |
-| POST | `/companies/{company_id}/certificates` | buyer, supplier | Сертификат |
+| POST | `/companies/logo` | buyer, supplier | Загрузить логотип (`multipart`), вернуть `logo` |
+| POST | `/companies/certificates/upload` | buyer, supplier | Загрузить файл сертификата, вернуть `file_url` |
+| POST | `/companies/{company_id}/certificates` | buyer, supplier | Добавить сертификат |
+| PATCH | `/companies/{company_id}/certificates/{certificate_id}` | buyer, supplier | Обновить сертификат |
+| DELETE | `/companies/{company_id}/certificates/{certificate_id}` | buyer, supplier | Удалить сертификат. 204 |
 | POST | `/companies/{company_id}/team` | buyer, supplier | Добавить сотрудника |
+| PATCH | `/companies/{company_id}/team/{target_user_id}` | buyer, supplier | Сменить роль сотрудника |
 | DELETE | `/companies/{company_id}/team/{target_user_id}` | buyer, supplier | Убрать из команды. 204 |
 | GET | `/public/suppliers` | публично | Страница исполнителей. Фильтры `q` и `category` |
 | GET | `/public/suppliers/{actor_id}` | публично | Карточка исполнителя |
 | GET | `/public/companies/{company_id}` | публично | Карточка компании |
 
-Директор компании не удаляется как обычный участник. Верификация компании (`verification_status`) меняется админом, не этой ручкой.
+Директор компании не удаляется как обычный участник и его роль нельзя понизить через API. Верификация компании (`verification_status`) меняется админом, не этой ручкой.
+
+### Support — `app/modules/support`
+
+Чат поддержки: один открытый тикет на пару `user + side` (`buyer` / `supplier`). Сообщения с delivery-статусами (`sent` / `delivered` / `viewed`), опциональное вложение (`multipart`). События WS: `support.message`, `support.message.status`, `support.ticket.closed`; in-app notification type `support`.
+
+| Метод | Путь | Кто | Что делает |
+|---|---|---|---|
+| GET | `/buyer\|supplier/support/ticket` | buyer / supplier | Открытый тикет или `{ ticket: null }` |
+| POST | `/buyer\|supplier/support/ticket` | buyer / supplier | Создать (или вернуть уже открытый) |
+| GET | `/buyer\|supplier/support/unread-count` | buyer / supplier | Непрочитанные входящие |
+| POST | `/buyer\|supplier/support/ticket/{id}/messages` | buyer / supplier | Сообщение (`text` + optional `file`) |
+| POST | `.../messages/{message_id}/delivered` | buyer / supplier | Ack доставки |
+| POST | `.../messages/read` | buyer / supplier | Пометить входящие прочитанными |
+| POST | `.../close` | buyer / supplier | Закрыть тикет |
+| GET | `/admin/support/tickets` | admin, `admin_support.view` | Список. Фильтр `status=open\|closed\|all` |
+| GET | `/admin/support/tickets/{id}` | admin | Карточка с сообщениями |
+| GET | `/admin/support/unread-count` | admin | Непрочитанные от пользователей |
+| POST | `/admin/support/tickets/{id}/messages` | admin, `admin_support.update` | Ответ (назначает `assigned_admin_id`) |
+| POST | `.../messages/{message_id}/delivered` | admin | Ack |
+| POST | `.../messages/read` | admin | Прочитано |
+| POST | `.../close` | admin | Закрыть |
 
 ### Catalog — `app/modules/catalog`
 

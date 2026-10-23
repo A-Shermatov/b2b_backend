@@ -15,7 +15,10 @@ from app.modules.companies.api.common import (
     require_supplier_ctx,
     supplier_router,
 )
-from app.modules.companies.schemas import CompanyLogoUploadResponse
+from app.modules.companies.schemas import (
+    CompanyCertificateUploadResponse,
+    CompanyLogoUploadResponse,
+)
 from app.modules.subscription.services import SubscriptionService
 from app.utils.storage import storage_service
 
@@ -53,6 +56,24 @@ async def supplier_upload_logo(
 ):
     key, _ = await storage_service.upload(file, f"logos/{ctx.user.id}")
     return CompanyLogoUploadResponse(logo=key)
+
+
+@buyer_router.post("/certificates/upload", response_model=CompanyCertificateUploadResponse)
+async def buyer_upload_certificate_file(
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    file: UploadFile = File(...),
+):
+    key, _ = await storage_service.upload(file, f"certificates/{ctx.user.id}")
+    return CompanyCertificateUploadResponse(file_url=key)
+
+
+@supplier_router.post("/certificates/upload", response_model=CompanyCertificateUploadResponse)
+async def supplier_upload_certificate_file(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    file: UploadFile = File(...),
+):
+    key, _ = await storage_service.upload(file, f"certificates/{ctx.user.id}")
+    return CompanyCertificateUploadResponse(file_url=key)
 
 
 @buyer_router.post("/{company_id}/certificates")

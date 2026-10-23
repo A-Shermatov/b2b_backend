@@ -1,8 +1,10 @@
 from app.modules.companies.schemas.common import (
     AddTeamMemberRequest,
     CertificateCreateRequest,
+    CertificateUpdateRequest,
     CompanyCategorySchema,
     CompanyCertificateSchema,
+    CompanyCertificateUploadResponse,
     CompanyLogoUploadResponse,
     CompanyProfileSchema,
     CompanySchema,
@@ -15,13 +17,16 @@ from app.modules.companies.schemas.common import (
     CompanyWithRelations,
     PublicSupplier,
     ReviewSchema,
+    UpdateTeamMemberRequest,
 )
 
 __all__ = [
     "AddTeamMemberRequest",
     "CertificateCreateRequest",
+    "CertificateUpdateRequest",
     "CompanyCategorySchema",
     "CompanyCertificateSchema",
+    "CompanyCertificateUploadResponse",
     "CompanyLogoUploadResponse",
     "CompanyProfileSchema",
     "CompanySchema",
@@ -34,4 +39,5 @@ __all__ = [
     "CompanyWithRelations",
     "PublicSupplier",
     "ReviewSchema",
+    "UpdateTeamMemberRequest",
 ]

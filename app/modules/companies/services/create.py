@@ -1,4 +1,4 @@
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.modules.actors.services import ActorService
 from app.modules.companies.schemas import (
     AddTeamMemberRequest,
@@ -8,6 +8,7 @@ from app.modules.companies.schemas import (
 )
 from app.modules.companies.services.common import (
     COMPANY_COLUMNS,
+    COMPANY_ROLES,
     ensure_can_manage,
     load_company_schema,
     parse_actor_types,
@@ -196,6 +197,10 @@ class CompanyCreateMixin:
         return row
 
     async def add_team_member(self, company_id: int, user_id: int, data: AddTeamMemberRequest):
+        if data.role not in COMPANY_ROLES:
+            raise ValidationError("Invalid company role")
+        if data.role == "director":
+            raise ValidationError("Cannot assign director role")
         async with self.connection() as conn:
             await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
             member = await conn.fetchrow(

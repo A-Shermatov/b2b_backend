@@ -38,6 +38,22 @@ async def supplier_my_companies(
     )
 
 
+@buyer_router.get("/{company_id}", response_model=CompanyWithRelations)
+async def buyer_get_company(
+    company_id: int,
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+):
+    return await CompanyService().get_member_company(company_id, ctx.user.id)
+
+
+@supplier_router.get("/{company_id}", response_model=CompanyWithRelations)
+async def supplier_get_company(
+    company_id: int,
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+):
+    return await CompanyService().get_member_company(company_id, ctx.user.id)
+
+
 @public_router.get("/suppliers", response_model=Page[PublicSupplier])
 async def list_suppliers(
     pagination: PaginationDep,
