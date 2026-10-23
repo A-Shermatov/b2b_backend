@@ -301,4 +301,89 @@ COMPAT_PATCHES = [
     ADD COLUMN IF NOT EXISTS catalog_item_id INTEGER REFERENCES catalog_items(id);
     """,
     "CREATE INDEX IF NOT EXISTS ix_rfqs_catalog_item_id ON rfqs (catalog_item_id);",
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_enum
+            JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+            WHERE pg_type.typname = 'notification_type'
+              AND pg_enum.enumlabel = 'support'
+        ) THEN
+            ALTER TYPE notification_type ADD VALUE 'support';
+        END IF;
+    END
+    $$;
+    """,
+    _create_enum_sql("support_ticket_status", ("open", "closed")),
+    """
+    CREATE TABLE IF NOT EXISTS support_tickets (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        side actor_side NOT NULL,
+        status support_ticket_status NOT NULL DEFAULT 'open',
+        assigned_admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        last_message_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        closed_at TIMESTAMPTZ
+    );
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_support_tickets_one_open_per_user
+    ON support_tickets (user_id)
+    WHERE status = 'open';
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_support_tickets_status_last_message
+    ON support_tickets (status, last_message_at DESC NULLS LAST);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS support_messages (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+        sender_id INTEGER NOT NULL REFERENCES users(id),
+        text TEXT NOT NULL DEFAULT '',
+        status message_delivery_status NOT NULL DEFAULT 'sent',
+        delivered_at TIMESTAMPTZ,
+        viewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_support_messages_ticket_id
+    ON support_messages (ticket_id, created_at);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS support_message_attachments (
+        id SERIAL PRIMARY KEY,
+        message_id INTEGER NOT NULL UNIQUE REFERENCES support_messages(id) ON DELETE CASCADE,
+        file_name VARCHAR(255) NOT NULL,
+        file_url VARCHAR(500) NOT NULL,
+        file_type VARCHAR(100) NOT NULL
+    );
+    """,
+    """
+    INSERT INTO permissions (name, resource, action)
+    SELECT v.name, v.resource, v.action
+    FROM (VALUES
+        ('admin_support.view', 'admin_support', 'view'),
+        ('admin_support.update', 'admin_support', 'update')
+    ) AS v(name, resource, action)
+    WHERE NOT EXISTS (SELECT 1 FROM permissions p WHERE p.name = v.name);
+    """,
+    """
+    INSERT INTO role_permissions (role_id, permission_id)
+    SELECT r.id, p.id
+    FROM roles r
+    JOIN permissions p ON (
+        (r.name IN ('admin', 'superadmin') AND p.name IN ('admin_support.view', 'admin_support.update'))
+        OR (r.name = 'moderator' AND p.name IN ('admin_support.view', 'admin_support.update'))
+    )
+    WHERE NOT EXISTS (
+        SELECT 1 FROM role_permissions rp
+        WHERE rp.role_id = r.id AND rp.permission_id = p.id
+    );
+    """,
+    "ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS invoice BOOLEAN NOT NULL DEFAULT TRUE;",
 ]

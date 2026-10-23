@@ -55,11 +55,21 @@ CLOSED_RFQ_STATUSES = [
     "disputed",
 ]
 
+BUYER_CLOSED_TAB_STATUSES = [
+    "completed",
+    "cancelled",
+    "expired",
+    "disputed",
+    "archived",
+]
+
 BUYER_TAB_STATUSES = {
     "draft": ["draft"],
     "published": ["published"],
     "collecting": ["receiving_proposals"],
-    "closed": CLOSED_RFQ_STATUSES,
+    "quotes": ["published", "receiving_proposals"],
+    "deal": ["supplier_selected", "contract_created", "in_progress"],
+    "closed": BUYER_CLOSED_TAB_STATUSES,
     "active": ["published", "receiving_proposals", "in_progress", "disputed"],
     "completed": ["completed", "cancelled", "expired"],
 }

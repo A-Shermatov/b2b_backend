@@ -59,9 +59,14 @@ async def list_suppliers(
     pagination: PaginationDep,
     q: str | None = Query(None),
     category: str | None = Query(None),
+    verified: bool = Query(False),
 ):
     return await CompanyService().list_suppliers(
-        q, category, pagination.page, pagination.page_size
+        q,
+        category,
+        pagination.page,
+        pagination.page_size,
+        verified=verified,
     )
 
 

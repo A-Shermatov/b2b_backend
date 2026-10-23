@@ -89,11 +89,37 @@ async def test_public_catalog(client):
     assert filtered.status_code == 200
     assert isinstance(filtered.json()["items"], list)
 
+    verified = await client.get(
+        f"{API}/public/catalog",
+        params={"verified": "true", "invoice": "true", "sort": "cheap"},
+    )
+    assert verified.status_code == 200
+    verified_body = verified.json()
+    assert isinstance(verified_body["items"], list)
+    for item in verified_body["items"]:
+        assert item.get("invoice") is True
+
     invalid = await client.get(
         f"{API}/public/catalog",
         params={"catalog_type": "invalid"},
     )
     assert invalid.status_code == 422
+
+    invalid_sort = await client.get(
+        f"{API}/public/catalog",
+        params={"sort": "unknown"},
+    )
+    assert invalid_sort.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_public_suppliers_verified(client):
+    res = await client.get(f"{API}/public/suppliers", params={"verified": "true"})
+    assert res.status_code == 200
+    body = res.json()
+    assert isinstance(body["items"], list)
+    for supplier in body["items"]:
+        assert supplier["verification_status"] == "verified"
 
 
 @pytest.mark.asyncio

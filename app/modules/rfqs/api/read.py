@@ -20,9 +20,16 @@ async def list_rfqs(
     ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     pagination: PaginationDep,
     tab: str | None = Query(None),
+    q: str | None = Query(None),
+    type: str | None = Query(None),
 ):
     return await RfqService().list_for_buyer(
-        ctx.actor.id, tab, pagination.page, pagination.page_size
+        ctx.actor.id,
+        tab,
+        pagination.page,
+        pagination.page_size,
+        q=q,
+        rfq_type=type,
     )
 
 
@@ -38,9 +45,15 @@ async def get_buyer_rfq(
 async def rfq_board(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
     pagination: PaginationDep,
+    q: str | None = Query(None),
+    source: str | None = Query(None),
 ):
     return await RfqService().list_board_for_supplier(
-        ctx.actor.id, pagination.page, pagination.page_size
+        ctx.actor.id,
+        pagination.page,
+        pagination.page_size,
+        q=q,
+        source=source,
     )
 
 

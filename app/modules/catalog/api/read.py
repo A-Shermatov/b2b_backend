@@ -53,6 +53,9 @@ async def public_catalog(
     category: str | None = Query(None),
     category_id: int | None = Query(None),
     catalog_type: Literal["product", "service"] | None = Query(None),
+    verified: bool = Query(False),
+    invoice: bool = Query(False),
+    sort: Literal["pop", "cheap", "rating"] = Query("pop"),
 ):
     return await CatalogItemService().list_public(
         q,
@@ -61,6 +64,9 @@ async def public_catalog(
         pagination.page_size,
         category_id=category_id,
         catalog_type=catalog_type,
+        verified=verified,
+        invoice=invoice,
+        sort=sort,
     )
 
 

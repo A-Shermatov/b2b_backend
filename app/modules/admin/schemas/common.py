@@ -536,6 +536,11 @@ class AdminDashboardMetrics(BaseModel):
     open_disputes: int
     monthly_revenue: float
     pending_verifications: int
+    pending_catalog: int = 0
+    open_reports: int = 0
+    pending_payouts: int = 0
+    flagged_chats: int = 0
+    pending_company_changes: int = 0
 
 
 class AdminActivityItem(BaseModel):

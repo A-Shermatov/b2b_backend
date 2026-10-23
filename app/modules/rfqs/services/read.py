@@ -23,7 +23,14 @@ class RfqReadMixin:
             return await load_rfq_response(conn, rfq_id, include_buyer=include_buyer)
 
     async def list_for_buyer(
-        self, actor_id: int, tab: str | None = None, page: int = 1, page_size: int = 20
+        self,
+        actor_id: int,
+        tab: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        q: str | None = None,
+        rfq_type: str | None = None,
     ) -> dict:
         filters = ["r.actor_id = $1", "r.status::text <> 'archived'"]
         params: list = [actor_id]
@@ -34,6 +41,14 @@ class RfqReadMixin:
             elif tab in KNOWN_RFQ_STATUSES:
                 params.append(tab)
                 filters.append(f"r.status::text = ${len(params)}")
+        if rfq_type in ("product", "service"):
+            params.append(rfq_type)
+            filters.append(f"r.type::text = ${len(params)}")
+        query = (q or "").strip()
+        if query:
+            params.append(f"%{query}%")
+            n = len(params)
+            filters.append(f"(r.title ILIKE ${n} OR r.id::text ILIKE ${n})")
         where = " AND ".join(filters)
         async with self.connection() as conn:
             total, rows = await fetch_page(
@@ -53,25 +68,44 @@ class RfqReadMixin:
         return build_page(items, total, page, page_size)
 
     async def list_board_for_supplier(
-        self, supplier_id: int, page: int = 1, page_size: int = 20
+        self,
+        supplier_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        q: str | None = None,
+        source: str | None = None,
     ) -> dict:
-        board_where = """
-            r.status::text = ANY($1::text[])
-            AND (
+        filters = [
+            "r.status::text = ANY($1::text[])",
+            """(
                 r.visibility::text = 'public'
                 OR EXISTS (
                     SELECT 1 FROM rfq_invited_suppliers inv
                     WHERE inv.rfq_id = r.id AND inv.supplier_actor_id = $2
                 )
+            )""",
+        ]
+        params: list = [OPEN_RFQ_STATUSES, supplier_id]
+        if source == "catalog":
+            filters.append("r.catalog_item_id IS NOT NULL")
+        elif source == "marketplace":
+            filters.append("r.catalog_item_id IS NULL")
+        query = (q or "").strip()
+        if query:
+            params.append(f"%{query}%")
+            n = len(params)
+            filters.append(
+                f"(r.title ILIKE ${n} OR r.id::text ILIKE ${n} "
+                f"OR COALESCE(c.name, '') ILIKE ${n})"
             )
-        """
+        board_where = " AND ".join(filters)
         board_from = """
             FROM rfqs r
             LEFT JOIN actors a ON a.id = r.actor_id
             LEFT JOIN companies c ON c.id = a.company_id AND a.kind::text = 'company'
             LEFT JOIN company_stats cs ON cs.company_id = c.id
         """
-        params = [OPEN_RFQ_STATUSES, supplier_id]
         async with self.connection() as conn:
             total, rows = await fetch_page(
                 conn,

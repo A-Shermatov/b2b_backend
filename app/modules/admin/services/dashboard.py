@@ -69,6 +69,34 @@ class AdminDashboardMixin:
                         "SELECT COUNT(*) FROM companies WHERE verification_status::text = 'pending'"
                     )
                 ),
+                "pending_catalog": int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM catalog_items
+                        WHERE status::text = 'pending_review'
+                        """
+                    )
+                ),
+                "open_reports": int(
+                    await conn.fetchval(
+                        """
+                        SELECT
+                          (SELECT COUNT(*) FROM catalog_item_reports WHERE status::text = 'open')
+                        + (SELECT COUNT(*) FROM rfq_reports WHERE status::text = 'open')
+                        + (SELECT COUNT(*) FROM proposal_reports WHERE status::text = 'open')
+                        """
+                    )
+                ),
+                "pending_payouts": int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM withdrawals
+                        WHERE status::text IN ('pending', 'processing')
+                        """
+                    )
+                ),
+                "flagged_chats": 0,
+                "pending_company_changes": 0,
             }
             recent_users = await conn.fetch(
                 """

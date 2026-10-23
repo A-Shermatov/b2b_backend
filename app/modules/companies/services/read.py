@@ -93,6 +93,8 @@ class CompanyReadMixin:
         category_slug: str | None = None,
         page: int = 1,
         page_size: int = 20,
+        *,
+        verified: bool = False,
     ) -> dict:
         filters = []
         params: list = []
@@ -122,6 +124,8 @@ class CompanyReadMixin:
                 )
                 """
             )
+        if verified:
+            filters.append("c.verification_status::text = 'verified'")
         where = (" AND " + " AND ".join(filters)) if filters else ""
         count_sql = f"SELECT COUNT(*) FROM ({SUPPLIER_SELECT + where}) AS listed"
         rows_sql = SUPPLIER_SELECT + where + " ORDER BY a.display_name ASC"

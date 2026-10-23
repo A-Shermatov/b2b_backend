@@ -42,9 +42,29 @@ def _parse_tiers(value):
 
 ITEM_COLUMNS = """
     ci.id, ci.actor_id, ci.type::text AS type, ci.category_id, ci.title,
-    ci.description, ci.status::text AS status, ci.created_at,
+    ci.description, ci.status::text AS status,
+    COALESCE(ci.invoice, TRUE) AS invoice, ci.created_at,
     cat.id AS category_pk, cat.parent_id AS category_parent_id,
     cat.name AS category_name, cat.slug AS category_slug
+"""
+
+LIST_PRICE_EXPR = """
+    COALESCE(
+        ip.fixed_price,
+        ip.hourly_rate,
+        ip.monthly_rate,
+        (
+            SELECT MIN((tier_el->>'price')::double precision)
+            FROM jsonb_array_elements(
+                CASE
+                    WHEN ip.tiers IS NULL THEN '[]'::jsonb
+                    WHEN jsonb_typeof(ip.tiers) = 'array' THEN ip.tiers
+                    ELSE '[]'::jsonb
+                END
+            ) AS tier_el
+            WHERE tier_el ? 'price'
+        )
+    )
 """
 
 
@@ -89,6 +109,7 @@ def _item_to_schema(
         title=item["title"],
         description=item["description"],
         status=item["status"],
+        invoice=bool(item["invoice"]),
         created_at=item["created_at"],
         category=(
             CategoryRefSchema(
@@ -339,6 +360,9 @@ class CatalogItemMixin:
         *,
         category_id: int | None = None,
         catalog_type: str | None = None,
+        verified: bool = False,
+        invoice: bool = False,
+        sort: str = "pop",
     ):
         clauses = ["ci.status::text = 'active'"]
         params: list = []
@@ -354,20 +378,45 @@ class CatalogItemMixin:
         if catalog_type:
             params.append(catalog_type)
             clauses.append(f"ci.type::text = ${len(params)}")
+        if invoice:
+            clauses.append("COALESCE(ci.invoice, TRUE) = TRUE")
+        if verified:
+            clauses.append("c.verification_status::text = 'verified'")
         where = " AND ".join(clauses)
-        from_sql = """
+
+        joins = """
             FROM catalog_items ci
             JOIN categories cat ON cat.id = ci.category_id
+            JOIN actors a ON a.id = ci.actor_id
+            LEFT JOIN companies c ON c.id = a.company_id
+            LEFT JOIN item_stats ist ON ist.item_id = ci.id
+            LEFT JOIN item_pricing ip ON ip.item_id = ci.id
+            LEFT JOIN company_stats cs ON cs.company_id = c.id
         """
+
+        sort_key = sort if sort in {"pop", "cheap", "rating"} else "pop"
+        if sort_key == "cheap":
+            order_sql = f"ORDER BY {LIST_PRICE_EXPR} ASC NULLS LAST, ci.id DESC"
+        elif sort_key == "rating":
+            order_sql = """
+                ORDER BY COALESCE(cs.average_rating, c.rating, 0) DESC,
+                         ci.id DESC
+            """
+        else:
+            order_sql = """
+                ORDER BY (COALESCE(ist.views, 0) + COALESCE(ist.leads, 0)) DESC,
+                         ci.created_at DESC
+            """
+
         async with self.connection() as conn:
             return await self._page_item_ids(
                 conn,
-                f"SELECT COUNT(*) {from_sql} WHERE {where}",
+                f"SELECT COUNT(*) {joins} WHERE {where}",
                 f"""
                 SELECT ci.id
-                {from_sql}
+                {joins}
                 WHERE {where}
-                ORDER BY ci.created_at DESC
+                {order_sql}
                 """,
                 params,
                 page,
@@ -394,9 +443,9 @@ class CatalogItemMixin:
             item_id = await conn.fetchval(
                 """
                 INSERT INTO catalog_items (
-                    actor_id, type, category_id, title, description, status, created_at
+                    actor_id, type, category_id, title, description, status, invoice, created_at
                 )
-                VALUES ($1, $2::catalog_item_type, $3, $4, $5, $6::item_status, NOW())
+                VALUES ($1, $2::catalog_item_type, $3, $4, $5, $6::item_status, $7, NOW())
                 RETURNING id
                 """,
                 actor_id,
@@ -405,6 +454,7 @@ class CatalogItemMixin:
                 data.title,
                 data.description or None,
                 status,
+                bool(data.invoice),
             )
             await self._replace_relations(conn, item_id, data)
             await conn.execute(
@@ -449,14 +499,16 @@ class CatalogItemMixin:
                     category_id = $2,
                     title = $3,
                     description = $4,
-                    status = $5::item_status
-                WHERE id = $6
+                    status = $5::item_status,
+                    invoice = $6
+                WHERE id = $7
                 """,
                 data.type,
                 data.category_id,
                 data.title,
                 data.description or None,
                 next_status,
+                bool(data.invoice),
                 item_id,
             )
             await self._replace_relations(conn, item_id, data)

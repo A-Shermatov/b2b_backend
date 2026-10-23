@@ -83,6 +83,7 @@ class CatalogItemSchema(BaseModel):
     title: str
     description: str | None
     status: str
+    invoice: bool = True
     created_at: datetime
 
 
@@ -131,6 +132,7 @@ class CatalogItemInput(BaseModel):
     title: str = Field(min_length=2)
     description: str = ""
     status: str = "draft"
+    invoice: bool = True
     attributes: list[ItemAttributeInput] = []
     media: list[ItemMediaInput] = []
     pricing: ItemPricingInput

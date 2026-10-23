@@ -41,6 +41,7 @@ RESOURCE_ALIASES_RU: dict[str, str] = {
     "admin_proposals": "Модерация предложений",
     "admin_contracts": "Модерация контрактов",
     "admin_disputes": "Споры",
+    "admin_support": "Чат поддержки",
     "admin_finance": "Финансы платформы",
     "admin_reports": "Жалобы",
     "admin_dashboard": "Дашборд",

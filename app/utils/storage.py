@@ -170,11 +170,13 @@ class StorageService:
 
     async def validate_upload(self, file: UploadFile) -> None:
         if not file.content_type or file.content_type not in settings.allowed_mime_types_list:
-            raise ValidationError(f"File type not allowed: {file.content_type}")
+            raise ValidationError("Файл не поддерживается")
         content = await file.read()
         await file.seek(0)
         if len(content) > settings.max_upload_bytes:
-            raise ValidationError(f"File exceeds {settings.max_upload_size_mb}MB limit")
+            raise ValidationError(
+                f"Файл больше {settings.max_upload_size_mb} МБ"
+            )
 
     async def upload(self, file: UploadFile, prefix: str = "uploads") -> tuple[str, str]:
         await self.validate_upload(file)
