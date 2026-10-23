@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Query
 
 from app.deps import PaginationDep
+from app.enums import ContractStatus
 from app.modules.contracts.api.common import (
     BuyerContext,
     ContractService,
@@ -18,9 +19,14 @@ from app.modules.contracts.api.common import (
 async def buyer_list_contracts(
     ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     pagination: PaginationDep,
+    status: ContractStatus | None = Query(None),
 ):
     return await ContractService().list_for_actor(
-        ctx.actor.id, "buyer", pagination.page, pagination.page_size
+        ctx.actor.id,
+        "buyer",
+        pagination.page,
+        pagination.page_size,
+        status=status.value if status else None,
     )
 
 
@@ -28,9 +34,14 @@ async def buyer_list_contracts(
 async def supplier_list_contracts(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
     pagination: PaginationDep,
+    status: ContractStatus | None = Query(None),
 ):
     return await ContractService().list_for_actor(
-        ctx.actor.id, "supplier", pagination.page, pagination.page_size
+        ctx.actor.id,
+        "supplier",
+        pagination.page,
+        pagination.page_size,
+        status=status.value if status else None,
     )
 
 

@@ -8,20 +8,32 @@ from app.modules.contracts.services.common import (
 
 class ContractReadMixin:
     async def list_for_actor(
-        self, actor_id: int, actor_type: str, page: int = 1, page_size: int = 20
+        self,
+        actor_id: int,
+        actor_type: str,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        status: str | None = None,
     ) -> dict:
         column = "buyer_actor_id" if actor_type == "buyer" else "supplier_actor_id"
+        clauses = [f"c.{column} = $1"]
+        params: list = [actor_id]
+        if status:
+            params.append(status)
+            clauses.append(f"c.status::text = ${len(params)}")
+        where = " AND ".join(clauses)
         async with self.connection() as conn:
             total, rows = await fetch_page(
                 conn,
-                f"SELECT COUNT(*) FROM contracts c WHERE c.{column} = $1",
+                f"SELECT COUNT(*) FROM contracts c WHERE {where}",
                 f"""
                 SELECT c.id
                 FROM contracts c
-                WHERE c.{column} = $1
+                WHERE {where}
                 ORDER BY c.created_at DESC
                 """,
-                [actor_id],
+                params,
                 page,
                 page_size,
             )
