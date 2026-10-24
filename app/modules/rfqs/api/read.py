@@ -47,6 +47,8 @@ async def rfq_board(
     pagination: PaginationDep,
     q: str | None = Query(None),
     source: str | None = Query(None),
+    type: str | None = Query(None),
+    category_id: str | None = Query(None),
 ):
     return await RfqService().list_board_for_supplier(
         ctx.actor.id,
@@ -54,6 +56,8 @@ async def rfq_board(
         pagination.page_size,
         q=q,
         source=source,
+        rfq_type=type,
+        category_id=category_id,
     )
 
 

@@ -231,7 +231,7 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 | POST | `/buyer/rfqs/{rfq_id}/attachments` | buyer, `rfqs.update` | Вложение |
 | DELETE | `/buyer/rfqs/{rfq_id}/attachments/{attachment_id}` | buyer, `rfqs.update` | Снять вложение |
 | POST | `/buyer/rfqs/{rfq_id}/invite` | buyer, `rfqs.invite` | Пригласить исполнителей |
-| GET | `/supplier/rfqs/board` | supplier | Страница доски |
+| GET | `/supplier/rfqs/board` | supplier | Страница доски. Query: `q`, `source` (`catalog`/`marketplace`), `type` (`product`/`service`), `category_id` |
 | GET | `/supplier/rfqs/{rfq_id}` | supplier | Запрос, если он виден исполнителю |
 | POST | `/supplier/rfqs/{rfq_id}/proposals` | supplier, `proposals.create` | Отклик. Создаёт proposal, не живёт в модуле proposals |
 | GET | `/public/rfqs` | публично | Страница открытых запросов |

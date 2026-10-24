@@ -75,6 +75,8 @@ class RfqReadMixin:
         *,
         q: str | None = None,
         source: str | None = None,
+        rfq_type: str | None = None,
+        category_id: str | None = None,
     ) -> dict:
         filters = [
             "r.status::text = ANY($1::text[])",
@@ -91,6 +93,13 @@ class RfqReadMixin:
             filters.append("r.catalog_item_id IS NOT NULL")
         elif source == "marketplace":
             filters.append("r.catalog_item_id IS NULL")
+        if rfq_type in ("product", "service"):
+            params.append(rfq_type)
+            filters.append(f"r.type::text = ${len(params)}")
+        category = (category_id or "").strip()
+        if category:
+            params.append(category)
+            filters.append(f"r.category_id = ${len(params)}")
         query = (q or "").strip()
         if query:
             params.append(f"%{query}%")
