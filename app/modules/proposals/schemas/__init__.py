@@ -1,14 +1,14 @@
 from app.modules.proposals.schemas.common import (
     MilestoneInput,
     ProposalAcceptRequest,
+    ProposalActorBrief,
     ProposalAttachmentSchema,
     ProposalCreate,
+    ProposalItemBrief,
     ProposalMessageCreate,
     ProposalMessageSchema,
     ProposalMessageThread,
-    ProposalItemBrief,
     ProposalSchema,
-    ProposalSupplierBrief,
     ProposalUpdate,
     ProposalWithRelations,
 )
@@ -16,6 +16,7 @@ from app.modules.proposals.schemas.common import (
 __all__ = [
     "MilestoneInput",
     "ProposalAcceptRequest",
+    "ProposalActorBrief",
     "ProposalAttachmentSchema",
     "ProposalCreate",
     "ProposalItemBrief",
@@ -23,7 +24,6 @@ __all__ = [
     "ProposalMessageSchema",
     "ProposalMessageThread",
     "ProposalSchema",
-    "ProposalSupplierBrief",
     "ProposalUpdate",
     "ProposalWithRelations",
 ]

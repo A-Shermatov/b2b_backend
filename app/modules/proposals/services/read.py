@@ -34,7 +34,16 @@ def _thread_from_row(row) -> dict:
 
 
 class ProposalReadMixin:
-    async def _page_proposals(self, conn, where_sql: str, params: list, page: int, page_size: int):
+    async def _page_proposals(
+        self,
+        conn,
+        where_sql: str,
+        params: list,
+        page: int,
+        page_size: int,
+        *,
+        actor_role: str = "supplier",
+    ):
         total, id_rows = await fetch_page(
             conn,
             f"SELECT COUNT(*) FROM proposals p WHERE {where_sql}",
@@ -54,7 +63,12 @@ class ProposalReadMixin:
             PROPOSAL_SELECT + " WHERE p.id = ANY($1::int[]) ORDER BY p.created_at DESC",
             [row["id"] for row in id_rows],
         )
-        return build_page([proposal_to_response(row) for row in rows], total, page, page_size)
+        return build_page(
+            [proposal_to_response(row, actor_role=actor_role) for row in rows],
+            total,
+            page,
+            page_size,
+        )
 
     async def list_for_rfq(
         self, rfq_id: str, buyer_actor_id: int, page: int = 1, page_size: int = 20
@@ -71,7 +85,14 @@ class ProposalReadMixin:
                 """,
                 rfq_id,
             )
-            return await self._page_proposals(conn, "p.rfq_id = $1", [rfq_id], page, page_size)
+            return await self._page_proposals(
+                conn,
+                "p.rfq_id = $1",
+                [rfq_id],
+                page,
+                page_size,
+                actor_role="supplier",
+            )
 
     async def list_for_supplier(
         self,
@@ -94,6 +115,7 @@ class ProposalReadMixin:
                 params,
                 page,
                 page_size,
+                actor_role="buyer",
             )
 
     async def list_messages(self, proposal_id: int, actor_id: int, as_buyer: bool) -> list:

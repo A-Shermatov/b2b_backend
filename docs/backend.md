@@ -246,13 +246,13 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/buyer/rfqs/{rfq_id}/proposals` | buyer | Страница откликов. Просмотр помечает `submitted` как `viewed`. В каждом item — `supplier: {id, name, rating, photo}` |
+| GET | `/buyer/rfqs/{rfq_id}/proposals` | buyer | Страница откликов. Просмотр помечает `submitted` как `viewed`. В каждом item — `actor: {id, name, rating, photo}` (исполнитель) |
 | POST | `/buyer/proposals/{proposal_id}/shortlist` | buyer, `proposals.accept` | В шорт-лист |
 | POST | `/buyer/proposals/{proposal_id}/reject` | buyer, `proposals.accept` | Отклонить |
 | POST | `/buyer/proposals/{proposal_id}/accept` | buyer, `proposals.accept` | Принять и создать контракт |
 | GET | `/buyer/proposals/{proposal_id}/messages` | buyer | Переписка |
 | POST | `/buyer/proposals/{proposal_id}/messages` | buyer, `proposals.update` | Сообщение |
-| GET | `/supplier/proposals` | supplier | Страница своих откликов («Мои КП»). Query `status`: `submitted`, `viewed`, `shortlisted`, `accepted`, `rejected`, `withdrawn`, `archived`. Без параметра `accepted` и `archived` не возвращаются. В каждом item — `item: {name, description, photo}` (каталог, иначе RFQ) |
+| GET | `/supplier/proposals` | supplier | Страница своих откликов («Мои КП»). Query `status`: `submitted`, `viewed`, `shortlisted`, `accepted`, `rejected`, `withdrawn`, `archived`. Без параметра `accepted` и `archived` не возвращаются. В каждом item — `item: {name, description, photo}` и `actor: {id, name, rating, photo}` (заказчик) |
 | PATCH | `/supplier/proposals/{proposal_id}` | supplier, `proposals.update` | Правка, пока можно |
 | POST | `/supplier/proposals/{proposal_id}/withdraw` | supplier, `proposals.update` | Отозвать |
 | GET | `/supplier/proposals/{proposal_id}/messages` | supplier | Переписка |

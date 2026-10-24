@@ -29,17 +29,43 @@ def attachment_from_row(row) -> dict | None:
     }
 
 
-def _supplier_from_row(row) -> dict | None:
-    keys = row.keys()
-    if "supplier_id" not in keys:
-        return None
-    photo_raw = row["supplier_photo"]
+def _actor_brief(
+    *,
+    actor_id,
+    name: str | None,
+    rating,
+    photo_raw,
+    default_name: str,
+) -> dict:
     return {
-        "id": row["supplier_id"],
-        "name": row["supplier_name"] or "Исполнитель",
-        "rating": float(row["supplier_rating"] or 0),
+        "id": actor_id,
+        "name": name or default_name,
+        "rating": float(rating or 0),
         "photo": public_file_url(photo_raw) if photo_raw else None,
     }
+
+
+def _actor_from_row(row, *, role: str = "supplier") -> dict | None:
+    keys = row.keys()
+    if role == "buyer":
+        if "buyer_id" not in keys:
+            return None
+        return _actor_brief(
+            actor_id=row["buyer_id"],
+            name=row["buyer_name"],
+            rating=row["buyer_rating"],
+            photo_raw=row["buyer_photo"],
+            default_name="Заказчик",
+        )
+    if "supplier_id" not in keys:
+        return None
+    return _actor_brief(
+        actor_id=row["supplier_id"],
+        name=row["supplier_name"],
+        rating=row["supplier_rating"],
+        photo_raw=row["supplier_photo"],
+        default_name="Исполнитель",
+    )
 
 
 def _item_from_row(row) -> dict | None:
@@ -54,7 +80,7 @@ def _item_from_row(row) -> dict | None:
     }
 
 
-def proposal_to_response(row) -> dict:
+def proposal_to_response(row, *, actor_role: str = "supplier") -> dict:
     payload = {
         "id": row["id"],
         "rfq_id": row["rfq_id"],
@@ -67,9 +93,9 @@ def proposal_to_response(row) -> dict:
         "created_at": row["created_at"],
         "attachment": attachment_from_row(row),
     }
-    supplier = _supplier_from_row(row)
-    if supplier is not None:
-        payload["supplier"] = supplier
+    actor = _actor_from_row(row, role=actor_role)
+    if actor is not None:
+        payload["actor"] = actor
     item = _item_from_row(row)
     if item is not None:
         payload["item"] = item
@@ -101,8 +127,16 @@ PROPOSAL_SELECT = f"""
             NULLIF(sa.display_name, ''),
             'Исполнитель'
         ) AS supplier_name,
-        COALESCE(cs.average_rating, sc.rating, 0) AS supplier_rating,
+        COALESCE(scs.average_rating, sc.rating, 0) AS supplier_rating,
         sc.logo AS supplier_photo,
+        ba.id AS buyer_id,
+        COALESCE(
+            NULLIF(bc.title, ''),
+            NULLIF(ba.display_name, ''),
+            'Заказчик'
+        ) AS buyer_name,
+        COALESCE(bcs.average_rating, bc.rating, 0) AS buyer_rating,
+        bc.logo AS buyer_photo,
         COALESCE(NULLIF(ci.title, ''), r.title) AS item_name,
         COALESCE(NULLIF(ci.description, ''), r.description) AS item_description,
         (
@@ -116,8 +150,11 @@ PROPOSAL_SELECT = f"""
     LEFT JOIN proposal_attachments pa ON pa.proposal_id = p.id
     JOIN actors sa ON sa.id = p.supplier_actor_id
     LEFT JOIN companies sc ON sc.id = sa.company_id
-    LEFT JOIN company_stats cs ON cs.company_id = sc.id
+    LEFT JOIN company_stats scs ON scs.company_id = sc.id
     JOIN rfqs r ON r.id = p.rfq_id
+    JOIN actors ba ON ba.id = r.actor_id
+    LEFT JOIN companies bc ON bc.id = ba.company_id
+    LEFT JOIN company_stats bcs ON bcs.company_id = bc.id
     LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id
 """
 

@@ -30,7 +30,7 @@ class ProposalSchema(BaseModel):
     created_at: datetime
 
 
-class ProposalSupplierBrief(BaseModel):
+class ProposalActorBrief(BaseModel):
     id: int
     name: str
     rating: float = 0
@@ -45,7 +45,7 @@ class ProposalItemBrief(BaseModel):
 
 class ProposalWithRelations(ProposalSchema):
     attachment: ProposalAttachmentSchema | None = None
-    supplier: ProposalSupplierBrief | None = None
+    actor: ProposalActorBrief | None = None
     item: ProposalItemBrief | None = None
 
 
