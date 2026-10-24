@@ -29,8 +29,21 @@ def attachment_from_row(row) -> dict | None:
     }
 
 
-def proposal_to_response(row) -> dict:
+def _supplier_from_row(row) -> dict | None:
+    keys = row.keys()
+    if "supplier_id" not in keys:
+        return None
+    photo_raw = row["supplier_photo"]
     return {
+        "id": row["supplier_id"],
+        "name": row["supplier_name"] or "Исполнитель",
+        "rating": float(row["supplier_rating"] or 0),
+        "photo": public_file_url(photo_raw) if photo_raw else None,
+    }
+
+
+def proposal_to_response(row) -> dict:
+    payload = {
         "id": row["id"],
         "rfq_id": row["rfq_id"],
         "supplier_actor_id": row["supplier_actor_id"],
@@ -42,6 +55,10 @@ def proposal_to_response(row) -> dict:
         "created_at": row["created_at"],
         "attachment": attachment_from_row(row),
     }
+    supplier = _supplier_from_row(row)
+    if supplier is not None:
+        payload["supplier"] = supplier
+    return payload
 
 
 def message_to_response(row) -> dict:
@@ -62,9 +79,20 @@ PROPOSAL_SELECT = f"""
         pa.id AS attachment_id,
         pa.file_name AS attachment_file_name,
         pa.file_url AS attachment_file_url,
-        pa.file_type AS attachment_file_type
+        pa.file_type AS attachment_file_type,
+        sa.id AS supplier_id,
+        COALESCE(
+            NULLIF(sc.title, ''),
+            NULLIF(sa.display_name, ''),
+            'Исполнитель'
+        ) AS supplier_name,
+        COALESCE(cs.average_rating, sc.rating, 0) AS supplier_rating,
+        sc.logo AS supplier_photo
     FROM proposals p
     LEFT JOIN proposal_attachments pa ON pa.proposal_id = p.id
+    JOIN actors sa ON sa.id = p.supplier_actor_id
+    LEFT JOIN companies sc ON sc.id = sa.company_id
+    LEFT JOIN company_stats cs ON cs.company_id = sc.id
 """
 
 

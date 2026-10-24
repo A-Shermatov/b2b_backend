@@ -246,7 +246,7 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 
 | Метод | Путь | Кто | Что делает |
 |---|---|---|---|
-| GET | `/buyer/rfqs/{rfq_id}/proposals` | buyer | Страница откликов. Просмотр помечает `submitted` как `viewed` |
+| GET | `/buyer/rfqs/{rfq_id}/proposals` | buyer | Страница откликов. Просмотр помечает `submitted` как `viewed`. В каждом item — `supplier: {id, name, rating, photo}` |
 | POST | `/buyer/proposals/{proposal_id}/shortlist` | buyer, `proposals.accept` | В шорт-лист |
 | POST | `/buyer/proposals/{proposal_id}/reject` | buyer, `proposals.accept` | Отклонить |
 | POST | `/buyer/proposals/{proposal_id}/accept` | buyer, `proposals.accept` | Принять и создать контракт |

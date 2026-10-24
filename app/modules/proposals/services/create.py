@@ -6,6 +6,7 @@ from app.modules.proposals.services.common import (
     OPEN_CHAT_STATUSES,
     assert_chat_access,
     load_proposal_context,
+    load_proposal_row,
     message_to_response,
     proposal_to_response,
 )
@@ -54,21 +55,7 @@ class ProposalCreateMixin:
                 data.delivery_time,
                 data.message,
             )
-            created = await conn.fetchrow(
-                """
-                SELECT
-                    p.id, p.rfq_id, p.supplier_actor_id, p.price,
-                    p.currency::text AS currency, p.delivery_time, p.message,
-                    p.status::text AS status, p.created_at,
-                    NULL::int AS attachment_id,
-                    NULL::text AS attachment_file_name,
-                    NULL::text AS attachment_file_url,
-                    NULL::text AS attachment_file_type
-                FROM proposals p
-                WHERE p.id = $1
-                """,
-                row["id"],
-            )
+            created = await load_proposal_row(conn, row["id"])
         await NotificationService().notify_actor_members(
             rfq["actor_id"],
             "proposal",

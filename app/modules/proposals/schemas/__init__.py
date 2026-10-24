@@ -7,6 +7,7 @@ from app.modules.proposals.schemas.common import (
     ProposalMessageSchema,
     ProposalMessageThread,
     ProposalSchema,
+    ProposalSupplierBrief,
     ProposalUpdate,
     ProposalWithRelations,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "ProposalMessageSchema",
     "ProposalMessageThread",
     "ProposalSchema",
+    "ProposalSupplierBrief",
     "ProposalUpdate",
     "ProposalWithRelations",
 ]

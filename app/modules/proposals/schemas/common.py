@@ -30,8 +30,16 @@ class ProposalSchema(BaseModel):
     created_at: datetime
 
 
+class ProposalSupplierBrief(BaseModel):
+    id: int
+    name: str
+    rating: float = 0
+    photo: str | None = None
+
+
 class ProposalWithRelations(ProposalSchema):
     attachment: ProposalAttachmentSchema | None = None
+    supplier: ProposalSupplierBrief | None = None
 
 
 class ProposalCreate(BaseModel):
