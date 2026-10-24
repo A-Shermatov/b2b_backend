@@ -5,18 +5,37 @@ FastAPI + asyncpg + PostgreSQL B2B marketplace API (modular monolith, пакет
 ## Quick start
 
 ```bash
-cd backend
+cd brand_marker_back
 cp .env.example .env
-docker compose up -d
+docker compose up -d --build
+```
+
+API: http://localhost:8000/docs · Health: http://localhost:8000/health
+
+> **Note:** Docker Postgres uses host port **5433** (not 5432) to avoid conflict with a local PostgreSQL installation on Windows.
+
+Локальная разработка без контейнера API:
+
+```bash
+docker compose up -d postgres redis minio
 pip install -e ".[dev]"
 python scripts/seed.py
 uvicorn app.main:app --reload --port 8000
 ```
 
-> **Note:** Docker Postgres uses host port **5433** (not 5432) to avoid conflict with a local PostgreSQL installation on Windows.
+### Cloudflare Tunnel (`api.b2b.jupiter.tj`)
 
-API docs (Docker Compose host port): http://localhost:8080/docs  
-Local uvicorn without compose publish remap: http://localhost:8000/docs
+Файл туннеля в корне репозитория: [`../docker-compose.tunnel.yml`](../docker-compose.tunnel.yml).
+
+В Zero Trust → Tunnel → Public Hostname: Subdomain `api.b2b` · Domain `jupiter.tj` · Path пусто · Service `http://backend:8000`.
+
+В корневом `.env` задай `CLOUDFLARE_TUNNEL_TOKEN`, затем из корня репозитория:
+
+```bash
+docker compose -f brand_marker_back/docker-compose.yml -f docker-compose.tunnel.yml up -d --build
+```
+
+Проверка: https://api.b2b.jupiter.tj/health · https://api.b2b.jupiter.tj/docs
 
 Обзор модулей, сущностей и уже реализованных ручек для нового бэкенд-разработчика: [docs/backend.md](docs/backend.md)
 
