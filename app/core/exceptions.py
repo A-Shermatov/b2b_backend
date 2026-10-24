@@ -32,11 +32,17 @@ class ValidationError(AppError):
         super().__init__(status.HTTP_422_UNPROCESSABLE_ENTITY, detail, "validation_error")
 
 
+class RateLimitError(AppError):
+    def __init__(self, detail: str = "Too many requests. Try again later."):
+        super().__init__(status.HTTP_429_TOO_MANY_REQUESTS, detail, "rate_limited")
+
+
 __all__ = [
     "AppError",
     "ConflictError",
     "ForbiddenError",
     "NotFoundError",
+    "RateLimitError",
     "UnauthorizedError",
     "ValidationError",
 ]

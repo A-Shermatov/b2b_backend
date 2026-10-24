@@ -14,6 +14,11 @@ class CompanyProfileSchema(BaseModel):
     annual_revenue_range: str | None
     languages: list[str]
     industries: list[str]
+    warehouse_area: str | None = None
+    markets: str | None = None
+    brands: str | None = None
+    notable_clients: str | None = None
+    gallery: list[dict] = []
 
 
 class CompanyCategorySchema(BaseModel):
@@ -174,6 +179,11 @@ class CompanyUpdateRequest(BaseModel):
     industries: list[str] | None = None
     category_ids: list[int] | None = None
     actor_types: list[str] | None = None
+    warehouse_area: str | None = None
+    markets: str | None = None
+    brands: str | None = None
+    notable_clients: str | None = None
+    gallery: list[dict] | None = None
 
 
 class AddTeamMemberRequest(BaseModel):

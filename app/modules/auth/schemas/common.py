@@ -9,6 +9,40 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     role: Literal["buyer", "supplier"] | None = None
+    requires_2fa: bool = False
+    challenge_token: str | None = None
+
+
+class LoginResult(BaseModel):
+    """Login may return tokens or a 2FA challenge."""
+
+    access_token: str | None = None
+    refresh_token: str | None = None
+    token_type: str = "bearer"
+    role: Literal["buyer", "supplier"] | None = None
+    requires_2fa: bool = False
+    challenge_token: str | None = None
+
+
+class TwoFactorSetupResponse(BaseModel):
+    otpauth_url: str
+    secret: str
+    backup_codes: list[str]
+    qr_data_url: str
+
+
+class TwoFactorConfirmRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=12)
+
+
+class TwoFactorDisableRequest(BaseModel):
+    password: str
+    code: str = Field(min_length=6, max_length=32)
+
+
+class TwoFactorVerifyRequest(BaseModel):
+    challenge_token: str
+    code: str = Field(min_length=6, max_length=32)
 
 
 class RegisterRequest(BaseModel):
@@ -47,6 +81,7 @@ class UserPublic(BaseModel):
     phone: str | None
     role: str
     status: str
+    totp_enabled: bool = False
     created_at: datetime
     updated_at: datetime
 

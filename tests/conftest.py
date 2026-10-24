@@ -92,6 +92,10 @@ async def client(monkeypatch):
 
     monkeypatch.setattr(redis_client, "check_rate_limit", _allow_rate_limit)
     monkeypatch.setattr("app.modules.auth.api.create.check_rate_limit", _allow_rate_limit)
+    monkeypatch.setattr("app.modules.auth.api.update.check_rate_limit", _allow_rate_limit)
+    monkeypatch.setattr(
+        "app.core.middleware.rate_limit.check_rate_limit", _allow_rate_limit
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

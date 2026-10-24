@@ -12,17 +12,20 @@ from app.config import get_settings
 from app.core.middleware import (
     AccessLogMiddleware,
     CollapseDuplicateSlashesMiddleware,
+    GlobalRateLimitMiddleware,
     HttpAuditMiddleware,
     RequestPublicOriginMiddleware,
     TokenRefreshMiddleware,
 )
 from app.database import pool
 from app.modules.admin.router import register as register_admin
+from app.modules.approvals.router import register as register_approvals
 from app.modules.auth.router import register as register_auth
 from app.modules.catalog.router import register as register_catalog
 from app.modules.companies.router import register as register_companies
 from app.modules.finance.router import register as register_finance
 from app.modules.contracts.router import register as register_contracts
+from app.modules.nav.router import register as register_nav
 from app.modules.notifications.router import register as register_notifications
 from app.modules.payments.router import register as register_payments
 from app.modules.proposals.router import register as register_proposals
@@ -36,6 +39,17 @@ from app.db.schema import backfill_actors_if_needed, ensure_schema
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Ensure app.* INFO (incl. TOTP diagnostics) reaches the container stdout.
+_app_log = logging.getLogger("app")
+_app_log.setLevel(logging.INFO)
+if not _app_log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+    )
+    _app_log.addHandler(_handler)
+_app_log.propagate = False
 
 
 async def init_db_schema(retries: int = 5, delay_seconds: float = 2.0) -> None:
@@ -96,6 +110,7 @@ app.add_middleware(HttpAuditMiddleware)
 app.add_middleware(TokenRefreshMiddleware)
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestPublicOriginMiddleware)
+app.add_middleware(GlobalRateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -115,17 +130,18 @@ register_companies(app, prefix=settings.api_v1_prefix)
 register_reviews(app, prefix=settings.api_v1_prefix)
 register_catalog(app, prefix=settings.api_v1_prefix)
 register_notifications(app, prefix=settings.api_v1_prefix)
+register_nav(app, prefix=settings.api_v1_prefix)
 register_subscription(app, prefix=settings.api_v1_prefix)
 register_rfqs(app, prefix=settings.api_v1_prefix)
 register_proposals(app, prefix=settings.api_v1_prefix)
 register_contracts(app, prefix=settings.api_v1_prefix)
 register_support(app, prefix=settings.api_v1_prefix)
+register_approvals(app, prefix=settings.api_v1_prefix)
 register_payments(app, prefix=settings.api_v1_prefix)
 register_finance(app, prefix=settings.api_v1_prefix)
 register_admin(app, prefix=settings.api_v1_prefix)
 register_roles(app, prefix=settings.api_v1_prefix)
 register_settings(app, prefix=settings.api_v1_prefix)
-register_support(app, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health")

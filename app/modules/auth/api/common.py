@@ -4,6 +4,7 @@ from app.deps import get_auth_context, get_current_user, raw_db_dependency
 from app.modules.auth.schemas import (
     ActivateRoleRequest,
     LoginRequest,
+    LoginResult,
     LogoutRequest,
     MeResponse,
     RefreshRequest,
@@ -11,6 +12,10 @@ from app.modules.auth.schemas import (
     SwitchActorRequest,
     SwitchCompanyRequest,
     TokenResponse,
+    TwoFactorConfirmRequest,
+    TwoFactorDisableRequest,
+    TwoFactorSetupResponse,
+    TwoFactorVerifyRequest,
     UserPublic,
     UserUpdateRequest,
 )

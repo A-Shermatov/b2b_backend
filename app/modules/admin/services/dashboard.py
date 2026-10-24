@@ -97,6 +97,24 @@ class AdminDashboardMixin:
                 ),
                 "flagged_chats": 0,
                 "pending_company_changes": 0,
+                "users_without_2fa": int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM users
+                        WHERE status::text = 'active'
+                          AND COALESCE(totp_enabled, false) = false
+                        """
+                    )
+                ),
+                "failed_logins_24h": int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM audit_logs
+                        WHERE action = 'login_failed'
+                          AND created_at >= NOW() - INTERVAL '24 hours'
+                        """
+                    )
+                ),
             }
             recent_users = await conn.fetch(
                 """
@@ -171,4 +189,5 @@ class AdminDashboardMixin:
             for dispute in recent_disputes
         )
         activity.sort(key=lambda item: item["happened_at"], reverse=True)
+        metrics["flagged_chats"] = await self.count_flagged_chats()
         return {"metrics": metrics, "recent_activity": activity[:12]}

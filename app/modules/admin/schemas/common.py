@@ -8,6 +8,7 @@ from app.modules.auth.schemas import UserPublic
 
 class UserStatusUpdate(BaseModel):
     status: Literal["pending", "active", "blocked"]
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class AdminUserStatusCounts(BaseModel):
@@ -17,13 +18,97 @@ class AdminUserStatusCounts(BaseModel):
     pending: int
 
 
+class AdminUserTabCounts(BaseModel):
+    all: int
+    buyer: int
+    supplier: int
+    blocked: int
+
+
+class AdminUserListItem(UserPublic):
+    company_id: int | None = None
+    company_title: str | None = None
+    contracts_count: int = 0
+    contracts_sum: float = 0
+
+
 class AdminUsersResponse(BaseModel):
-    items: list[UserPublic]
+    items: list[AdminUserListItem]
     total: int
     page: int
     page_size: int
     pages: int
     status_counts: AdminUserStatusCounts
+    tab_counts: AdminUserTabCounts
+
+
+class AdminUserCompany(BaseModel):
+    id: int
+    title: str
+    verification_status: str
+    rating: float
+    reviews_count: int
+
+
+class AdminUserStats(BaseModel):
+    purchases_count: int
+    sales_count: int
+    contracts_sum: float
+    disputes_count: int
+    rating: float | None = None
+    reviews_count: int = 0
+    chats_count: int = 0
+    flagged_chats_count: int = 0
+
+
+class AdminUserContractItem(BaseModel):
+    id: int
+    title: str
+    status: str
+    agreed_amount: float
+    currency: str
+    role: Literal["buyer", "supplier"]
+    counterparty: str
+    counterparty_company_id: int | None = None
+    created_at: datetime
+    has_dispute: bool = False
+
+
+class AdminUserHistoryItem(BaseModel):
+    id: int
+    action: str
+    details: dict[str, Any]
+    created_at: datetime
+    actor: dict[str, Any] | None = None
+
+
+class AdminUserChatItem(BaseModel):
+    id: str
+    kind: str
+    about: str
+    ref_label: str
+    party_a: str
+    party_b: str
+    last_text: str
+    last_at: datetime | None = None
+    flagged: bool = False
+
+
+class AdminUserDocumentItem(BaseModel):
+    id: int | str
+    title: str
+    file_url: str | None = None
+    kind: str = "certificate"
+
+
+class AdminUserDetail(UserPublic):
+    companies: list[AdminUserCompany]
+    stats: AdminUserStats
+    contracts: list[AdminUserContractItem]
+    history: list[AdminUserHistoryItem]
+    chats: list[AdminUserChatItem]
+    documents: list[AdminUserDocumentItem]
+    verification_checklist: dict[str, bool] = Field(default_factory=dict)
 
 
 class AdminCompanyOwner(BaseModel):
@@ -541,6 +626,8 @@ class AdminDashboardMetrics(BaseModel):
     pending_payouts: int = 0
     flagged_chats: int = 0
     pending_company_changes: int = 0
+    users_without_2fa: int = 0
+    failed_logins_24h: int = 0
 
 
 class AdminActivityItem(BaseModel):
@@ -625,3 +712,58 @@ class ReportAdminActionResponse(BaseModel):
     target_type: str
     action: str
     status: str
+
+
+class AdminChatListItem(BaseModel):
+    id: str
+    kind: Literal["contract", "proposal"]
+    thread_id: int
+    ref_id: int | str
+    about: str
+    ref_label: str
+    party_a: str
+    party_b: str
+    party_a_company_id: int | None = None
+    party_b_company_id: int | None = None
+    last_text: str
+    last_at: datetime | None = None
+    flagged: bool = False
+    has_dispute: bool = False
+
+
+class AdminChatListResponse(BaseModel):
+    items: list[AdminChatListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int = 0
+
+
+class AdminChatMessage(BaseModel):
+    id: int
+    sender_id: int | None = None
+    sender_name: str
+    side: Literal["buyer", "supplier", "admin"]
+    text: str
+    created_at: datetime
+    flagged: bool = False
+
+
+class AdminChatDetail(BaseModel):
+    id: str
+    kind: Literal["contract", "proposal"]
+    thread_id: int
+    ref_id: int | str
+    about: str
+    ref_label: str
+    party_a: str
+    party_b: str
+    party_a_company_id: int | None = None
+    party_b_company_id: int | None = None
+    flagged: bool = False
+    has_dispute: bool = False
+    messages: list[AdminChatMessage] = []
+
+
+class AdminChatMessageCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)

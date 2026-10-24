@@ -14,16 +14,25 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
 
     secret_key: str = "change-me-to-a-long-random-secret-key-in-production"
+    totp_encryption_key: str | None = None
+    totp_issuer: str = "Brend Market"
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
+    two_fa_challenge_expire_minutes: int = 5
     bcrypt_rounds: int = 12
     algorithm: str = "HS256"
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    trust_proxy_headers: bool = True
 
     database_url: str
     redis_url: str | None = None
     rate_limit_login_per_minute: int = 5
+    rate_limit_register_per_minute: int = 5
+    rate_limit_refresh_per_minute: int = 30
+    rate_limit_2fa_verify_per_minute: int = 10
+    rate_limit_2fa_setup_per_minute: int = 5
+    rate_limit_global_per_minute: int = 300
 
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "minioadmin"

@@ -11,13 +11,28 @@ USER_COLUMNS = """
     role::text AS role,
     role_id,
     status::text AS status,
+    COALESCE(totp_enabled, false) AS totp_enabled,
+    totp_secret,
+    COALESCE(totp_backup_codes_hash, '{}'::text[]) AS totp_backup_codes_hash,
     created_at,
     updated_at
 """
 
 
 def shape_user_public(user: dict) -> UserPublic:
-    return UserPublic.model_validate(user)
+    payload = {
+        "id": user["id"],
+        "email": user["email"],
+        "first_name": user["first_name"],
+        "last_name": user["last_name"],
+        "phone": user.get("phone"),
+        "role": user["role"],
+        "status": user["status"],
+        "totp_enabled": bool(user.get("totp_enabled")),
+        "created_at": user["created_at"],
+        "updated_at": user["updated_at"],
+    }
+    return UserPublic.model_validate(payload)
 
 
 def actor_to_summary(actor: dict, memberships: dict[int, dict]) -> ActorSummary:

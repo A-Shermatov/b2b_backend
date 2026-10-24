@@ -1,3 +1,5 @@
+import json
+
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.permissions import ensure_permission, fetch_permission_names
 from app.modules.companies.schemas import (
@@ -86,7 +88,8 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
     profile = await conn.fetchrow(
         """
         SELECT company_id, founded_year, employees_count, annual_revenue_range,
-               languages, industries
+               languages, industries,
+               warehouse_area, markets, brands, notable_clients, gallery
         FROM company_profiles WHERE company_id = $1
         """,
         company_id,
@@ -124,6 +127,19 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
         company_id,
     )
     actor_types = [row["side"] for row in actors] or [company["actor_type"]]
+    profile_schema = None
+    if profile:
+        profile_data = dict(profile)
+        gallery = profile_data.get("gallery")
+        if isinstance(gallery, str):
+            try:
+                gallery = json.loads(gallery)
+            except json.JSONDecodeError:
+                gallery = []
+        if gallery is None:
+            gallery = []
+        profile_data["gallery"] = list(gallery)
+        profile_schema = CompanyProfileSchema.model_validate(profile_data)
     return CompanyWithRelations(
         id=company["id"],
         title=company["title"],
@@ -143,7 +159,7 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
         rating=company["rating"],
         created_at=company["created_at"],
         updated_at=company["updated_at"],
-        profile=CompanyProfileSchema.model_validate(dict(profile)) if profile else None,
+        profile=profile_schema,
         categories=[CompanyCategorySchema.model_validate(dict(row)) for row in categories],
         stats=CompanyStatsSchema.model_validate(dict(stats)) if stats else None,
         certificates=[

@@ -8,6 +8,8 @@ from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
     AdminCatalogDetail,
     AdminCatalogListResponse,
+    AdminChatDetail,
+    AdminChatListResponse,
     AdminCompaniesResponse,
     AdminCompanyDetail,
     AdminContractDetail,
@@ -23,6 +25,7 @@ from app.modules.admin.schemas import (
     AdminReportListResponse,
     AdminRfqDetail,
     AdminRfqListResponse,
+    AdminUserDetail,
     AdminUsersResponse,
 )
 
@@ -45,14 +48,25 @@ async def admin_list_users(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status: Literal["active", "blocked", "pending"] | None = None,
+    role_side: Literal["buyer", "supplier"] | None = None,
     query: Annotated[str | None, Query(max_length=255)] = None,
 ):
     return await AdminService().list_users(
         page=page,
         page_size=page_size,
         status=status,
+        role_side=role_side,
         query=query,
     )
+
+
+@router.get(
+    "/users/{user_id}",
+    response_model=AdminUserDetail,
+    dependencies=[Depends(admin_perm("admin_users.view"))],
+)
+async def admin_get_user(user_id: int):
+    return await AdminService().get_user(user_id)
 
 
 @router.get(
@@ -322,3 +336,31 @@ async def admin_get_report(
     report_id: int,
 ):
     return await AdminService().get_report_detail(target_type, report_id)
+
+
+@router.get(
+    "/chats",
+    response_model=AdminChatListResponse,
+    dependencies=[Depends(admin_perm("admin_contracts.view", "admin_proposals.view"))],
+)
+async def admin_list_chats(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+    filter: Literal["all", "flag", "disp"] = "all",
+    query: Annotated[str | None, Query(max_length=255)] = None,
+):
+    return await AdminService().list_chats(
+        filter_key=filter,
+        query=query,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/chats/{chat_id}",
+    response_model=AdminChatDetail,
+    dependencies=[Depends(admin_perm("admin_contracts.view", "admin_proposals.view"))],
+)
+async def admin_get_chat(chat_id: str):
+    return await AdminService().get_chat(chat_id)

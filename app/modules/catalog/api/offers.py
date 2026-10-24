@@ -19,4 +19,6 @@ async def create_catalog_offer(
         ctx.actor.id,
         str(ctx.user.id),
         data,
+        company_role=ctx.company_role,
+        actor_kind=ctx.actor.kind,
     )

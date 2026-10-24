@@ -2,9 +2,11 @@ from typing import Annotated, Literal
 
 from fastapi import Depends
 
-from app.deps import require_admin
+from app.deps import CurrentUser, admin_perm, require_admin
 from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
+    AdminChatDetail,
+    AdminChatMessageCreate,
     CatalogAdminActionRequest,
     CatalogAdminActionResponse,
     CompanyAdminActionRequest,
@@ -24,7 +26,6 @@ from app.modules.admin.schemas import (
     UserStatusUpdate,
     VerifyCompanyRequest,
 )
-from app.deps import CurrentUser
 from app.modules.auth.schemas import UserPublic
 
 
@@ -38,6 +39,7 @@ async def admin_update_user_status(
         user_id,
         data.status,
         current_user,
+        reason=data.reason,
     )
 
 
@@ -171,3 +173,16 @@ async def admin_apply_report_action(
         current_user=current_user,
         reason=data.reason,
     )
+
+
+@router.post(
+    "/chats/{chat_id}/messages",
+    response_model=AdminChatDetail,
+    dependencies=[Depends(admin_perm("admin_contracts.update", "admin_proposals.update", "admin_contracts.view"))],
+)
+async def admin_post_chat_message(
+    chat_id: str,
+    data: AdminChatMessageCreate,
+    current_user: Annotated[CurrentUser, Depends(require_admin)],
+):
+    return await AdminService().post_chat_message(chat_id, current_user.id, data.text)

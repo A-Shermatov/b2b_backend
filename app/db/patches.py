@@ -386,4 +386,54 @@ COMPAT_PATCHES = [
     );
     """,
     "ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS invoice BOOLEAN NOT NULL DEFAULT TRUE;",
+    _create_enum_sql(
+        "purchase_approval_status",
+        ("wait", "auto", "approved", "rejected"),
+    ),
+    """
+    CREATE TABLE IF NOT EXISTS purchase_approvals (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+        requester_user_id INTEGER NOT NULL REFERENCES users(id),
+        title VARCHAR(500) NOT NULL,
+        supplier_name VARCHAR(255) NOT NULL DEFAULT '',
+        amount DOUBLE PRECISION NOT NULL,
+        currency VARCHAR(10) NOT NULL DEFAULT 'TJS',
+        reason TEXT NOT NULL DEFAULT '',
+        status purchase_approval_status NOT NULL DEFAULT 'wait',
+        limit_label VARCHAR(100) NOT NULL DEFAULT '—',
+        requester_role VARCHAR(64) NOT NULL DEFAULT '',
+        rfq_id VARCHAR(64),
+        decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        decided_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_purchase_approvals_company_status
+    ON purchase_approvals (company_id, status);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_purchase_approvals_requester
+    ON purchase_approvals (requester_user_id);
+    """,
+    """
+    ALTER TABLE company_profiles
+        ADD COLUMN IF NOT EXISTS warehouse_area VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS markets VARCHAR(500),
+        ADD COLUMN IF NOT EXISTS brands VARCHAR(500),
+        ADD COLUMN IF NOT EXISTS notable_clients TEXT,
+        ADD COLUMN IF NOT EXISTS gallery JSONB NOT NULL DEFAULT '[]'::jsonb;
+    """,
+    """
+    ALTER TABLE purchase_approvals
+        ADD COLUMN IF NOT EXISTS cart_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS rfq_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_approvals_idempotency
+    ON purchase_approvals (requester_user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+    """,
 ]

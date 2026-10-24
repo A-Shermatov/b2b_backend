@@ -1,3 +1,5 @@
+import json
+
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.modules.actors.services import ActorService
 from app.modules.companies.schemas import (
@@ -60,12 +62,25 @@ class CompanyUpdateMixin:
                     "annual_revenue_range",
                     "languages",
                     "industries",
+                    "warehouse_area",
+                    "markets",
+                    "brands",
+                    "notable_clients",
+                    "gallery",
                 ):
                     val = getattr(data, field)
                     if val is not None:
-                        profile_params.append(val)
-                        cast = "::text[]" if field in {"languages", "industries"} else ""
-                        profile_updates.append(f"{field} = ${len(profile_params)}{cast}")
+                        if field == "gallery":
+                            profile_params.append(json.dumps(val))
+                            profile_updates.append(
+                                f"{field} = ${len(profile_params)}::jsonb"
+                            )
+                        else:
+                            profile_params.append(val)
+                            cast = "::text[]" if field in {"languages", "industries"} else ""
+                            profile_updates.append(
+                                f"{field} = ${len(profile_params)}{cast}"
+                            )
                 if profile_updates:
                     profile_params.append(company_id)
                     await conn.execute(

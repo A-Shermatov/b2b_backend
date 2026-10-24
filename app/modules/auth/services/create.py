@@ -5,6 +5,7 @@ import asyncpg
 
 from app.core.exceptions import ConflictError, ForbiddenError, UnauthorizedError
 from app.core.security_core import (
+    create_2fa_challenge_token,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -12,10 +13,23 @@ from app.core.security_core import (
     verify_password,
 )
 from app.modules.actors.services import ActorService, user_capabilities
-from app.modules.auth.schemas import LoginRequest, RegisterRequest, TokenResponse
+from app.modules.auth.schemas import (
+    LoginRequest,
+    LoginResult,
+    RegisterRequest,
+    TokenResponse,
+    TwoFactorVerifyRequest,
+)
 from app.modules.auth.services.common import USER_COLUMNS, load_user
 from app.utils.audit import AuditLogger
 from app.utils.redis_client import blacklist_refresh_token, is_refresh_token_blacklisted
+from app.utils.totp import (
+    consume_backup_code,
+    decrypt_totp_secret,
+    log_totp_failure,
+    totp_failure_user_message,
+    verify_totp_code,
+)
 
 
 class AuthCreateMixin:
@@ -65,28 +79,132 @@ class AuthCreateMixin:
                 )
         return self._issue_tokens(user_dict)
 
-    async def login(self, data: LoginRequest, ip: str | None = None) -> TokenResponse:
+    async def login(self, data: LoginRequest, ip: str | None = None) -> LoginResult:
         async with self.connection() as conn:
             user = await conn.fetchrow(
                 f"SELECT {USER_COLUMNS} FROM users WHERE email = $1",
                 data.email.lower(),
             )
             if not user or not verify_password(data.password, user["password_hash"]):
+                if user:
+                    await AuditLogger(conn).log_action(
+                        user_id=user["id"],
+                        actor_id=None,
+                        company_id=None,
+                        action="login_failed",
+                        resource_type="user",
+                        resource_id=str(user["id"]),
+                        ip_address=ip,
+                    )
+                else:
+                    await AuditLogger(conn).log_action(
+                        user_id=None,
+                        actor_id=None,
+                        company_id=None,
+                        action="login_failed",
+                        resource_type="user",
+                        resource_id=data.email.lower()[:100],
+                        ip_address=ip,
+                    )
                 raise UnauthorizedError("Invalid email or password")
             if user["status"] == "blocked":
                 raise UnauthorizedError("Account is blocked")
             if data.role and not user_capabilities(user["role"]).get(data.role):
                 raise ForbiddenError("Account cannot sign in with this role")
+            user_dict = dict(user)
+            if user_dict.get("totp_enabled") and user_dict.get("totp_secret"):
+                extra = {"side": data.role} if data.role else None
+                challenge = create_2fa_challenge_token(str(user_dict["id"]), extra)
+                await AuditLogger(conn).log_action(
+                    user_id=user_dict["id"],
+                    actor_id=None,
+                    company_id=None,
+                    action="login_2fa_challenge",
+                    resource_type="user",
+                    resource_id=str(user_dict["id"]),
+                    ip_address=ip,
+                )
+                return LoginResult(
+                    requires_2fa=True,
+                    challenge_token=challenge,
+                    role=data.role,
+                )
             await AuditLogger(conn).log_action(
-                user_id=user["id"],
+                user_id=user_dict["id"],
                 actor_id=None,
                 company_id=None,
                 action="login",
                 resource_type="user",
-                resource_id=str(user["id"]),
+                resource_id=str(user_dict["id"]),
                 ip_address=ip,
             )
-        return self._issue_tokens(dict(user), side=data.role)
+        tokens = self._issue_tokens(user_dict, side=data.role)
+        return LoginResult(
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            token_type=tokens.token_type,
+            role=tokens.role,
+        )
+
+    async def verify_2fa(
+        self, data: TwoFactorVerifyRequest, ip: str | None = None
+    ) -> TokenResponse:
+        try:
+            payload = decode_token(data.challenge_token)
+        except ValueError as exc:
+            raise UnauthorizedError("Invalid or expired 2FA challenge") from exc
+        if payload.get("type") != "2fa_challenge":
+            raise UnauthorizedError("Invalid 2FA challenge")
+        user_id = int(payload["sub"])
+        side = payload.get("side")
+        async with self.connection() as conn:
+            user = await load_user(conn, user_id)
+            if not user or not user.get("totp_enabled") or not user.get("totp_secret"):
+                raise UnauthorizedError("2FA is not enabled for this account")
+            if user["status"] == "blocked":
+                raise UnauthorizedError("Account is blocked")
+            try:
+                secret = decrypt_totp_secret(user["totp_secret"])
+            except ValueError as exc:
+                raise UnauthorizedError("Invalid 2FA configuration") from exc
+            code_ok = verify_totp_code(secret, data.code)
+            remaining_hashes = None
+            if not code_ok:
+                hashes = list(user.get("totp_backup_codes_hash") or [])
+                remaining_hashes = consume_backup_code(data.code, hashes)
+                if remaining_hashes is None:
+                    from app.core.exceptions import ValidationError
+
+                    info = log_totp_failure(
+                        "login_verify",
+                        user_id=user_id,
+                        secret=secret,
+                        code=data.code,
+                    )
+                    # 422 (not 401): wrong OTP must not trigger client session-refresh retry
+                    raise ValidationError(totp_failure_user_message(info))
+                await conn.execute(
+                    """
+                    UPDATE users
+                    SET totp_backup_codes_hash = $2::text[], updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    user_id,
+                    remaining_hashes,
+                )
+            await AuditLogger(conn).log_action(
+                user_id=user_id,
+                actor_id=None,
+                company_id=None,
+                action="login",
+                resource_type="user",
+                resource_id=str(user_id),
+                ip_address=ip,
+                details={"via": "2fa_backup" if remaining_hashes is not None else "2fa_totp"},
+            )
+        if side and not user_capabilities(user["role"]).get(side):
+            side = None
+        return self._issue_tokens(user, side=side)
 
     async def refresh(self, refresh_token: str) -> TokenResponse:
         try:

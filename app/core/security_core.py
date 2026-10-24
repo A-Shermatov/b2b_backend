@@ -38,6 +38,16 @@ def create_refresh_token(subject: str, extra: dict[str, Any] | None = None) -> t
     return token, hashlib.sha256(jti.encode()).hexdigest()
 
 
+def create_2fa_challenge_token(subject: str, extra: dict[str, Any] | None = None) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.two_fa_challenge_expire_minutes
+    )
+    payload = {"sub": subject, "exp": expire, "type": "2fa_challenge"}
+    if extra:
+        payload.update(extra)
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+
 def decode_token(token: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])

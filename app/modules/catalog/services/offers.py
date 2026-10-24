@@ -42,7 +42,23 @@ class CatalogOfferMixin:
         buyer_actor_id: int,
         created_by: str,
         data: CatalogOfferCreate,
+        *,
+        skip_approval_gate: bool = False,
+        company_role: str | None = None,
+        actor_kind: str | None = None,
     ) -> CatalogOfferResponse:
+        # Direct buy-offers from non-privileged company members must go through
+        # cart checkout + purchase approval (skip_approval_gate for fulfill path).
+        if (
+            data.kind == "buy"
+            and not skip_approval_gate
+            and actor_kind == "company"
+            and company_role not in {"director", "admin"}
+        ):
+            raise ForbiddenError(
+                "Покупка по каталогу для вашей роли требует согласования — оформите через корзину"
+            )
+
         message = (data.message or "").strip()
         async with self.connection() as conn:
             item = await conn.fetchrow(

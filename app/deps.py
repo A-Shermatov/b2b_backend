@@ -294,23 +294,30 @@ async def require_buyer_ctx(
         if not membership:
             raise ForbiddenError("Not a member of this company")
         company, company_role = membership
+        if not company_role:
+            raise ForbiddenError("Company role required")
 
     return BuyerContext(
         user=user,
         actor=actor,
         company=company,
-        company_role=company_role or "director",
+        company_role=company_role,
     )
 
 
 def require_buyer_company_roles(*roles: str):
+    """Require a company buyer actor with one of the given company_users roles.
+
+    Individual actors are never elevated — company-scoped actions must use a
+    company actor (fixes cross-tenant decide via personal buyer actor).
+    """
     allowed = {role.value if hasattr(role, "value") else str(role) for role in roles}
 
     async def _check(
         ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     ) -> BuyerContext:
-        if ctx.actor.kind == "individual":
-            return ctx
+        if ctx.actor.kind != "company" or not ctx.company:
+            raise ForbiddenError("Company actor required")
         if not ctx.company_role or ctx.company_role not in allowed:
             raise ForbiddenError("Insufficient company permissions")
         return ctx
@@ -341,19 +348,28 @@ async def require_supplier_ctx(
         if not membership:
             raise ForbiddenError("Not a member of this company")
         company, company_role = membership
+        if not company_role:
+            raise ForbiddenError("Company role required")
 
     return SupplierContext(
         user=user,
         actor=actor,
         company=company,
-        company_role=company_role or "director",
+        company_role=company_role,
     )
 
 
 async def get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
     return request.client.host if request.client else "unknown"
 
 
