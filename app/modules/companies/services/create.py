@@ -67,11 +67,12 @@ class CompanyCreateMixin:
                     INSERT INTO companies (
                         title, actor_type, owner_id, legal_name, tax_number, website,
                         description, logo, country, city, address, verification_status,
-                        rating, created_at, updated_at
+                        operational_status, rating, created_at, updated_at
                     )
                     VALUES (
                         $1, $2::actor_type, $3, $4, $5, $6,
-                        $7, $8, $9, $10, $11, 'pending',
+                        $7, $8, $9, $10, $11, 'pending'::verification_status,
+                        'active'::company_operational_status,
                         0, NOW(), NOW()
                     )
                     RETURNING {COMPANY_COLUMNS}
