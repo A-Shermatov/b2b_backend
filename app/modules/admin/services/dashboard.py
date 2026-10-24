@@ -14,7 +14,10 @@ class AdminDashboardMixin:
                 "total_companies": int(await conn.fetchval("SELECT COUNT(*) FROM companies")),
                 "catalog_items": int(
                     await conn.fetchval(
-                        "SELECT COUNT(*) FROM catalog_items WHERE status::text != 'deleted'"
+                        """
+                        SELECT COUNT(*) FROM catalog_items
+                        WHERE status::text NOT IN ('deleted', 'draft')
+                        """
                     )
                 ),
                 "active_rfqs": int(

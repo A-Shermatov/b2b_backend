@@ -42,6 +42,18 @@ def _supplier_from_row(row) -> dict | None:
     }
 
 
+def _item_from_row(row) -> dict | None:
+    keys = row.keys()
+    if "item_name" not in keys:
+        return None
+    photo_raw = row["item_photo"]
+    return {
+        "name": row["item_name"] or "",
+        "description": row["item_description"],
+        "photo": public_file_url(photo_raw) if photo_raw else None,
+    }
+
+
 def proposal_to_response(row) -> dict:
     payload = {
         "id": row["id"],
@@ -58,6 +70,9 @@ def proposal_to_response(row) -> dict:
     supplier = _supplier_from_row(row)
     if supplier is not None:
         payload["supplier"] = supplier
+    item = _item_from_row(row)
+    if item is not None:
+        payload["item"] = item
     return payload
 
 
@@ -87,12 +102,23 @@ PROPOSAL_SELECT = f"""
             'Исполнитель'
         ) AS supplier_name,
         COALESCE(cs.average_rating, sc.rating, 0) AS supplier_rating,
-        sc.logo AS supplier_photo
+        sc.logo AS supplier_photo,
+        COALESCE(NULLIF(ci.title, ''), r.title) AS item_name,
+        COALESCE(NULLIF(ci.description, ''), r.description) AS item_description,
+        (
+            SELECT im.file_url
+            FROM item_media im
+            WHERE im.item_id = r.catalog_item_id
+            ORDER BY im.sort_order ASC, im.id ASC
+            LIMIT 1
+        ) AS item_photo
     FROM proposals p
     LEFT JOIN proposal_attachments pa ON pa.proposal_id = p.id
     JOIN actors sa ON sa.id = p.supplier_actor_id
     LEFT JOIN companies sc ON sc.id = sa.company_id
     LEFT JOIN company_stats cs ON cs.company_id = sc.id
+    JOIN rfqs r ON r.id = p.rfq_id
+    LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id
 """
 
 

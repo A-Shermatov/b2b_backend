@@ -37,9 +37,16 @@ class ProposalSupplierBrief(BaseModel):
     photo: str | None = None
 
 
+class ProposalItemBrief(BaseModel):
+    name: str
+    description: str | None = None
+    photo: str | None = None
+
+
 class ProposalWithRelations(ProposalSchema):
     attachment: ProposalAttachmentSchema | None = None
     supplier: ProposalSupplierBrief | None = None
+    item: ProposalItemBrief | None = None
 
 
 class ProposalCreate(BaseModel):

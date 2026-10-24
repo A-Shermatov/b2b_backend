@@ -161,7 +161,7 @@ class AdminCatalogMixin:
                 f"{CATALOG_LIST_SQL} WHERE ci.id = $1",
                 item_id,
             )
-            if not item or item["status"] == "deleted":
+            if not item or item["status"] in {"deleted", "draft"}:
                 raise NotFoundError("Catalog item not found")
             detail = await conn.fetchrow(
                 """
@@ -293,7 +293,7 @@ class AdminCatalogMixin:
                 """,
                 item_id,
             )
-            if not item or item["status"] == "deleted":
+            if not item or item["status"] in {"deleted", "draft"}:
                 raise NotFoundError("Catalog item not found")
             previous_status = item["status"]
             if action == "approve":

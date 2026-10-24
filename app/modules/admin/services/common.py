@@ -71,22 +71,26 @@ def company_status_sql(status: str) -> str | None:
 
 
 def catalog_view_sql(view: str) -> str | None:
+    # Supplier drafts stay private until submitted for review.
+    not_draft = "ci.status::text <> 'draft'"
     if view == "products":
-        return "ci.type::text = 'product'"
+        return f"ci.type::text = 'product' AND {not_draft}"
     if view == "services":
-        return "ci.type::text = 'service'"
+        return f"ci.type::text = 'service' AND {not_draft}"
     if view == "draft":
-        return "ci.status::text IN ('draft', 'pending_review', 'changes_requested')"
+        # Moderation queue (not supplier-only drafts).
+        return "ci.status::text IN ('pending_review', 'changes_requested')"
     if view == "reported":
-        return """
+        return f"""
             EXISTS (
                 SELECT 1 FROM catalog_item_reports r
                 WHERE r.item_id = ci.id AND r.status::text = 'open'
             )
+            AND {not_draft}
         """
     if view == "hidden":
         return "ci.status::text = 'hidden'"
-    return None
+    return not_draft
 
 
 def rfq_view_sql(view: str) -> str | None:

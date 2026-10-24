@@ -87,6 +87,13 @@ class CatalogItemSchema(BaseModel):
     created_at: datetime
 
 
+class CatalogActorBrief(BaseModel):
+    id: int
+    name: str
+    rating: float = 0
+    photo: str | None = None
+
+
 class CatalogItemWithRelations(CatalogItemSchema):
     category: CategoryRefSchema | None = None
     attributes: list[ItemAttributeSchema] = []
@@ -95,6 +102,7 @@ class CatalogItemWithRelations(CatalogItemSchema):
     stats: ItemStatsSchema | None = None
     rejection_reason: str | None = None
     completeness_percent: int = Field(ge=0, le=100, description="Заполненность карточки, 0–100")
+    actor: CatalogActorBrief | None = None
 
 
 class ItemAttributeInput(BaseModel):

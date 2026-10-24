@@ -202,7 +202,7 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 |---|---|---|---|
 | GET | `/public/categories` | публично | Дерево категорий, без страницы |
 | GET | `/public/catalog` | публично | Страница витрины. Фильтры `q` и `category` |
-| GET | `/public/catalog/items/{item_id}` | публично | Карточка |
+| GET | `/public/catalog/items/{item_id}` | публично | Карточка. Дополнительно `actor: {id, name, rating, photo}` |
 | GET | `/public/suppliers/{actor_id}/catalog` | публично | Страница каталога актора |
 | GET | `/public/companies/{company_id}/catalog` | публично | Страница каталога компании. Нет supplier-актора — пустая страница |
 | GET | `/supplier/catalog/items` | supplier | Страница своих карточек. Фильтр `status`. В ответе `completeness_percent` (0–100) |
@@ -252,7 +252,7 @@ Buyer-ручка требует актор со `side = buyer` и роль по�
 | POST | `/buyer/proposals/{proposal_id}/accept` | buyer, `proposals.accept` | Принять и создать контракт |
 | GET | `/buyer/proposals/{proposal_id}/messages` | buyer | Переписка |
 | POST | `/buyer/proposals/{proposal_id}/messages` | buyer, `proposals.update` | Сообщение |
-| GET | `/supplier/proposals` | supplier | Страница своих откликов. Query `status`: `submitted`, `viewed`, `shortlisted`, `accepted`, `rejected`, `withdrawn`, `archived`. Без параметра `accepted` и `archived` не возвращаются |
+| GET | `/supplier/proposals` | supplier | Страница своих откликов («Мои КП»). Query `status`: `submitted`, `viewed`, `shortlisted`, `accepted`, `rejected`, `withdrawn`, `archived`. Без параметра `accepted` и `archived` не возвращаются. В каждом item — `item: {name, description, photo}` (каталог, иначе RFQ) |
 | PATCH | `/supplier/proposals/{proposal_id}` | supplier, `proposals.update` | Правка, пока можно |
 | POST | `/supplier/proposals/{proposal_id}/withdraw` | supplier, `proposals.update` | Отозвать |
 | GET | `/supplier/proposals/{proposal_id}/messages` | supplier | Переписка |

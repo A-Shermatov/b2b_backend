@@ -9,6 +9,7 @@ from app.modules.catalog.schemas import (
     CatalogItemWithRelations,
 )
 from app.modules.catalog.schemas.common import (
+    CatalogActorBrief,
     CategoryRefSchema,
     ItemStatsSchema,
 )
@@ -426,9 +427,36 @@ class CatalogItemMixin:
     async def get_public(self, item_id: int):
         async with self.connection() as conn:
             schema = await self._load_item_schema(conn, item_id)
-        if schema.status != "active":
-            raise NotFoundError("Catalog item not found")
-        return schema
+            if schema.status != "active":
+                raise NotFoundError("Catalog item not found")
+            actor_row = await conn.fetchrow(
+                """
+                SELECT
+                    a.id,
+                    COALESCE(
+                        NULLIF(c.title, ''),
+                        NULLIF(a.display_name, ''),
+                        'Исполнитель'
+                    ) AS name,
+                    COALESCE(cs.average_rating, c.rating, 0) AS rating,
+                    c.logo AS photo
+                FROM actors a
+                LEFT JOIN companies c ON c.id = a.company_id
+                LEFT JOIN company_stats cs ON cs.company_id = c.id
+                WHERE a.id = $1
+                """,
+                schema.actor_id,
+            )
+        actor = None
+        if actor_row:
+            photo_raw = actor_row["photo"]
+            actor = CatalogActorBrief(
+                id=actor_row["id"],
+                name=actor_row["name"] or "Исполнитель",
+                rating=float(actor_row["rating"] or 0),
+                photo=public_file_url(photo_raw) if photo_raw else None,
+            )
+        return schema.model_copy(update={"actor": actor})
 
     async def get(self, item_id: int, actor_id: int):
         async with self.connection() as conn:
