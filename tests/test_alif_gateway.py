@@ -10,6 +10,7 @@ from app.database import pool
 from app.modules.payments.gateways.alif import (
     AlifClient,
     AlifGatewayError,
+    build_mp_terminal_info,
     format_amount,
 )
 from app.modules.payments.services import PaymentService
@@ -67,6 +68,48 @@ def test_alif_enabled_flag():
     assert _settings(alif_terminal_key=None).alif_enabled is False
     assert _settings(alif_terminal_key=None).alif_requested is True
     assert _settings(payment_provider="mock").alif_requested is False
+
+
+def test_marketplace_enabled_requires_both_merchants():
+    assert (
+        _settings(alif_test_merchant_1=None, alif_test_merchant_2=None).alif_marketplace_enabled
+        is False
+    )
+    assert (
+        _settings(alif_test_merchant_1="610184", alif_test_merchant_2="841418").alif_marketplace_enabled
+        is True
+    )
+    assert (
+        _settings(alif_test_merchant_1="610184", alif_test_merchant_2=None).alif_marketplace_enabled
+        is False
+    )
+
+
+def test_build_mp_terminal_info_split_97_3():
+    info = build_mp_terminal_info(
+        total=Decimal("100"),
+        commission=Decimal("3"),
+        supplier_terminal_id="610184",
+        platform_terminal_id="841418",
+        title="Smoke",
+    )
+    assert len(info) == 2
+    assert info[0]["terminal_id"] == "610184"
+    assert info[0]["amount"] == 97.0
+    assert info[1]["terminal_id"] == "841418"
+    assert info[1]["amount"] == 3.0
+
+
+def test_verify_confirm_callback_formula():
+    client = AlifClient(_settings())
+    payload = {
+        "terminal_id": TERMINAL_KEY,
+        "transaction_id": "sub-1",
+        "status": "ok",
+        "event": "confirm",
+        "token": _reference_sign(f"{TERMINAL_KEY}sub-1ok"),
+    }
+    assert client.verify_callback(payload) is True
 
 
 def test_verify_payment_callback():
@@ -306,6 +349,82 @@ async def test_apply_gateway_status_is_idempotent(db_conn):
         "SELECT status::text FROM contracts WHERE id = $1", milestone["contract_id"]
     )
     assert contract_status == "active"
+
+
+async def test_to_approve_funds_milestone_and_stores_sub_transactions(db_conn):
+    milestone = await _create_awaiting_milestone(db_conn, amount=100.0)
+    order_id = f"MS{milestone['id']}-{secrets.token_hex(6)}"
+    await db_conn.execute(
+        """
+        INSERT INTO payment_gateway_transactions
+            (order_id, gateway, milestone_id, contract_id, buyer_actor_id, amount, currency,
+             marketplace_meta)
+        VALUES ($1, 'alif', $2, $3, $4, $5, $6, $7::jsonb)
+        """,
+        order_id,
+        milestone["id"],
+        milestone["contract_id"],
+        milestone["buyer_actor_id"],
+        Decimal("100.00"),
+        milestone["currency"],
+        '{"mpTerminalInfo":[{"terminal_id":"610184","amount":97},{"terminal_id":"841418","amount":3}]}',
+    )
+    service = PaymentService(db_conn)
+    payload = {
+        "orderId": order_id,
+        "status": "to_approve",
+        "transactionId": "parent-9",
+        "event": "payment",
+        "sub_transactions": [
+            {"transaction_id": "sub-a", "terminal_id": "610184"},
+            {"transaction_id": "sub-b", "terminal_id": "841418"},
+        ],
+    }
+    result = await service.apply_gateway_status(
+        order_id, "to_approve", "parent-9", payload, amount=100.0
+    )
+    assert result["payment_status"] == "to_approve"
+    assert result["milestone_status"] == "funded"
+
+    meta = await db_conn.fetchval(
+        "SELECT marketplace_meta::text FROM payment_gateway_transactions WHERE order_id = $1",
+        order_id,
+    )
+    assert "sub-a" in meta
+    assert "610184" in meta
+
+
+async def test_create_payment_sends_marketplace_headers(monkeypatch):
+    captured: dict = {}
+
+    async def fake_post(self, path, body, headers=None):
+        captured["path"] = path
+        captured["body"] = body
+        captured["headers"] = headers or {}
+        return 200, {"code": 200, "url": "https://test-web.alif.tj/pay/demo"}
+
+    monkeypatch.setattr(AlifClient, "_post", fake_post)
+    client = AlifClient(
+        _settings(alif_test_merchant_1="610184", alif_test_merchant_2="841418")
+    )
+    mp = build_mp_terminal_info(
+        total=Decimal("100"),
+        commission=Decimal("3"),
+        supplier_terminal_id="610184",
+        platform_terminal_id="841418",
+        title="T",
+    )
+    url = await client.create_payment(
+        order_id="MS1-x",
+        amount=Decimal("100"),
+        callback_url="https://api-b2b.jupiter.tj/api/v1/payments/alif/callback",
+        return_url="https://example.com/return",
+        mp_terminal_info=mp,
+    )
+    assert url.endswith("/pay/demo")
+    assert captured["headers"].get("isMarketPlace") == "true"
+    assert captured["body"]["mpTerminalInfo"] == mp
+    assert captured["path"] == "/v2/"
 
 
 async def test_fund_without_alif_credentials_does_not_fall_back_to_mock(db_conn, monkeypatch):

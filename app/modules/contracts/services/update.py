@@ -130,19 +130,30 @@ class ContractUpdateMixin:
             return {"message_ids": [item["id"] for item in updated_ids], "messages": payloads}
 
     async def approve_submission(self, contract_id: int, submission_id: int, buyer_id: int):
+        from app.modules.payments.services import PaymentService
+
+        async with self.connection() as conn:
+            row = await load_contract_row(conn, contract_id)
+            if row["buyer_actor_id"] != buyer_id:
+                raise ForbiddenError("Access denied")
+            await ensure_not_under_dispute(conn, row)
+            sub = await conn.fetchrow(
+                "SELECT id FROM work_submissions WHERE id = $1 AND contract_id = $2",
+                submission_id,
+                contract_id,
+            )
+            if not sub:
+                raise NotFoundError("Submission not found")
+
+        # Release Alif Marketplace hold before marking milestones released locally.
+        await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
+
         async with self.connection() as conn:
             async with conn.transaction():
                 row = await load_contract_row(conn, contract_id)
                 if row["buyer_actor_id"] != buyer_id:
                     raise ForbiddenError("Access denied")
                 await ensure_not_under_dispute(conn, row)
-                sub = await conn.fetchrow(
-                    "SELECT id FROM work_submissions WHERE id = $1 AND contract_id = $2",
-                    submission_id,
-                    contract_id,
-                )
-                if not sub:
-                    raise NotFoundError("Submission not found")
                 await conn.execute(
                     """
                     UPDATE work_submissions

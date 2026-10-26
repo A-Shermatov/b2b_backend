@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     alif_gate: str = "korti_milli"
     alif_currency: str = "TJS"
     alif_timeout_seconds: float = 15.0
+    # Marketplace seller terminals (mpTerminalInfo). When both set, payments use Alif Marketplace API.
+    alif_test_merchant_1: str | None = None
+    alif_test_merchant_2: str | None = None
     public_api_url: str = "http://localhost:8080"
     frontend_url: str = "http://localhost:4000"
 
@@ -90,6 +93,14 @@ class Settings(BaseSettings):
             self.alif_requested
             and bool(self.alif_terminal_key)
             and bool(self.alif_terminal_password)
+        )
+
+    @property
+    def alif_marketplace_enabled(self) -> bool:
+        return (
+            self.alif_enabled
+            and bool(self.alif_test_merchant_1)
+            and bool(self.alif_test_merchant_2)
         )
 
 

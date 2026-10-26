@@ -28,6 +28,72 @@ def hmac_sha256_hex(key: str, message: str) -> str:
     return hmac.new(key.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
+def build_mp_terminal_info(
+    *,
+    total: Decimal,
+    commission: Decimal,
+    supplier_terminal_id: str,
+    platform_terminal_id: str,
+    title: str,
+) -> list[dict[str, Any]]:
+    """Split total into supplier + platform commission for Alif Marketplace mpTerminalInfo."""
+    total = Decimal(format_amount(total))
+    commission = Decimal(format_amount(max(Decimal("0"), commission)))
+    if commission >= total:
+        commission = total
+    supplier_amount = total - commission
+    entries: list[dict[str, Any]] = []
+    if supplier_amount > 0:
+        entries.append(
+            {
+                "terminal_id": str(supplier_terminal_id),
+                "amount": float(supplier_amount),
+                "condition_id": 0,
+                "invoices": [
+                    {
+                        "name": (title or "Услуга")[:120],
+                        "category": "services",
+                        "quantity": 1,
+                        "price": float(supplier_amount),
+                    }
+                ],
+            }
+        )
+    if commission > 0:
+        entries.append(
+            {
+                "terminal_id": str(platform_terminal_id),
+                "amount": float(commission),
+                "condition_id": 0,
+                "invoices": [
+                    {
+                        "name": "Комиссия площадки",
+                        "category": "services",
+                        "quantity": 1,
+                        "price": float(commission),
+                    }
+                ],
+            }
+        )
+    if not entries:
+        entries.append(
+            {
+                "terminal_id": str(supplier_terminal_id),
+                "amount": float(total),
+                "condition_id": 0,
+                "invoices": [
+                    {
+                        "name": (title or "Услуга")[:120],
+                        "category": "services",
+                        "quantity": 1,
+                        "price": float(total),
+                    }
+                ],
+            }
+        )
+    return entries
+
+
 class AlifClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -95,6 +161,7 @@ class AlifClient:
         info: str | None = None,
         email: str | None = None,
         phone: str | None = None,
+        mp_terminal_info: list[dict[str, Any]] | None = None,
     ) -> str:
         amount_str = format_amount(amount)
         gate = self.settings.alif_gate
@@ -114,20 +181,69 @@ class AlifClient:
         if phone:
             body["phone"] = phone
 
-        http_status, data = await self._post("/v2/", body, headers={"gate": gate})
+        headers: dict[str, str] = {"gate": gate}
+        if mp_terminal_info:
+            body["mpTerminalInfo"] = mp_terminal_info
+            headers["isMarketPlace"] = "true"
+
+        http_status, data = await self._post("/v2/", body, headers=headers)
         code = data.get("code") if isinstance(data, dict) else None
         url = data.get("url") if isinstance(data, dict) else None
         if http_status != 200 or code != 200 or not url:
             message = data.get("message") if isinstance(data, dict) else None
             logger.warning(
-                "Alif payment init rejected: order=%s http=%s code=%s message=%s",
+                "Alif payment init rejected: order=%s http=%s code=%s message=%s marketplace=%s",
                 order_id,
                 http_status,
                 code,
                 message,
+                bool(mp_terminal_info),
             )
             raise AlifGatewayError(f"Alif: {message or 'не удалось создать платёж'}")
         return url
+
+    async def confirm_delivery(self, *, transaction_id: str, amount: Decimal) -> dict[str, Any]:
+        amount_str = format_amount(amount)
+        body = {
+            "key": self.key,
+            "transaction_id": str(transaction_id),
+            "amount": float(Decimal(amount_str)),
+            "token": self.sign(f"{self.key}{transaction_id}{amount_str}"),
+        }
+        http_status, data = await self._post("/confirm-delivery", body)
+        if http_status != 200 or (isinstance(data, dict) and data.get("code") not in (None, 200, "200")):
+            message = data.get("message") if isinstance(data, dict) else None
+            logger.warning(
+                "Alif confirm-delivery failed: txn=%s http=%s data=%s",
+                transaction_id,
+                http_status,
+                data,
+            )
+            raise AlifGatewayError(f"Alif confirm-delivery: {message or 'ошибка подтверждения'}")
+        return data if isinstance(data, dict) else {"raw": data}
+
+    async def cancel_marketplace(
+        self, *, transaction_id: str, amount: Decimal, reason: str = "Отмена сделки"
+    ) -> dict[str, Any]:
+        amount_str = format_amount(amount)
+        body = {
+            "key": self.key,
+            "transaction_id": str(transaction_id),
+            "amount": float(Decimal(amount_str)),
+            "reason": reason[:255],
+            "token": self.sign(f"{self.key}{transaction_id}{amount_str}"),
+        }
+        http_status, data = await self._post("/cancel/marketplace", body)
+        if http_status != 200 or (isinstance(data, dict) and data.get("code") not in (None, 200, "200")):
+            message = data.get("message") if isinstance(data, dict) else None
+            logger.warning(
+                "Alif cancel/marketplace failed: txn=%s http=%s data=%s",
+                transaction_id,
+                http_status,
+                data,
+            )
+            raise AlifGatewayError(f"Alif cancel: {message or 'ошибка отмены'}")
+        return data if isinstance(data, dict) else {"raw": data}
 
     async def check_transaction(self, order_id: str) -> dict[str, Any] | None:
         body = {

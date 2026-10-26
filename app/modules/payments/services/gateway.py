@@ -10,6 +10,7 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.modules.payments.gateways.alif import (
     AlifClient,
     AlifGatewayError,
+    build_mp_terminal_info,
     format_amount,
 )
 from app.modules.payments.services.update import FUNDABLE_MILESTONE_STATUSES
@@ -18,11 +19,27 @@ logger = logging.getLogger(__name__)
 
 GATEWAY_ALIF = "alif"
 FINAL_STATUSES = ("ok", "failed", "canceled")
+# Marketplace hold after successful card payment — treat as escrow funded.
+HOLD_STATUSES = ("to_approve", "ok", "partially_approved")
 PENDING_REUSE_MINUTES = 30
 
 
 class InvalidCallbackSignature(Exception):
     pass
+
+
+def _parse_meta(value) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 
 class PaymentGatewayMixin:
@@ -68,12 +85,26 @@ class PaymentGatewayMixin:
                     }
 
                 amount = Decimal(format_amount(row["amount"]))
+                commission = Decimal(format_amount(row["commission_amount"] or 0))
                 order_id = f"MS{milestone_id}-{secrets.token_hex(6)}"
+                marketplace_meta: dict[str, Any] | None = None
+                mp_info = None
+                if settings.alif_marketplace_enabled:
+                    mp_info = build_mp_terminal_info(
+                        total=amount,
+                        commission=commission,
+                        supplier_terminal_id=settings.alif_test_merchant_1 or "",
+                        platform_terminal_id=settings.alif_test_merchant_2 or "",
+                        title=row["title"] or f"Сделка #{row['contract_id']}",
+                    )
+                    marketplace_meta = {"mpTerminalInfo": mp_info}
+
                 await conn.execute(
                     """
                     INSERT INTO payment_gateway_transactions
-                        (order_id, gateway, milestone_id, contract_id, buyer_actor_id, amount, currency)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        (order_id, gateway, milestone_id, contract_id, buyer_actor_id,
+                         amount, currency, marketplace_meta)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
                     """,
                     order_id,
                     GATEWAY_ALIF,
@@ -82,6 +113,7 @@ class PaymentGatewayMixin:
                     buyer_id,
                     amount,
                     row["currency"],
+                    json.dumps(marketplace_meta) if marketplace_meta else None,
                 )
 
         api_base = settings.public_api_url.rstrip("/")
@@ -96,6 +128,7 @@ class PaymentGatewayMixin:
                 callback_url=callback_url,
                 return_url=return_url,
                 info=f"Оплата этапа «{row['title']}» по сделке #{row['contract_id']}",
+                mp_terminal_info=mp_info,
             )
         except AlifGatewayError:
             async with self.connection() as conn:
@@ -119,7 +152,12 @@ class PaymentGatewayMixin:
                 order_id,
                 payment_url,
             )
-        logger.info("Alif payment created: order=%s milestone=%s", order_id, milestone_id)
+        logger.info(
+            "Alif payment created: order=%s milestone=%s marketplace=%s",
+            order_id,
+            milestone_id,
+            bool(mp_info),
+        )
         return {
             "id": row["id"],
             "status": row["status"],
@@ -138,12 +176,14 @@ class PaymentGatewayMixin:
     ) -> dict:
         external_id = str(transaction_id) if transaction_id not in (None, "") else None
         raw = json.dumps(payload, ensure_ascii=False, default=str)
+        normalized = status.strip().lower()
 
         async with self.connection() as conn:
             async with conn.transaction():
                 tx = await conn.fetchrow(
                     """
-                    SELECT id, order_id, milestone_id, contract_id, amount, status
+                    SELECT id, order_id, milestone_id, contract_id, amount, status,
+                           marketplace_meta
                     FROM payment_gateway_transactions
                     WHERE order_id = $1
                     FOR UPDATE
@@ -153,14 +193,32 @@ class PaymentGatewayMixin:
                 if not tx:
                     raise NotFoundError("Payment order not found")
 
-                if tx["status"] == status or tx["status"] == "canceled":
+                if tx["status"] == normalized or tx["status"] == "canceled":
                     return await self._gateway_result(conn, tx, tx["status"])
-                if tx["status"] == "ok" and status != "canceled":
+                # Once held/paid, ignore late failures and duplicate hold/ok callbacks.
+                if tx["status"] in ("ok", "to_approve") and normalized not in (
+                    "canceled",
+                    "partially_canceled",
+                ):
                     return await self._gateway_result(conn, tx, tx["status"])
-                if tx["status"] == "failed" and status != "ok":
+                if tx["status"] == "failed" and normalized not in HOLD_STATUSES:
                     return await self._gateway_result(conn, tx, tx["status"])
 
-                if status == "ok":
+                meta = _parse_meta(tx["marketplace_meta"])
+                subs = payload.get("sub_transactions")
+                if isinstance(subs, list):
+                    meta["sub_transactions"] = subs
+                    await conn.execute(
+                        """
+                        UPDATE payment_gateway_transactions
+                        SET marketplace_meta = $2::jsonb, updated_at = NOW()
+                        WHERE id = $1
+                        """,
+                        tx["id"],
+                        json.dumps(meta, ensure_ascii=False, default=str),
+                    )
+
+                if normalized in HOLD_STATUSES:
                     if amount is not None and format_amount(amount) != format_amount(tx["amount"]):
                         logger.error(
                             "Alif amount mismatch: order=%s expected=%s got=%s",
@@ -179,19 +237,23 @@ class PaymentGatewayMixin:
                         )
                         return await self._gateway_result(conn, tx, tx["status"])
 
+                    store_status = "to_approve" if normalized == "to_approve" else "ok"
+                    if normalized == "partially_approved":
+                        store_status = "to_approve"
                     await conn.execute(
                         """
                         UPDATE payment_gateway_transactions
-                        SET status = 'ok',
-                            external_transaction_id = COALESCE($2, external_transaction_id),
-                            transaction_type = COALESCE($3, transaction_type),
-                            account_masked = COALESCE($4, account_masked),
-                            raw_callback = $5::jsonb,
-                            paid_at = NOW(),
+                        SET status = $2,
+                            external_transaction_id = COALESCE($3, external_transaction_id),
+                            transaction_type = COALESCE($4, transaction_type),
+                            account_masked = COALESCE($5, account_masked),
+                            raw_callback = $6::jsonb,
+                            paid_at = COALESCE(paid_at, NOW()),
                             updated_at = NOW()
                         WHERE id = $1
                         """,
                         tx["id"],
+                        store_status,
                         external_id,
                         payload.get("transaction_type") or None,
                         payload.get("account") or None,
@@ -204,14 +266,15 @@ class PaymentGatewayMixin:
                         await self._apply_milestone_funded(conn, milestone)
                     else:
                         logger.warning(
-                            "Alif payment ok but milestone %s is %s (order=%s): manual refund may be needed",
+                            "Alif hold/ok but milestone %s is %s (order=%s)",
                             tx["milestone_id"],
                             milestone["status"],
                             order_id,
                         )
-                    return await self._gateway_result(conn, tx, "ok")
+                    return await self._gateway_result(conn, tx, store_status)
 
-                if status in ("failed", "canceled"):
+                if normalized in ("failed", "canceled", "partially_canceled"):
+                    store = "canceled" if "cancel" in normalized else normalized
                     await conn.execute(
                         """
                         UPDATE payment_gateway_transactions
@@ -222,15 +285,17 @@ class PaymentGatewayMixin:
                         WHERE id = $1
                         """,
                         tx["id"],
-                        status,
+                        store,
                         external_id,
                         raw,
                     )
-                    if status == "canceled":
+                    if store == "canceled":
                         logger.warning(
-                            "Alif payment canceled: order=%s milestone=%s", order_id, tx["milestone_id"]
+                            "Alif payment canceled: order=%s milestone=%s",
+                            order_id,
+                            tx["milestone_id"],
                         )
-                    return await self._gateway_result(conn, tx, status)
+                    return await self._gateway_result(conn, tx, store)
 
                 await conn.execute(
                     """
@@ -286,6 +351,36 @@ class PaymentGatewayMixin:
             amount=data.get("amount"),
         )
 
+    async def _find_order_by_sub_transaction(self, conn, transaction_id: str) -> str | None:
+        order_id = await conn.fetchval(
+            """
+            SELECT order_id FROM payment_gateway_transactions
+            WHERE external_transaction_id = $1 AND gateway = $2
+            """,
+            transaction_id,
+            GATEWAY_ALIF,
+        )
+        if order_id:
+            return order_id
+        return await conn.fetchval(
+            """
+            SELECT order_id FROM payment_gateway_transactions
+            WHERE gateway = $2
+              AND marketplace_meta IS NOT NULL
+              AND EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(
+                    COALESCE(marketplace_meta->'sub_transactions', '[]'::jsonb)
+                ) AS st
+                WHERE st->>'transaction_id' = $1
+              )
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            transaction_id,
+            GATEWAY_ALIF,
+        )
+
     async def handle_alif_callback(self, payload: dict[str, Any]) -> dict:
         if not AlifClient().verify_callback(payload):
             raise InvalidCallbackSignature()
@@ -305,23 +400,149 @@ class PaymentGatewayMixin:
                 logger.warning("Alif callback for unknown order=%s", order_id)
                 return {"order_id": order_id, "ignored": True}
 
-        if event == "cancel":
+        if event in ("cancel", "confirm"):
             transaction_id = str(payload.get("transaction_id", ""))
             async with self.connection() as conn:
-                order_id = await conn.fetchval(
-                    """
-                    SELECT order_id FROM payment_gateway_transactions
-                    WHERE external_transaction_id = $1 AND gateway = $2
-                    """,
-                    transaction_id,
-                    GATEWAY_ALIF,
-                )
+                order_id = await self._find_order_by_sub_transaction(conn, transaction_id)
             if not order_id:
-                logger.warning("Alif cancel callback for unknown transaction=%s", transaction_id)
+                logger.warning(
+                    "Alif %s callback for unknown transaction=%s", event, transaction_id
+                )
                 return {"transaction_id": transaction_id, "ignored": True}
+            status = str(payload.get("parent_status") or payload.get("status") or "")
             return await self.apply_gateway_status(
-                order_id, str(payload.get("status", "")), transaction_id, payload
+                order_id, status, payload.get("parent_transaction_id") or transaction_id, payload
             )
 
         logger.info("Alif callback with unsupported event=%s ignored", event)
         return {"ignored": True}
+
+    async def confirm_marketplace_deliveries_for_contract(self, contract_id: int) -> None:
+        """Call Alif POST /confirm-delivery for held marketplace sub-transactions."""
+        settings = get_settings()
+        if not settings.alif_marketplace_enabled:
+            return
+
+        async with self.connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, order_id, amount, status, marketplace_meta, external_transaction_id
+                FROM payment_gateway_transactions
+                WHERE contract_id = $1
+                  AND gateway = $2
+                  AND status IN ('to_approve', 'ok', 'pending')
+                ORDER BY id
+                """,
+                contract_id,
+                GATEWAY_ALIF,
+            )
+
+        if not rows:
+            return
+
+        client = AlifClient(settings)
+        for row in rows:
+            meta = _parse_meta(row["marketplace_meta"])
+            mp_info = meta.get("mpTerminalInfo") or []
+            subs = meta.get("sub_transactions") or []
+            if not subs:
+                logger.warning(
+                    "No sub_transactions to confirm for order=%s contract=%s",
+                    row["order_id"],
+                    contract_id,
+                )
+                continue
+
+            amount_by_terminal = {
+                str(item.get("terminal_id")): Decimal(format_amount(item.get("amount") or 0))
+                for item in mp_info
+                if isinstance(item, dict)
+            }
+            for sub in subs:
+                if not isinstance(sub, dict):
+                    continue
+                sub_id = str(sub.get("transaction_id") or "")
+                if not sub_id:
+                    continue
+                terminal_id = str(sub.get("terminal_id") or "")
+                amount = amount_by_terminal.get(terminal_id)
+                if amount is None or amount <= 0:
+                    # Fallback: equal split of total if meta incomplete
+                    amount = Decimal(format_amount(row["amount"])) / max(len(subs), 1)
+                await client.confirm_delivery(transaction_id=sub_id, amount=amount)
+
+            async with self.connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE payment_gateway_transactions
+                    SET status = 'ok', updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    row["id"],
+                )
+
+    async def cancel_marketplace_for_contract(
+        self, contract_id: int, reason: str = "Отмена сделки"
+    ) -> None:
+        settings = get_settings()
+        if not settings.alif_marketplace_enabled:
+            return
+
+        async with self.connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, order_id, amount, marketplace_meta
+                FROM payment_gateway_transactions
+                WHERE contract_id = $1
+                  AND gateway = $2
+                  AND status IN ('to_approve', 'pending', 'ok')
+                ORDER BY id
+                """,
+                contract_id,
+                GATEWAY_ALIF,
+            )
+
+        if not rows:
+            return
+
+        client = AlifClient(settings)
+        for row in rows:
+            meta = _parse_meta(row["marketplace_meta"])
+            mp_info = meta.get("mpTerminalInfo") or []
+            subs = meta.get("sub_transactions") or []
+            amount_by_terminal = {
+                str(item.get("terminal_id")): Decimal(format_amount(item.get("amount") or 0))
+                for item in mp_info
+                if isinstance(item, dict)
+            }
+            for sub in subs:
+                if not isinstance(sub, dict):
+                    continue
+                sub_id = str(sub.get("transaction_id") or "")
+                if not sub_id:
+                    continue
+                terminal_id = str(sub.get("terminal_id") or "")
+                amount = amount_by_terminal.get(terminal_id) or Decimal(
+                    format_amount(row["amount"])
+                )
+                try:
+                    await client.cancel_marketplace(
+                        transaction_id=sub_id, amount=amount, reason=reason
+                    )
+                except AlifGatewayError as exc:
+                    logger.warning(
+                        "Alif cancel failed for contract=%s sub=%s: %s",
+                        contract_id,
+                        sub_id,
+                        exc.detail,
+                    )
+
+            async with self.connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE payment_gateway_transactions
+                    SET status = 'canceled', updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    row["id"],
+                )

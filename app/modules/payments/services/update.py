@@ -20,7 +20,9 @@ class PaymentUpdateMixin:
         row = await conn.fetchrow(
             f"""
             SELECT
-                m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
+                m.id, m.contract_id, m.title, m.amount,
+                COALESCE(m.commission_amount, 0) AS commission_amount,
+                m.status::text AS status,
                 c.buyer_actor_id, c.supplier_actor_id, c.status::text AS contract_status,
                 c.currency::text AS currency
             FROM payment_milestones m
@@ -65,6 +67,16 @@ class PaymentUpdateMixin:
 
     async def approve_milestone(self, milestone_id: int, buyer_id: int):
         from app.modules.finance.services.commission import record_milestone_release
+
+        async with self.connection() as conn:
+            row = await self._load_milestone_contract(conn, milestone_id)
+            if row["buyer_actor_id"] != buyer_id:
+                raise ForbiddenError("Access denied")
+            if row["status"] != "funded":
+                raise ConflictError("Milestone must be funded first")
+            contract_id = row["contract_id"]
+
+        await self.confirm_marketplace_deliveries_for_contract(contract_id)
 
         async with self.connection() as conn:
             async with conn.transaction():

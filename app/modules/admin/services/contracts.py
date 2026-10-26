@@ -414,6 +414,11 @@ class AdminContractsMixin:
             "approved",
             "awaiting_payment",
         }
+        from app.modules.payments.services import PaymentService
+
+        if action == "force_complete":
+            await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
+
         async with self.connection() as conn:
             contract = await conn.fetchrow(
                 """
@@ -544,6 +549,11 @@ class AdminContractsMixin:
                     "previous_status": previous_status,
                     "status": status,
                 },
+            )
+
+        if action == "cancel":
+            await PaymentService().cancel_marketplace_for_contract(
+                contract_id, reason=(reason or "Отмена сделки").strip()
             )
         return {"id": contract_id, "action": action, "status": status}
 
@@ -750,6 +760,16 @@ class AdminContractsMixin:
             "awaiting_payment",
             "disputed",
         }
+        from app.modules.payments.services import PaymentService
+
+        if action == "release_funds":
+            async with self.connection() as conn:
+                mp_contract_id = await conn.fetchval(
+                    "SELECT contract_id FROM disputes WHERE id = $1", dispute_id
+                )
+            if mp_contract_id:
+                await PaymentService().confirm_marketplace_deliveries_for_contract(mp_contract_id)
+
         async with self.connection() as conn:
             dispute = await conn.fetchrow(
                 """
@@ -932,6 +952,12 @@ class AdminContractsMixin:
                     "partial_buyer_amount": partial_buyer_amount,
                     "contract_id": dispute["contract_id"],
                 },
+            )
+            refund_contract_id = dispute["contract_id"]
+
+        if action == "refund_buyer":
+            await PaymentService().cancel_marketplace_for_contract(
+                refund_contract_id, reason=(reason or "Возврат покупателю").strip()
             )
         return {
             "id": dispute_id,

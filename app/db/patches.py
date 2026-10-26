@@ -296,6 +296,7 @@ COMPAT_PATCHES = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_transactions_milestone_id ON payment_gateway_transactions (milestone_id);",
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_transactions_external_id ON payment_gateway_transactions (external_transaction_id);",
+    "ALTER TABLE payment_gateway_transactions ADD COLUMN IF NOT EXISTS marketplace_meta JSONB;",
     """
     ALTER TABLE rfqs
     ADD COLUMN IF NOT EXISTS catalog_item_id INTEGER REFERENCES catalog_items(id);
