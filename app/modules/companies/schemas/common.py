@@ -230,3 +230,5 @@ class PublicSupplier(BaseModel):
     active_contracts: int = 0
     disputed_contracts: int = 0
     success_rate: float | None = None
+    vip: bool = False
+    promoted: bool = False

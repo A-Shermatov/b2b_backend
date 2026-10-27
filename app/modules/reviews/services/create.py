@@ -10,7 +10,7 @@ class ReviewCreateMixin:
         async with self.conn.transaction():
             contract = await self.conn.fetchrow(
                 """
-                SELECT id, buyer_actor_id, status::text AS status
+                SELECT id, buyer_actor_id, supplier_actor_id, status::text AS status
                 FROM contracts
                 WHERE id = $1
                 """,
@@ -18,10 +18,19 @@ class ReviewCreateMixin:
             )
             if not contract:
                 raise NotFoundError("Contract not found")
-            if contract["buyer_actor_id"] != reviewer_actor_id:
-                raise ForbiddenError("Only buyer can leave review")
             if contract["status"] != "completed":
                 raise ConflictError("Contract must be completed")
+
+            buyer_id = contract["buyer_actor_id"]
+            supplier_id = contract["supplier_actor_id"]
+            if reviewer_actor_id == buyer_id:
+                if data.target_actor_id != supplier_id:
+                    raise ForbiddenError("Buyer can only review the supplier")
+            elif reviewer_actor_id == supplier_id:
+                if data.target_actor_id != buyer_id:
+                    raise ForbiddenError("Supplier can only review the buyer")
+            else:
+                raise ForbiddenError("Only contract parties can leave a review")
 
             existing = await self.conn.fetchrow(
                 """
@@ -38,15 +47,21 @@ class ReviewCreateMixin:
                 row = await self.conn.fetchrow(
                     f"""
                     INSERT INTO reviews (
-                        contract_id, reviewer_actor_id, target_actor_id, rating, comment, created_at
+                        contract_id, reviewer_actor_id, target_actor_id,
+                        rating, service_rating, delivery_rating, quality_rating,
+                        tags, comment, created_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, NOW())
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW())
                     RETURNING {REVIEW_COLUMNS}
                     """,
                     data.contract_id,
                     reviewer_actor_id,
                     data.target_actor_id,
                     data.rating,
+                    data.service_rating,
+                    data.delivery_rating,
+                    data.quality_rating,
+                    list(data.tags or []),
                     data.comment,
                 )
             except asyncpg.UniqueViolationError as exc:

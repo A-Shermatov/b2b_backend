@@ -34,12 +34,23 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
         try:
             async with pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, role::text AS role, status::text AS status FROM users WHERE id = $1",
+                    """
+                    SELECT id, role::text AS role, status::text AS status,
+                           COALESCE(token_version, 0) AS token_version
+                    FROM users WHERE id = $1
+                    """,
                     user_id,
                 )
             if not row or row["status"] == "blocked":
                 return response
-            token = create_access_token(str(row["id"]), {"role": row["role"]})
+            payload_tv = int(payload.get("tv") or 0)
+            db_tv = int(row["token_version"] or 0)
+            if payload_tv != db_tv:
+                return response
+            token = create_access_token(
+                str(row["id"]),
+                {"role": row["role"], "tv": db_tv},
+            )
             response.headers["Authorization"] = f"Bearer {token}"
             response.headers["X-Access-Token"] = token
         except Exception:

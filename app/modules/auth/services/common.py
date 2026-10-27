@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.modules.auth.schemas import ActorSummary, UserPublic
 from app.modules.actors.services import ActorService, user_capabilities
 
@@ -11,12 +13,52 @@ USER_COLUMNS = """
     role::text AS role,
     role_id,
     status::text AS status,
+    banned_until,
+    block_reason,
+    COALESCE(token_version, 0) AS token_version,
     COALESCE(totp_enabled, false) AS totp_enabled,
     totp_secret,
     COALESCE(totp_backup_codes_hash, '{}'::text[]) AS totp_backup_codes_hash,
     created_at,
     updated_at
 """
+
+
+def block_message(user: dict) -> str:
+    reason = (user.get("block_reason") or "").strip()
+    until = user.get("banned_until")
+    if until:
+        label = until.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+        base = f"Аккаунт заблокирован до {label}"
+    else:
+        base = "Аккаунт заблокирован"
+    return f"{base}. {reason}" if reason else base
+
+
+async def lift_expired_ban(conn, user: dict) -> dict:
+    """Auto-unblock timed bans that have expired. Returns possibly updated user dict."""
+    if user.get("status") != "blocked":
+        return user
+    until = user.get("banned_until")
+    if until is None:
+        return user
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    if until > datetime.now(timezone.utc):
+        return user
+    row = await conn.fetchrow(
+        f"""
+        UPDATE users
+        SET status = 'active'::user_status,
+            banned_until = NULL,
+            block_reason = NULL,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING {USER_COLUMNS}
+        """,
+        user["id"],
+    )
+    return dict(row) if row else user
 
 
 def shape_user_public(user: dict) -> UserPublic:

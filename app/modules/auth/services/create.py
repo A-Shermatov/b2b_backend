@@ -20,7 +20,12 @@ from app.modules.auth.schemas import (
     TokenResponse,
     TwoFactorVerifyRequest,
 )
-from app.modules.auth.services.common import USER_COLUMNS, load_user
+from app.modules.auth.services.common import (
+    USER_COLUMNS,
+    block_message,
+    lift_expired_ban,
+    load_user,
+)
 from app.utils.audit import AuditLogger
 from app.utils.redis_client import blacklist_refresh_token, is_refresh_token_blacklisted
 from app.utils.totp import (
@@ -107,11 +112,12 @@ class AuthCreateMixin:
                         ip_address=ip,
                     )
                 raise UnauthorizedError("Invalid email or password")
-            if user["status"] == "blocked":
-                raise UnauthorizedError("Account is blocked")
-            if data.role and not user_capabilities(user["role"]).get(data.role):
-                raise ForbiddenError("Account cannot sign in with this role")
             user_dict = dict(user)
+            user_dict = await lift_expired_ban(conn, user_dict)
+            if user_dict["status"] == "blocked":
+                raise UnauthorizedError(block_message(user_dict))
+            if data.role and not user_capabilities(user_dict["role"]).get(data.role):
+                raise ForbiddenError("Account cannot sign in with this role")
             if user_dict.get("totp_enabled") and user_dict.get("totp_secret"):
                 extra = {"side": data.role} if data.role else None
                 challenge = create_2fa_challenge_token(str(user_dict["id"]), extra)
@@ -161,8 +167,9 @@ class AuthCreateMixin:
             user = await load_user(conn, user_id)
             if not user or not user.get("totp_enabled") or not user.get("totp_secret"):
                 raise UnauthorizedError("2FA is not enabled for this account")
+            user = await lift_expired_ban(conn, user)
             if user["status"] == "blocked":
-                raise UnauthorizedError("Account is blocked")
+                raise UnauthorizedError(block_message(user))
             try:
                 secret = decrypt_totp_secret(user["totp_secret"])
             except ValueError as exc:
@@ -220,8 +227,13 @@ class AuthCreateMixin:
         side = payload.get("side")
         async with self.connection() as conn:
             user = await load_user(conn, user_id)
-        if not user:
-            raise UnauthorizedError("User not found")
+            if not user:
+                raise UnauthorizedError("User not found")
+            user = await lift_expired_ban(conn, user)
+            if user["status"] == "blocked":
+                raise UnauthorizedError(block_message(user))
+            if int(payload.get("tv") or 0) != int(user.get("token_version") or 0):
+                raise UnauthorizedError("Session revoked")
         if side and not user_capabilities(user["role"]).get(side):
             side = None
         return self._issue_tokens(user, side=side)
@@ -249,9 +261,12 @@ class AuthCreateMixin:
         await blacklist_refresh_token(jti_hash, expires_at)
 
     def _issue_tokens(self, user: dict, side: str | None = None) -> TokenResponse:
-        extra = {"role": user["role"]}
+        extra = {"role": user["role"], "tv": int(user.get("token_version") or 0)}
         if side:
             extra["side"] = side
         access = create_access_token(str(user["id"]), extra)
-        refresh, _ = create_refresh_token(str(user["id"]), {"side": side} if side else None)
+        refresh_extra = {"tv": int(user.get("token_version") or 0)}
+        if side:
+            refresh_extra["side"] = side
+        refresh, _ = create_refresh_token(str(user["id"]), refresh_extra)
         return TokenResponse(access_token=access, refresh_token=refresh, role=side)

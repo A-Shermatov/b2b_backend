@@ -6,10 +6,16 @@ REVIEW_COLUMNS = """
     reviewer_actor_id,
     target_actor_id,
     rating,
+    service_rating,
+    delivery_rating,
+    quality_rating,
+    COALESCE(tags, '{}'::text[]) AS tags,
     comment,
     created_at
 """
 
 
 def shape_review_row(row) -> ReviewResponse:
-    return ReviewResponse.model_validate(dict(row))
+    payload = dict(row)
+    payload["tags"] = list(payload.get("tags") or [])
+    return ReviewResponse.model_validate(payload)

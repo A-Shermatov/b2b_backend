@@ -7,10 +7,13 @@ from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
     AdminChatDetail,
     AdminChatMessageCreate,
+    AdminUserListItem,
     CatalogAdminActionRequest,
     CatalogAdminActionResponse,
     CompanyAdminActionRequest,
     CompanyAdminActionResponse,
+    CompanyVipResponse,
+    CompanyVipUpdate,
     ContractAdminActionRequest,
     ContractAdminActionResponse,
     DisputeAdminActionRequest,
@@ -23,13 +26,13 @@ from app.modules.admin.schemas import (
     ReportAdminActionResponse,
     RfqAdminActionRequest,
     RfqAdminActionResponse,
+    UserSessionsRevokeResponse,
     UserStatusUpdate,
     VerifyCompanyRequest,
 )
-from app.modules.auth.schemas import UserPublic
 
 
-@router.patch("/users/{user_id}/status", response_model=UserPublic)
+@router.patch("/users/{user_id}/status", response_model=AdminUserListItem)
 async def admin_update_user_status(
     user_id: int,
     data: UserStatusUpdate,
@@ -40,6 +43,34 @@ async def admin_update_user_status(
         data.status,
         current_user,
         reason=data.reason,
+        duration_days=data.duration_days,
+        permanent=data.permanent,
+    )
+
+
+@router.post(
+    "/users/{user_id}/sessions/revoke",
+    response_model=UserSessionsRevokeResponse,
+)
+async def admin_revoke_user_sessions(
+    user_id: int,
+    current_user: Annotated[CurrentUser, Depends(require_admin)],
+):
+    return await AdminService().revoke_user_sessions(user_id, current_user)
+
+
+@router.post("/companies/{company_id}/vip", response_model=CompanyVipResponse)
+async def admin_set_company_vip(
+    company_id: int,
+    data: CompanyVipUpdate,
+    current_user: Annotated[CurrentUser, Depends(require_admin)],
+):
+    return await AdminService().set_company_vip(
+        company_id=company_id,
+        vip=data.vip,
+        months=data.months,
+        reason=data.reason,
+        current_user=current_user,
     )
 
 

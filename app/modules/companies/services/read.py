@@ -22,11 +22,27 @@ SUPPLIER_SELECT = """
         c.website,
         c.rating,
         c.verification_status::text AS verification_status,
+        (
+            COALESCE(c.vip, FALSE)
+            AND (c.vip_until IS NULL OR c.vip_until > NOW())
+        ) AS vip,
+        EXISTS (
+            SELECT 1 FROM supplier_subscriptions ss
+            WHERE ss.user_id = c.owner_id
+              AND ss.plan::text IN ('pro', 'business', 'start')
+              AND ss.active_until IS NOT NULL
+              AND ss.active_until > NOW()
+        ) AS promoted,
         cs.average_rating,
         cp.industries,
         u.first_name,
         u.last_name,
         (SELECT COUNT(*) FROM reviews r WHERE r.target_actor_id = a.id) AS reviews_count,
+        (
+            SELECT COALESCE(AVG(r.rating)::float, 0)
+            FROM reviews r
+            WHERE r.target_actor_id = a.id
+        ) AS reviews_avg,
         (
             SELECT COUNT(*) FROM catalog_items ci
             WHERE ci.actor_id = a.id AND ci.status::text = 'active'
@@ -50,6 +66,12 @@ SUPPLIER_SELECT = """
     LEFT JOIN company_profiles cp ON cp.company_id = c.id
     LEFT JOIN users u ON u.id = a.user_id
     WHERE a.side::text = 'supplier' AND a.is_active = TRUE
+      AND COALESCE(c.operational_status::text, 'active') = 'active'
+      AND NOT EXISTS (
+          SELECT 1 FROM users bu
+          WHERE bu.id = COALESCE(c.owner_id, a.user_id)
+            AND bu.status::text = 'blocked'
+      )
 """
 
 

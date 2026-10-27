@@ -365,7 +365,23 @@ class CatalogItemMixin:
         invoice: bool = False,
         sort: str = "pop",
     ):
-        clauses = ["ci.status::text = 'active'"]
+        clauses = [
+            "ci.status::text = 'active'",
+            "a.is_active = TRUE",
+            """
+            NOT EXISTS (
+                SELECT 1 FROM users bu
+                WHERE bu.id = COALESCE(c.owner_id, a.user_id)
+                  AND bu.status::text = 'blocked'
+            )
+            """,
+            """
+            (
+                c.id IS NULL
+                OR COALESCE(c.operational_status::text, 'active') = 'active'
+            )
+            """,
+        ]
         params: list = []
         if query:
             params.append(f"%{query}%")
@@ -395,17 +411,34 @@ class CatalogItemMixin:
             LEFT JOIN company_stats cs ON cs.company_id = c.id
         """
 
+        boost_sql = """
+            CASE
+                WHEN COALESCE(c.vip, FALSE)
+                     AND (c.vip_until IS NULL OR c.vip_until > NOW()) THEN 2
+                WHEN EXISTS (
+                    SELECT 1 FROM supplier_subscriptions ss
+                    WHERE ss.user_id = c.owner_id
+                      AND ss.plan::text IN ('pro', 'business')
+                      AND ss.active_until IS NOT NULL
+                      AND ss.active_until > NOW()
+                ) THEN 1
+                ELSE 0
+            END
+        """
+
         sort_key = sort if sort in {"pop", "cheap", "rating"} else "pop"
         if sort_key == "cheap":
-            order_sql = f"ORDER BY {LIST_PRICE_EXPR} ASC NULLS LAST, ci.id DESC"
+            order_sql = f"ORDER BY {boost_sql} DESC, {LIST_PRICE_EXPR} ASC NULLS LAST, ci.id DESC"
         elif sort_key == "rating":
-            order_sql = """
-                ORDER BY COALESCE(cs.average_rating, c.rating, 0) DESC,
+            order_sql = f"""
+                ORDER BY {boost_sql} DESC,
+                         COALESCE(cs.average_rating, c.rating, 0) DESC,
                          ci.id DESC
             """
         else:
-            order_sql = """
-                ORDER BY (COALESCE(ist.views, 0) + COALESCE(ist.leads, 0)) DESC,
+            order_sql = f"""
+                ORDER BY {boost_sql} DESC,
+                         (COALESCE(ist.views, 0) + COALESCE(ist.leads, 0)) DESC,
                          ci.created_at DESC
             """
 
@@ -439,23 +472,45 @@ class CatalogItemMixin:
                         'Исполнитель'
                     ) AS name,
                     COALESCE(cs.average_rating, c.rating, 0) AS rating,
-                    c.logo AS photo
+                    c.logo AS photo,
+                    (
+                        COALESCE(c.vip, FALSE)
+                        AND (c.vip_until IS NULL OR c.vip_until > NOW())
+                    ) AS vip,
+                    EXISTS (
+                        SELECT 1 FROM supplier_subscriptions ss
+                        WHERE ss.user_id = c.owner_id
+                          AND ss.plan::text IN ('pro', 'business', 'start')
+                          AND ss.active_until IS NOT NULL
+                          AND ss.active_until > NOW()
+                    ) AS promoted,
+                    COALESCE(ou.status::text, au.status::text) AS owner_status,
+                    COALESCE(c.operational_status::text, 'active') AS operational_status,
+                    a.is_active
                 FROM actors a
                 LEFT JOIN companies c ON c.id = a.company_id
                 LEFT JOIN company_stats cs ON cs.company_id = c.id
+                LEFT JOIN users ou ON ou.id = c.owner_id
+                LEFT JOIN users au ON au.id = a.user_id
                 WHERE a.id = $1
                 """,
                 schema.actor_id,
             )
-        actor = None
-        if actor_row:
-            photo_raw = actor_row["photo"]
-            actor = CatalogActorBrief(
-                id=actor_row["id"],
-                name=actor_row["name"] or "Исполнитель",
-                rating=float(actor_row["rating"] or 0),
-                photo=public_file_url(photo_raw) if photo_raw else None,
-            )
+        if not actor_row or not actor_row["is_active"]:
+            raise NotFoundError("Catalog item not found")
+        if actor_row["owner_status"] == "blocked":
+            raise NotFoundError("Catalog item not found")
+        if actor_row["operational_status"] == "blocked":
+            raise NotFoundError("Catalog item not found")
+        photo_raw = actor_row["photo"]
+        actor = CatalogActorBrief(
+            id=actor_row["id"],
+            name=actor_row["name"] or "Исполнитель",
+            rating=float(actor_row["rating"] or 0),
+            photo=public_file_url(photo_raw) if photo_raw else None,
+            vip=bool(actor_row["vip"]),
+            promoted=bool(actor_row["promoted"]),
+        )
         return schema.model_copy(update={"actor": actor})
 
     async def get(self, item_id: int, actor_id: int):

@@ -9,7 +9,10 @@ from app.utils.audit import AuditLogger
 
 USER_COLUMNS = """
     id, email, first_name, last_name, phone,
-    role::text AS role, status::text AS status, created_at, updated_at
+    role::text AS role, status::text AS status,
+    banned_until, block_reason,
+    COALESCE(token_version, 0) AS token_version,
+    created_at, updated_at
 """
 
 

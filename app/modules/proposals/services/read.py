@@ -87,7 +87,21 @@ class ProposalReadMixin:
             )
             return await self._page_proposals(
                 conn,
-                "p.rfq_id = $1",
+                """
+                p.rfq_id = $1
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM actors sa
+                    LEFT JOIN companies sc ON sc.id = sa.company_id
+                    LEFT JOIN users su ON su.id = COALESCE(sc.owner_id, sa.user_id)
+                    WHERE sa.id = p.supplier_actor_id
+                      AND (
+                        sa.is_active = FALSE
+                        OR su.status::text = 'blocked'
+                        OR COALESCE(sc.operational_status::text, 'active') = 'blocked'
+                      )
+                )
+                """,
                 [rfq_id],
                 page,
                 page_size,

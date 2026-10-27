@@ -16,7 +16,7 @@ from app.core.permissions import (
 from app.core.security_core import decode_token
 from app.database import pool
 from app.modules.actors.services import ActorService
-from app.modules.auth.services.common import load_user
+from app.modules.auth.services.common import block_message, lift_expired_ban, load_user
 
 security = HTTPBearer(auto_error=False)
 
@@ -150,8 +150,12 @@ async def get_current_user(
         row = await load_user(conn, user_id)
         if not row:
             raise UnauthorizedError("User not found")
+        row = await lift_expired_ban(conn, row)
+        token_tv = int(payload.get("tv") or 0)
+        if token_tv != int(row.get("token_version") or 0):
+            raise UnauthorizedError("Session revoked")
         if row["status"] == "blocked":
-            raise ForbiddenError("Account is blocked")
+            raise ForbiddenError(block_message(row))
         row["permissions"] = await fetch_permission_names(
             conn, role_id=row.get("role_id"), role_name=row["role"]
         )

@@ -17,7 +17,10 @@ COMPANY_LIST_COLUMNS = """
     c.legal_name, c.tax_number, c.logo, c.country, c.city,
     c.verification_status::text AS verification_status,
     c.operational_status::text AS operational_status,
-    c.rating, c.created_at,
+    c.rating,
+    COALESCE(c.vip, FALSE) AS vip,
+    c.vip_until,
+    c.created_at,
     u.id AS owner_user_id, u.email AS owner_email,
     u.first_name AS owner_first_name, u.last_name AS owner_last_name
 """
@@ -63,6 +66,8 @@ def _serialize_company_list_item(company, actor_types: list[str]) -> dict:
         "verification_status": company["verification_status"],
         "operational_status": company["operational_status"],
         "rating": company["rating"],
+        "vip": bool(company.get("vip")),
+        "vip_until": company.get("vip_until"),
         "created_at": company["created_at"],
     }
 
@@ -433,6 +438,65 @@ class AdminCompaniesMixin:
             "action": action,
             "verification_status": verification,
             "operational_status": operational,
+        }
+
+    async def set_company_vip(
+        self,
+        company_id: int,
+        vip: bool,
+        current_user,
+        *,
+        months: int | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        from datetime import datetime, timedelta, timezone
+
+        ensure_permission(current_user, "admin_companies.update")
+        async with self.connection() as conn:
+            company = await conn.fetchrow(
+                """
+                SELECT id, title, COALESCE(vip, FALSE) AS vip, vip_until
+                FROM companies WHERE id = $1
+                """,
+                company_id,
+            )
+            if not company:
+                raise NotFoundError("Company not found")
+            vip_until = None
+            if vip:
+                months_value = months or 1
+                vip_until = datetime.now(timezone.utc) + timedelta(days=30 * months_value)
+            updated = await conn.fetchrow(
+                """
+                UPDATE companies
+                SET vip = $1,
+                    vip_until = $2,
+                    updated_at = NOW()
+                WHERE id = $3
+                RETURNING id, COALESCE(vip, FALSE) AS vip, vip_until
+                """,
+                vip,
+                vip_until,
+                company_id,
+            )
+            await log_admin(
+                conn,
+                actor_id_of(current_user),
+                "admin.company.vip.grant" if vip else "admin.company.vip.revoke",
+                "company",
+                company_id,
+                {
+                    "vip": vip,
+                    "vip_until": vip_until.isoformat() if vip_until else None,
+                    "months": months if vip else None,
+                    "reason": reason.strip() if reason and reason.strip() else None,
+                    "previous_vip": bool(company["vip"]),
+                },
+            )
+        return {
+            "id": updated["id"],
+            "vip": bool(updated["vip"]),
+            "vip_until": updated["vip_until"],
         }
 
     async def list_pending_verification(self, page: int = 1, page_size: int = 20) -> dict:

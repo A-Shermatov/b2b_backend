@@ -43,6 +43,8 @@ def _serialize_list_item(row) -> dict:
         "phone": row["phone"],
         "role": row["role"],
         "status": row["status"],
+        "banned_until": row.get("banned_until"),
+        "block_reason": row.get("block_reason"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "company_id": row["company_id"],
@@ -112,6 +114,7 @@ class AdminUsersMixin:
                 SELECT
                     u.id, u.email, u.first_name, u.last_name, u.phone,
                     u.role::text AS role, u.status::text AS status,
+                    u.banned_until, u.block_reason,
                     u.created_at, u.updated_at,
                     co.company_id,
                     co.company_title,
@@ -183,6 +186,8 @@ class AdminUsersMixin:
                     c.id, c.title,
                     c.verification_status::text AS verification_status,
                     c.rating,
+                    COALESCE(c.vip, FALSE) AS vip,
+                    c.vip_until,
                     (
                         SELECT COUNT(*)::int
                         FROM reviews r
@@ -457,6 +462,8 @@ class AdminUsersMixin:
             "phone": user["phone"],
             "role": user["role"],
             "status": user["status"],
+            "banned_until": user.get("banned_until"),
+            "block_reason": user.get("block_reason"),
             "created_at": user["created_at"],
             "updated_at": user["updated_at"],
             "companies": [
@@ -466,6 +473,8 @@ class AdminUsersMixin:
                     "verification_status": row["verification_status"],
                     "rating": float(row["rating"] or 0),
                     "reviews_count": int(row["reviews_count"] or 0),
+                    "vip": bool(row["vip"]),
+                    "vip_until": row["vip_until"],
                 }
                 for row in company_rows
             ],
@@ -492,7 +501,12 @@ class AdminUsersMixin:
         status: str,
         current_user,
         reason: str | None = None,
+        *,
+        duration_days: int | None = None,
+        permanent: bool = False,
     ):
+        from datetime import datetime, timedelta, timezone
+
         ensure_permission(current_user, "admin_users.update")
         status_value = status.value if hasattr(status, "value") else status
         async with self.connection() as conn:
@@ -509,14 +523,33 @@ class AdminUsersMixin:
             if target_rank and target_rank >= current_rank:
                 raise ForbiddenError("You cannot change this staff account status")
             previous_status = user["status"]
+            banned_until = None
+            block_reason = reason.strip() if reason and reason.strip() else None
+            bump_sessions = False
+            if status_value == "blocked":
+                bump_sessions = True
+                if permanent or not duration_days:
+                    banned_until = None
+                else:
+                    banned_until = datetime.now(timezone.utc) + timedelta(days=int(duration_days))
+            elif status_value == "active":
+                banned_until = None
+                block_reason = None
             updated = await conn.fetchrow(
                 f"""
                 UPDATE users
-                SET status = $1::user_status, updated_at = NOW()
-                WHERE id = $2
+                SET status = $1::user_status,
+                    banned_until = $2,
+                    block_reason = $3,
+                    token_version = CASE WHEN $4 THEN COALESCE(token_version, 0) + 1 ELSE token_version END,
+                    updated_at = NOW()
+                WHERE id = $5
                 RETURNING {USER_COLUMNS}
                 """,
                 status_value,
+                banned_until,
+                block_reason,
+                bump_sessions,
                 user_id,
             )
             await log_admin(
@@ -528,7 +561,10 @@ class AdminUsersMixin:
                 {
                     "previous_status": previous_status,
                     "status": status_value,
-                    "reason": reason.strip() if reason and reason.strip() else None,
+                    "reason": block_reason,
+                    "banned_until": banned_until.isoformat() if banned_until else None,
+                    "duration_days": duration_days if status_value == "blocked" and not permanent else None,
+                    "permanent": permanent if status_value == "blocked" else None,
                 },
             )
         return {
@@ -539,6 +575,42 @@ class AdminUsersMixin:
             "phone": updated["phone"],
             "role": updated["role"],
             "status": updated["status"],
+            "banned_until": updated.get("banned_until"),
+            "block_reason": updated.get("block_reason"),
             "created_at": updated["created_at"],
             "updated_at": updated["updated_at"],
+        }
+
+    async def revoke_user_sessions(self, user_id: int, current_user) -> dict:
+        ensure_permission(current_user, "admin_users.update")
+        async with self.connection() as conn:
+            user = await conn.fetchrow(
+                f"SELECT {USER_COLUMNS} FROM users WHERE id = $1",
+                user_id,
+            )
+            if not user:
+                raise NotFoundError("User not found")
+            if user["id"] == actor_id_of(current_user):
+                raise ForbiddenError("You cannot revoke your own sessions here")
+            updated = await conn.fetchrow(
+                f"""
+                UPDATE users
+                SET token_version = COALESCE(token_version, 0) + 1,
+                    updated_at = NOW()
+                WHERE id = $1
+                RETURNING {USER_COLUMNS}
+                """,
+                user_id,
+            )
+            await log_admin(
+                conn,
+                actor_id_of(current_user),
+                "admin.user.sessions.revoke",
+                "user",
+                user_id,
+                {"token_version": int(updated["token_version"] or 0)},
+            )
+        return {
+            "user_id": updated["id"],
+            "token_version": int(updated["token_version"] or 0),
         }

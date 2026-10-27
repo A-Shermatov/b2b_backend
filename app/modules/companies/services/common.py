@@ -177,13 +177,26 @@ def compute_success_rate(completed: int, disputed: int) -> float | None:
     return round(completed / total * 100, 1)
 
 
+def _public_supplier_rating(row) -> float:
+    reviews_avg = None
+    try:
+        reviews_avg = row["reviews_avg"]
+    except (KeyError, IndexError):
+        pass
+    if reviews_avg is not None and float(reviews_avg) > 0:
+        return round(float(reviews_avg), 2)
+    return round(float(row["average_rating"] or row["rating"] or 0), 2)
+
+
 def row_to_public_supplier(row) -> PublicSupplier:
     completed = int(row["completed_contracts"] or 0)
     active = int(row["active_contracts"] or 0)
     disputed = int(row["disputed_contracts"] or 0)
     success_rate = compute_success_rate(completed, disputed)
+    rating = _public_supplier_rating(row)
+    vip = bool(row.get("vip")) if "vip" in row.keys() else False
+    promoted = bool(row.get("promoted")) if "promoted" in row.keys() else False
     if row["kind"] == "company" and row["company_id"]:
-        rating = float(row["average_rating"] or row["rating"] or 0)
         return PublicSupplier(
             actor_id=row["id"],
             kind=row["kind"],
@@ -203,6 +216,8 @@ def row_to_public_supplier(row) -> PublicSupplier:
             active_contracts=active,
             disputed_contracts=disputed,
             success_rate=success_rate,
+            vip=vip,
+            promoted=promoted,
         )
     display = row["display_name"]
     if not display:
@@ -217,7 +232,7 @@ def row_to_public_supplier(row) -> PublicSupplier:
         country=None,
         description=None,
         website=None,
-        rating=0.0,
+        rating=rating,
         verification_status="pending",
         reviews_count=int(row["reviews_count"] or 0),
         industries=[],
@@ -226,5 +241,7 @@ def row_to_public_supplier(row) -> PublicSupplier:
         completed_contracts=completed,
         active_contracts=active,
         disputed_contracts=disputed,
+        vip=vip,
+        promoted=promoted,
         success_rate=success_rate,
     )

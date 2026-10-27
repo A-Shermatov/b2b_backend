@@ -92,6 +92,8 @@ class CatalogActorBrief(BaseModel):
     name: str
     rating: float = 0
     photo: str | None = None
+    vip: bool = False
+    promoted: bool = False
 
 
 class CatalogItemWithRelations(CatalogItemSchema):

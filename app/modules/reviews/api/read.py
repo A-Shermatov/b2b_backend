@@ -5,6 +5,7 @@ from fastapi import Depends
 
 from app.core.pagination import Page
 from app.deps import PaginationDep
+from app.deps import SupplierContext, require_supplier_ctx
 from app.modules.reviews.api.common import (
     BuyerContext,
     CompanyService,
@@ -14,16 +15,50 @@ from app.modules.reviews.api.common import (
     public_router,
     raw_db_dependency,
     require_buyer_ctx,
+    supplier_router,
 )
 
 
 @buyer_router.get("/", response_model=Page[ReviewResponse])
-async def list_my_reviews(
+async def list_my_buyer_reviews(
     ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
     pagination: PaginationDep,
 ):
     return await ReviewService(db).list_for_reviewer(
+        ctx.actor.id, pagination.page, pagination.page_size
+    )
+
+
+@buyer_router.get("/received", response_model=Page[ReviewResponse])
+async def list_buyer_received_reviews(
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+    pagination: PaginationDep,
+):
+    return await ReviewService(db).list_for_actor(
+        ctx.actor.id, pagination.page, pagination.page_size
+    )
+
+
+@supplier_router.get("/", response_model=Page[ReviewResponse])
+async def list_my_supplier_reviews(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+    pagination: PaginationDep,
+):
+    return await ReviewService(db).list_for_reviewer(
+        ctx.actor.id, pagination.page, pagination.page_size
+    )
+
+
+@supplier_router.get("/received", response_model=Page[ReviewResponse])
+async def list_supplier_received_reviews(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+    db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+    pagination: PaginationDep,
+):
+    return await ReviewService(db).list_for_actor(
         ctx.actor.id, pagination.page, pagination.page_size
     )
 

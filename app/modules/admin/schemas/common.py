@@ -9,6 +9,25 @@ from app.modules.auth.schemas import UserPublic
 class UserStatusUpdate(BaseModel):
     status: Literal["pending", "active", "blocked"]
     reason: str | None = Field(default=None, max_length=2000)
+    duration_days: int | None = Field(default=None, ge=1, le=365)
+    permanent: bool = False
+
+
+class UserSessionsRevokeResponse(BaseModel):
+    user_id: int
+    token_version: int
+
+
+class CompanyVipUpdate(BaseModel):
+    vip: bool
+    months: int | None = Field(default=None, ge=1, le=12)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class CompanyVipResponse(BaseModel):
+    id: int
+    vip: bool
+    vip_until: datetime | None = None
 
 
 class AdminUserStatusCounts(BaseModel):
@@ -30,6 +49,8 @@ class AdminUserListItem(UserPublic):
     company_title: str | None = None
     contracts_count: int = 0
     contracts_sum: float = 0
+    banned_until: datetime | None = None
+    block_reason: str | None = None
 
 
 class AdminUsersResponse(BaseModel):
@@ -48,6 +69,8 @@ class AdminUserCompany(BaseModel):
     verification_status: str
     rating: float
     reviews_count: int
+    vip: bool = False
+    vip_until: datetime | None = None
 
 
 class AdminUserStats(BaseModel):
@@ -102,6 +125,8 @@ class AdminUserDocumentItem(BaseModel):
 
 
 class AdminUserDetail(UserPublic):
+    banned_until: datetime | None = None
+    block_reason: str | None = None
     companies: list[AdminUserCompany]
     stats: AdminUserStats
     contracts: list[AdminUserContractItem]
@@ -131,6 +156,8 @@ class AdminCompanyListItem(BaseModel):
     verification_status: str
     operational_status: str
     rating: float
+    vip: bool = False
+    vip_until: datetime | None = None
     created_at: datetime
 
 
