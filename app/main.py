@@ -25,6 +25,7 @@ from app.modules.catalog.router import register as register_catalog
 from app.modules.companies.router import register as register_companies
 from app.modules.finance.router import register as register_finance
 from app.modules.contracts.router import register as register_contracts
+from app.modules.direct_chats.router import register as register_direct_chats
 from app.modules.nav.router import register as register_nav
 from app.modules.notifications.router import register as register_notifications
 from app.modules.payments.router import register as register_payments
@@ -135,6 +136,7 @@ register_subscription(app, prefix=settings.api_v1_prefix)
 register_rfqs(app, prefix=settings.api_v1_prefix)
 register_proposals(app, prefix=settings.api_v1_prefix)
 register_contracts(app, prefix=settings.api_v1_prefix)
+register_direct_chats(app, prefix=settings.api_v1_prefix)
 register_support(app, prefix=settings.api_v1_prefix)
 register_approvals(app, prefix=settings.api_v1_prefix)
 register_payments(app, prefix=settings.api_v1_prefix)

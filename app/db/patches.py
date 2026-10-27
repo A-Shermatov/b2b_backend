@@ -494,4 +494,42 @@ COMPAT_PATCHES = [
           WHERE rp.role_id = r.id AND rp.permission_id = p.id
       );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS nav_section_seen (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        actor_id INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+        section VARCHAR(32) NOT NULL,
+        seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, actor_id, section)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS direct_conversations (
+        id SERIAL PRIMARY KEY,
+        buyer_actor_id INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+        supplier_actor_id INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (buyer_actor_id, supplier_actor_id)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_direct_conversations_supplier
+    ON direct_conversations (supplier_actor_id);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS direct_messages (
+        id SERIAL PRIMARY KEY,
+        conversation_id INTEGER NOT NULL REFERENCES direct_conversations(id) ON DELETE CASCADE,
+        sender_id INTEGER NOT NULL REFERENCES users(id),
+        text TEXT NOT NULL DEFAULT '',
+        status message_delivery_status NOT NULL DEFAULT 'sent',
+        delivered_at TIMESTAMPTZ,
+        viewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_direct_messages_conversation
+    ON direct_messages (conversation_id, created_at, id);
+    """,
 ]
