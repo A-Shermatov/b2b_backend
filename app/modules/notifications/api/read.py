@@ -1,7 +1,7 @@
 from typing import Annotated
 
 import asyncpg
-from fastapi import Depends
+from fastapi import Depends, Query
 
 from app.core.pagination import Page
 from app.deps import PaginationDep
@@ -23,9 +23,13 @@ async def list_buyer_notifications(
     ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
     pagination: PaginationDep,
+    unread: bool | None = Query(None),
 ):
     return await NotificationService(db).list_for_user(
-        ctx.user.id, pagination.page, pagination.page_size
+        ctx.user.id,
+        pagination.page,
+        pagination.page_size,
+        unread=unread,
     )
 
 
@@ -34,7 +38,11 @@ async def list_supplier_notifications(
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
     pagination: PaginationDep,
+    unread: bool | None = Query(None),
 ):
     return await NotificationService(db).list_for_user(
-        ctx.user.id, pagination.page, pagination.page_size
+        ctx.user.id,
+        pagination.page,
+        pagination.page_size,
+        unread=unread,
     )

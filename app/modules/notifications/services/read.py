@@ -3,18 +3,32 @@ from app.modules.notifications.services.common import NOTIFICATION_COLUMNS, shap
 
 
 class NotificationReadMixin:
-    async def list_for_user(self, user_id: int, page: int = 1, page_size: int = 20) -> dict:
+    async def list_for_user(
+        self,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        unread: bool | None = None,
+    ) -> dict:
+        clauses = ["user_id = $1"]
+        params: list = [user_id]
+        if unread is True:
+            clauses.append("read = FALSE")
+        elif unread is False:
+            clauses.append("read = TRUE")
+        where = " AND ".join(clauses)
         async with self.connection() as conn:
             total, rows = await fetch_page(
                 conn,
-                "SELECT COUNT(*) FROM notifications WHERE user_id = $1",
+                f"SELECT COUNT(*) FROM notifications WHERE {where}",
                 f"""
                 SELECT {NOTIFICATION_COLUMNS}
                 FROM notifications
-                WHERE user_id = $1
+                WHERE {where}
                 ORDER BY created_at DESC
                 """,
-                [user_id],
+                params,
                 page,
                 page_size,
             )
