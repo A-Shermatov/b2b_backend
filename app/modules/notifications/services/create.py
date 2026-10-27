@@ -135,6 +135,26 @@ class NotificationCreateMixin:
         )
         return created
 
+    async def notify_work_submitted(self, contract) -> list[NotificationSchema]:
+        contract_id = contract["id"]
+        return await self.notify_actor_members(
+            contract["buyer_actor_id"],
+            "contract",
+            "Работа сдана",
+            f"Исполнитель сдал работу по договору «{contract['title']}»",
+            f"/customer/contracts/{contract_id}",
+        )
+
+    async def notify_submission_rejected(self, contract) -> list[NotificationSchema]:
+        contract_id = contract["id"]
+        return await self.notify_actor_members(
+            contract["supplier_actor_id"],
+            "contract",
+            "Нужны правки",
+            f"Заказчик запросил правки по договору «{contract['title']}»",
+            f"/supplier/contracts/{contract_id}",
+        )
+
     async def notify_user(
         self,
         user_id: int,

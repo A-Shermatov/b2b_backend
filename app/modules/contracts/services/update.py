@@ -213,4 +213,6 @@ class ContractUpdateMixin:
                 "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
                 contract_id,
             )
-            return await load_contract_schema(conn, contract_id)
+            result = await load_contract_schema(conn, contract_id)
+        await NotificationService().notify_submission_rejected(row)
+        return result

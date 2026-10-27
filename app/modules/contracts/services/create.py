@@ -23,6 +23,7 @@ from app.modules.settings.service import get_platform_settings
 from app.utils.audit import AuditLogger
 from app.utils.storage import storage_key_from_url
 from app.enums import PaymentType
+from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
 
 
@@ -318,7 +319,9 @@ class ContractCreateMixin:
                 "UPDATE contracts SET status = 'delivered'::contract_status WHERE id = $1",
                 contract_id,
             )
-            return await load_contract_schema(conn, contract_id)
+            result = await load_contract_schema(conn, contract_id)
+        await NotificationService().notify_work_submitted(row)
+        return result
 
     async def open_dispute(self, contract_id: int, actor_id: int, data: DisputeRequest):
         async with self.connection() as conn:
