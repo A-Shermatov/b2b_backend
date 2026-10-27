@@ -1,9 +1,10 @@
 from app.core.exceptions import NotFoundError
 from app.core.pagination import build_page, fetch_page
-from app.modules.companies.schemas import CompanyWithRelations, PublicSupplier
+from app.modules.companies.schemas import CompanyWithRelations, PublicBuyer, PublicSupplier
 from app.modules.companies.services.common import (
     ensure_company_member,
     load_company_schema,
+    row_to_public_buyer,
     row_to_public_supplier,
 )
 
@@ -66,6 +67,57 @@ SUPPLIER_SELECT = """
     LEFT JOIN company_profiles cp ON cp.company_id = c.id
     LEFT JOIN users u ON u.id = a.user_id
     WHERE a.side::text = 'supplier' AND a.is_active = TRUE
+      AND COALESCE(c.operational_status::text, 'active') = 'active'
+      AND NOT EXISTS (
+          SELECT 1 FROM users bu
+          WHERE bu.id = COALESCE(c.owner_id, a.user_id)
+            AND bu.status::text = 'blocked'
+      )
+"""
+
+BUYER_SELECT = """
+    SELECT
+        a.id,
+        a.kind::text AS kind,
+        a.display_name,
+        a.company_id,
+        a.trust_level::text AS trust_level,
+        a.user_id,
+        c.title,
+        c.city,
+        c.country,
+        c.description,
+        c.website,
+        c.legal_name,
+        c.rating,
+        c.verification_status::text AS verification_status,
+        cs.average_rating,
+        u.first_name,
+        u.last_name,
+        (SELECT COUNT(*) FROM reviews r WHERE r.target_actor_id = a.id) AS reviews_count,
+        (
+            SELECT COALESCE(AVG(r.rating)::float, 0)
+            FROM reviews r
+            WHERE r.target_actor_id = a.id
+        ) AS reviews_avg,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.buyer_actor_id = a.id AND ct.status::text = 'completed'
+        ) AS completed_contracts,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.buyer_actor_id = a.id
+              AND ct.status::text IN ('active', 'delivered', 'pending_payment')
+        ) AS active_contracts,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.buyer_actor_id = a.id AND ct.status::text = 'disputed'
+        ) AS disputed_contracts
+    FROM actors a
+    LEFT JOIN companies c ON c.id = a.company_id
+    LEFT JOIN company_stats cs ON cs.company_id = c.id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE a.side::text = 'buyer' AND a.is_active = TRUE
       AND COALESCE(c.operational_status::text, 'active') = 'active'
       AND NOT EXISTS (
           SELECT 1 FROM users bu
@@ -164,3 +216,13 @@ class CompanyReadMixin:
         if not row:
             raise NotFoundError("Supplier not found")
         return row_to_public_supplier(row)
+
+    async def get_public_buyer(self, actor_id: int) -> PublicBuyer:
+        async with self.connection() as conn:
+            row = await conn.fetchrow(
+                BUYER_SELECT + " AND a.id = $1",
+                actor_id,
+            )
+        if not row:
+            raise NotFoundError("Buyer not found")
+        return row_to_public_buyer(row)

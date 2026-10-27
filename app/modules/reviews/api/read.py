@@ -73,6 +73,16 @@ async def supplier_reviews(
     return await ReviewService(db).list_for_actor(actor_id, pagination.page, pagination.page_size)
 
 
+@public_router.get("/buyers/{actor_id}/reviews", response_model=Page[ReviewResponse])
+async def buyer_reviews(
+    actor_id: int,
+    db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+    pagination: PaginationDep,
+):
+    await CompanyService().get_public_buyer(actor_id)
+    return await ReviewService(db).list_for_actor(actor_id, pagination.page, pagination.page_size)
+
+
 @public_router.get("/companies/{company_id}/reviews", response_model=Page[ReviewResponse])
 async def company_reviews(
     company_id: int,

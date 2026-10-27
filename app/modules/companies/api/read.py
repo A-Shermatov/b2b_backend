@@ -8,6 +8,7 @@ from app.modules.companies.api.common import (
     BuyerContext,
     CompanyService,
     CompanyWithRelations,
+    PublicBuyer,
     PublicSupplier,
     SupplierContext,
     buyer_router,
@@ -73,6 +74,11 @@ async def list_suppliers(
 @public_router.get("/suppliers/{actor_id}", response_model=PublicSupplier)
 async def get_supplier(actor_id: int):
     return await CompanyService().get_public_supplier(actor_id)
+
+
+@public_router.get("/buyers/{actor_id}", response_model=PublicBuyer)
+async def get_buyer(actor_id: int):
+    return await CompanyService().get_public_buyer(actor_id)
 
 
 @public_router.get("/companies/{company_id}", response_model=CompanyWithRelations)

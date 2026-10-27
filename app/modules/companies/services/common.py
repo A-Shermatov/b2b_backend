@@ -9,6 +9,7 @@ from app.modules.companies.schemas import (
     CompanyStatsSchema,
     CompanyUserSchema,
     CompanyWithRelations,
+    PublicBuyer,
     PublicSupplier,
 )
 
@@ -243,5 +244,56 @@ def row_to_public_supplier(row) -> PublicSupplier:
         disputed_contracts=disputed,
         vip=vip,
         promoted=promoted,
+        success_rate=success_rate,
+    )
+
+
+def row_to_public_buyer(row) -> PublicBuyer:
+    completed = int(row["completed_contracts"] or 0)
+    active = int(row["active_contracts"] or 0)
+    disputed = int(row["disputed_contracts"] or 0)
+    success_rate = compute_success_rate(completed, disputed)
+    rating = _public_supplier_rating(row)
+    if row["kind"] == "company" and row["company_id"]:
+        return PublicBuyer(
+            actor_id=row["id"],
+            kind=row["kind"],
+            display_name=row["display_name"] or row["title"] or f"Заказчик #{row['id']}",
+            company_id=row["company_id"],
+            city=row["city"],
+            country=row["country"],
+            description=row["description"],
+            website=row["website"],
+            legal_name=row.get("legal_name"),
+            rating=rating,
+            verification_status=row["verification_status"] or "pending",
+            reviews_count=int(row["reviews_count"] or 0),
+            trust_level=row["trust_level"],
+            completed_contracts=completed,
+            active_contracts=active,
+            disputed_contracts=disputed,
+            success_rate=success_rate,
+        )
+    display = row["display_name"]
+    if not display:
+        name = f"{row['first_name'] or ''} {row['last_name'] or ''}".strip()
+        display = name or f"Заказчик #{row['id']}"
+    return PublicBuyer(
+        actor_id=row["id"],
+        kind=row["kind"],
+        display_name=display,
+        company_id=None,
+        city=None,
+        country=None,
+        description=None,
+        website=None,
+        legal_name=None,
+        rating=rating,
+        verification_status="pending",
+        reviews_count=int(row["reviews_count"] or 0),
+        trust_level=row["trust_level"],
+        completed_contracts=completed,
+        active_contracts=active,
+        disputed_contracts=disputed,
         success_rate=success_rate,
     )

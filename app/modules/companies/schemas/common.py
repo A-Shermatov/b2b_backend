@@ -232,3 +232,23 @@ class PublicSupplier(BaseModel):
     success_rate: float | None = None
     vip: bool = False
     promoted: bool = False
+
+
+class PublicBuyer(BaseModel):
+    actor_id: int
+    kind: str
+    display_name: str
+    company_id: int | None = None
+    city: str | None = None
+    country: str | None = None
+    description: str | None = None
+    website: str | None = None
+    legal_name: str | None = None
+    rating: float = 0.0
+    verification_status: str = "pending"
+    reviews_count: int = 0
+    trust_level: str = "basic"
+    completed_contracts: int = 0
+    active_contracts: int = 0
+    disputed_contracts: int = 0
+    success_rate: float | None = None
