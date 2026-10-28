@@ -9,6 +9,7 @@ from app.modules.companies.api.common import (
     CompanyService,
     CompanyWithRelations,
     PublicBuyer,
+    PublicCompanyDetail,
     PublicSupplier,
     SupplierContext,
     buyer_router,
@@ -81,6 +82,6 @@ async def get_buyer(actor_id: int):
     return await CompanyService().get_public_buyer(actor_id)
 
 
-@public_router.get("/companies/{company_id}", response_model=CompanyWithRelations)
+@public_router.get("/companies/{company_id}", response_model=PublicCompanyDetail)
 async def get_company(company_id: int):
-    return await CompanyService().get_company(company_id)
+    return await CompanyService().get_public_company(company_id)

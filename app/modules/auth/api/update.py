@@ -1,15 +1,17 @@
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import BackgroundTasks, Depends, Request
 
 from app.config import get_settings
 from app.core.exceptions import RateLimitError
 from app.modules.auth.api.common import (
     ActivateRoleRequest,
     AuthService,
+    ChangePasswordRequest,
     MeResponse,
     SwitchActorRequest,
     SwitchCompanyRequest,
+    TokenResponse,
     TwoFactorConfirmRequest,
     TwoFactorDisableRequest,
     TwoFactorSetupResponse,
@@ -20,7 +22,9 @@ from app.modules.auth.api.common import (
     get_current_user,
     router,
 )
+from app.core.security_core import decode_token
 from app.deps import CurrentUser
+from app.utils import email as email_utils
 
 settings = get_settings()
 
@@ -85,3 +89,34 @@ async def activate_role(
     user: Annotated[CurrentUser, Depends(get_current_user)],
 ):
     return await AuthService().activate_role(user.id, data)
+
+
+def _token_side(request: Request) -> str | None:
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("bearer "):
+        return None
+    try:
+        side = decode_token(header[7:].strip()).get("side")
+    except ValueError:
+        return None
+    return side if side in ("buyer", "supplier") else None
+
+
+@router.post("/password/change", response_model=TokenResponse)
+async def change_password(
+    data: ChangePasswordRequest,
+    request: Request,
+    background: BackgroundTasks,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    ip = await get_client_ip(request)
+    allowed = await check_rate_limit(
+        f"password_change:{ip}:{user.id}", settings.rate_limit_password_reset_per_minute, 60
+    )
+    if not allowed:
+        raise RateLimitError("Too many password change attempts. Try again later.")
+    tokens, job = await AuthService().change_password(
+        user.id, data, side=_token_side(request), ip=ip
+    )
+    background.add_task(email_utils.send_email, job.to, job.subject, job.text, job.html)
+    return tokens

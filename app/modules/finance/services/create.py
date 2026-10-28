@@ -28,43 +28,48 @@ class FinanceCreateMixin:
         return destination_schema(row)
 
     async def request_withdrawal(self, actor_id: int, data: WithdrawalCreate):
-        balance = await PaymentService().supplier_balance(actor_id)
         async with self.connection() as conn:
-            if data.amount > balance.available:
-                raise ConflictError("Insufficient available balance")
-            dest = await conn.fetchrow(
-                """
-                SELECT id FROM withdrawal_destinations
-                WHERE id = $1 AND actor_id = $2
-                """,
-                data.destination_id,
-                actor_id,
-            )
-            if not dest:
-                raise NotFoundError("Destination not found")
-            row = await conn.fetchrow(
-                """
-                INSERT INTO withdrawals (
-                    actor_id, destination_id, amount, currency, status, created_at
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"withdraw:{actor_id}",
                 )
-                VALUES ($1, $2, $3, $4, 'pending'::withdrawal_status, NOW())
-                RETURNING id, actor_id, destination_id, amount, currency,
-                          status::text AS status, created_at, completed_at
-                """,
-                actor_id,
-                data.destination_id,
-                data.amount,
-                balance.currency,
-            )
-            await record_platform_payment(
-                conn,
-                payment_type="payout",
-                amount=row["amount"],
-                currency=row["currency"],
-                title=f"Выплата #{row['id']}",
-                description=f"Запрос вывода на destination #{row['destination_id']}",
-                status="pending",
-                actor_id=actor_id,
-                withdrawal_id=row["id"],
-            )
+                balance = await PaymentService(conn).supplier_balance(actor_id)
+                if data.amount > balance.available:
+                    raise ConflictError("Insufficient available balance")
+                dest = await conn.fetchrow(
+                    """
+                    SELECT id FROM withdrawal_destinations
+                    WHERE id = $1 AND actor_id = $2
+                    """,
+                    data.destination_id,
+                    actor_id,
+                )
+                if not dest:
+                    raise NotFoundError("Destination not found")
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO withdrawals (
+                        actor_id, destination_id, amount, currency, status, created_at
+                    )
+                    VALUES ($1, $2, $3, $4, 'pending'::withdrawal_status, NOW())
+                    RETURNING id, actor_id, destination_id, amount, currency,
+                              status::text AS status, created_at, completed_at
+                    """,
+                    actor_id,
+                    data.destination_id,
+                    data.amount,
+                    balance.currency,
+                )
+                await record_platform_payment(
+                    conn,
+                    payment_type="payout",
+                    amount=row["amount"],
+                    currency=row["currency"],
+                    title=f"Выплата #{row['id']}",
+                    description=f"Запрос вывода на destination #{row['destination_id']}",
+                    status="pending",
+                    actor_id=actor_id,
+                    withdrawal_id=row["id"],
+                )
         return withdrawal_schema(row)

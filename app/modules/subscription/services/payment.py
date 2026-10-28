@@ -11,6 +11,7 @@ from app.modules.finance.services import SUBSCRIPTION_PLAN_AMOUNTS
 from app.modules.payments.gateways.alif import AlifClient, AlifGatewayError, format_amount
 from app.modules.payments.gateways.dc import DcGatewayError
 from app.modules.payments.gateways.eskhata import EskhataGatewayError
+from app.modules.payments.services.update import ALIF_NOT_CONFIGURED, GATEWAY_NOT_CONFIGURED
 from app.modules.subscription.schemas import (
     SubscriptionCheckoutResponse,
     SubscriptionOrderSyncResponse,
@@ -77,7 +78,11 @@ class SubscriptionPaymentMixin:
         if amount <= 0:
             raise ValidationError("Plan has no price")
 
+        if settings.alif_requested and not settings.alif_enabled:
+            raise AlifGatewayError(ALIF_NOT_CONFIGURED)
         if not settings.alif_enabled:
+            if not settings.allow_mock_payments:
+                raise ConflictError(GATEWAY_NOT_CONFIGURED)
             sub = await self._activate_paid(
                 user_id, plan, gateway=GATEWAY_MOCK, external_id=None, amount=amount
             )

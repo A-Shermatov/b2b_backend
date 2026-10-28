@@ -1,11 +1,14 @@
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
+    ESCROW_AWAITING_STATUSES,
+    ESCROW_LOCKED_STATUSES,
     actor_id_of,
     actor_role_of,
     apply_partial_refund,
     contract_view_sql,
     dispute_view_sql,
+    escrow_pool,
     escrow_summary,
     file_url,
     load_audit_history,
@@ -207,6 +210,62 @@ async def _load_milestones(conn, contract_id: int) -> list[dict]:
         contract_id,
     )
     return [dict(row) for row in rows]
+
+
+async def _cancel_marketplace_or_conflict(contract_id: int, reason: str) -> None:
+    from app.modules.payments.gateways.alif import AlifGatewayError
+    from app.modules.payments.services import PaymentService
+
+    try:
+        await PaymentService().cancel_marketplace_for_contract(contract_id, reason=reason)
+    except AlifGatewayError as exc:
+        raise ConflictError(
+            f"Не удалось отменить платёж в Alif, возврат не выполнен: {exc.detail}"
+        ) from exc
+
+
+async def _refund_escrow_to_buyer(
+    conn,
+    *,
+    contract_id: int,
+    milestones: list[dict],
+    currency: str,
+    buyer_actor_id: int,
+    description: str,
+    metadata: dict,
+) -> float:
+    refund_amount = escrow_pool(milestones)
+    async with conn.transaction():
+        await conn.execute(
+            """
+            UPDATE payment_milestones m
+            SET status = CASE
+                WHEN m.status::text = ANY($3::text[]) THEN 'cancelled'::milestone_status
+                ELSE 'refunded'::milestone_status
+            END
+            FROM payment_plans p
+            WHERE m.payment_plan_id = p.id
+              AND p.contract_id = $1
+              AND m.status::text = ANY($2::text[])
+            """,
+            contract_id,
+            list(ESCROW_LOCKED_STATUSES + ESCROW_AWAITING_STATUSES),
+            list(ESCROW_AWAITING_STATUSES),
+        )
+        if refund_amount > 0:
+            await FinanceLedgerService(conn).record(
+                payment_type="refund",
+                amount=refund_amount,
+                currency=currency,
+                title=f"Возврат · контракт #{contract_id}",
+                description=description,
+                status="paid",
+                gateway="manual",
+                actor_id=buyer_actor_id,
+                contract_id=contract_id,
+                metadata=metadata,
+            )
+    return refund_amount
 
 
 class AdminContractsMixin:
@@ -412,17 +471,29 @@ class AdminContractsMixin:
             "in_progress",
             "submitted",
             "approved",
-            "awaiting_payment",
         }
         from app.modules.payments.services import PaymentService
 
         if action == "force_complete":
             await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
+        elif action == "cancel":
+            async with self.connection() as conn:
+                current_status = await conn.fetchval(
+                    "SELECT status::text FROM contracts WHERE id = $1", contract_id
+                )
+            if current_status is None:
+                raise NotFoundError("Contract not found")
+            if current_status in {"completed", "cancelled"}:
+                raise ConflictError("Contract is already closed")
+            await _cancel_marketplace_or_conflict(
+                contract_id, (reason or "Отмена сделки").strip()
+            )
 
         async with self.connection() as conn:
             contract = await conn.fetchrow(
                 """
-                SELECT id, title, status::text AS status, buyer_actor_id, supplier_actor_id
+                SELECT id, title, status::text AS status, buyer_actor_id, supplier_actor_id,
+                       currency::text AS currency
                 FROM contracts WHERE id = $1
                 """,
                 contract_id,
@@ -450,6 +521,15 @@ class AdminContractsMixin:
                 if contract["status"] in {"completed", "cancelled"}:
                     raise ConflictError("Contract is already closed")
                 status = "cancelled"
+                await _refund_escrow_to_buyer(
+                    conn,
+                    contract_id=contract_id,
+                    milestones=milestones,
+                    currency=contract["currency"],
+                    buyer_actor_id=contract["buyer_actor_id"],
+                    description=reason.strip(),
+                    metadata={"action": "cancel"},
+                )
             elif action == "force_complete":
                 if contract["status"] == "completed":
                     raise ConflictError("Contract is already completed")
@@ -551,10 +631,6 @@ class AdminContractsMixin:
                 },
             )
 
-        if action == "cancel":
-            await PaymentService().cancel_marketplace_for_contract(
-                contract_id, reason=(reason or "Отмена сделки").strip()
-            )
         return {"id": contract_id, "action": action, "status": status}
 
     async def list_disputes(
@@ -813,14 +889,7 @@ class AdminContractsMixin:
         if not (reason and reason.strip()):
             raise ValidationError("Reason is required for this action")
 
-        movable = {
-            "funded",
-            "in_progress",
-            "submitted",
-            "approved",
-            "awaiting_payment",
-            "disputed",
-        }
+        movable = set(ESCROW_LOCKED_STATUSES)
         from app.modules.payments.services import PaymentService
 
         if action == "release_funds":
@@ -830,6 +899,19 @@ class AdminContractsMixin:
                 )
             if mp_contract_id:
                 await PaymentService().confirm_marketplace_deliveries_for_contract(mp_contract_id)
+        elif action == "refund_buyer":
+            async with self.connection() as conn:
+                pre = await conn.fetchrow(
+                    "SELECT status::text AS status, contract_id FROM disputes WHERE id = $1",
+                    dispute_id,
+                )
+            if not pre:
+                raise NotFoundError("Dispute not found")
+            if pre["status"] == "resolved":
+                raise ConflictError("Dispute is already resolved")
+            await _cancel_marketplace_or_conflict(
+                pre["contract_id"], reason.strip() or "Возврат покупателю"
+            )
 
         async with self.connection() as conn:
             dispute = await conn.fetchrow(
@@ -891,42 +973,32 @@ class AdminContractsMixin:
                 dispute_status = "resolved"
                 resolution = "refund_buyer"
                 contract_status = "cancelled"
-                await conn.execute(
-                    """
-                    UPDATE payment_milestones m
-                    SET status = 'refunded'::milestone_status
-                    FROM payment_plans p
-                    WHERE m.payment_plan_id = p.id
-                      AND p.contract_id = $1
-                      AND m.status::text = ANY($2::text[])
-                    """,
-                    dispute["contract_id"],
-                    list(movable),
+                await _refund_escrow_to_buyer(
+                    conn,
+                    contract_id=dispute["contract_id"],
+                    milestones=milestones,
+                    currency=dispute["currency"],
+                    buyer_actor_id=dispute["buyer_actor_id"],
+                    description=reason.strip(),
+                    metadata={"dispute_id": dispute_id, "action": "refund_buyer"},
                 )
-                refund_amount = sum(
-                    m["amount"] for m in milestones if m["status"] in movable
-                )
-                if refund_amount > 0:
-                    await FinanceLedgerService(conn).record(
-                        payment_type="refund",
-                        amount=refund_amount,
-                        currency=dispute["currency"],
-                        title=f"Возврат · контракт #{dispute['contract_id']}",
-                        description=reason.strip(),
-                        status="paid",
-                        gateway="manual",
-                        actor_id=dispute["buyer_actor_id"],
-                        contract_id=dispute["contract_id"],
-                        metadata={"dispute_id": dispute_id, "action": "refund_buyer"},
-                    )
             elif action == "partial_refund":
                 if partial_buyer_amount is None or partial_buyer_amount <= 0:
                     raise ValidationError("partial_buyer_amount is required")
-                pool = sum(m["amount"] for m in milestones if m["status"] in movable)
+                pool = escrow_pool(milestones, movable)
                 if partial_buyer_amount > pool + 1e-6:
                     raise ValidationError("partial_buyer_amount exceeds escrow pool")
                 previous_statuses = {m["id"]: m["status"] for m in milestones}
-                apply_partial_refund(milestones, movable, partial_buyer_amount)
+                amounts = ", ".join(
+                    f"{float(m['amount']):g}" for m in milestones if m["status"] in movable
+                )
+                actual_refund = apply_partial_refund(milestones, movable, partial_buyer_amount)
+                if actual_refund <= 1e-9:
+                    raise ValidationError(
+                        "Сумма возврата должна покрывать хотя бы один milestone целиком. "
+                        f"Суммы milestone в escrow: {amounts}"
+                    )
+                partial_buyer_amount = actual_refund
                 async with conn.transaction():
                     for milestone in milestones:
                         await conn.execute(
@@ -958,6 +1030,10 @@ class AdminContractsMixin:
                     metadata={"dispute_id": dispute_id, "action": "partial_refund"},
                 )
             elif action == "close_case":
+                if escrow_pool(milestones, movable) > 1e-6:
+                    raise ValidationError(
+                        "Сначала урегулируйте escrow: выплата, возврат или частичный возврат"
+                    )
                 dispute_status = "resolved"
                 resolution = "close_case"
                 contract_status = "completed"
@@ -1014,16 +1090,14 @@ class AdminContractsMixin:
                     "contract_id": dispute["contract_id"],
                 },
             )
-            refund_contract_id = dispute["contract_id"]
 
-        if action == "refund_buyer":
-            await PaymentService().cancel_marketplace_for_contract(
-                refund_contract_id, reason=(reason or "Возврат покупателю").strip()
-            )
         return {
             "id": dispute_id,
             "action": action,
             "status": dispute_status,
             "resolution": resolution,
             "contract_status": contract_status,
+            "partial_buyer_amount": (
+                partial_buyer_amount if action == "partial_refund" else None
+            ),
         }

@@ -13,6 +13,7 @@ from app.modules.contracts.api.common import (
     buyer_router,
     supplier_router,
 )
+from app.modules.contracts.schemas import DisputeStatementRequest
 from app.utils.storage import storage_service
 
 
@@ -136,3 +137,21 @@ async def supplier_open_dispute(
     ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
 ):
     return await ContractService().open_dispute(contract_id, ctx.actor.id, data)
+
+
+@buyer_router.post("/{contract_id}/dispute/statement")
+async def buyer_dispute_statement(
+    contract_id: int,
+    data: DisputeStatementRequest,
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
+):
+    return await ContractService().add_dispute_statement(contract_id, ctx.actor.id, data)
+
+
+@supplier_router.post("/{contract_id}/dispute/statement")
+async def supplier_dispute_statement(
+    contract_id: int,
+    data: DisputeStatementRequest,
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
+):
+    return await ContractService().add_dispute_statement(contract_id, ctx.actor.id, data)

@@ -634,4 +634,16 @@ COMPAT_PATCHES = [
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_http_logs_created_at ON payment_gateway_http_logs (created_at DESC);",
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_http_logs_operation ON payment_gateway_http_logs (gateway, operation, created_at DESC);",
     "ALTER TABLE dispute_evidence ALTER COLUMN uploaded_by_actor_id DROP NOT NULL;",
+    """
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash VARCHAR(128) NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ip_address VARCHAR(64)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user ON password_reset_tokens (user_id, created_at DESC);",
 ]

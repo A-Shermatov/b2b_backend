@@ -10,9 +10,11 @@ API = "/api/v1"
 async def test_roles_and_catalog_are_limited_to_staff_scope(client, admin_auth):
     headers = admin_auth["headers"]
 
-    roles_res = await client.get(f"{API}/admin/roles", headers=headers)
+    roles_res = await client.get(
+        f"{API}/admin/roles", params={"page_size": 100}, headers=headers
+    )
     assert roles_res.status_code == 200, roles_res.text
-    role_names = {role["name"] for role in roles_res.json()}
+    role_names = {role["name"] for role in roles_res.json()["items"]}
     assert {"admin", "moderator"} <= role_names
     assert not role_names & {"buyer", "supplier", "both", "superadmin"}
 

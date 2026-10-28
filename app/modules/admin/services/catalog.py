@@ -304,7 +304,7 @@ class AdminCatalogMixin:
                 report_status = "resolved"
             elif action == "reject":
                 status = "changes_requested"
-                report_status = None
+                report_status = "resolved"
             else:
                 status = "deleted"
                 report_status = "resolved"

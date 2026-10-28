@@ -6,6 +6,7 @@ from app.modules.rfqs.services.common import (
     KNOWN_RFQ_STATUSES,
     OPEN_RFQ_STATUSES,
     RFQ_COLUMNS,
+    expire_overdue_rfqs,
     load_rfq_response,
     load_rfq_row,
     load_supplier_participation,
@@ -51,6 +52,7 @@ class RfqReadMixin:
             filters.append(f"(r.title ILIKE ${n} OR r.id::text ILIKE ${n})")
         where = " AND ".join(filters)
         async with self.connection() as conn:
+            await expire_overdue_rfqs(conn)
             total, rows = await fetch_page(
                 conn,
                 f"SELECT COUNT(*) FROM rfqs r WHERE {where}",
@@ -106,7 +108,7 @@ class RfqReadMixin:
             n = len(params)
             filters.append(
                 f"(r.title ILIKE ${n} OR r.id::text ILIKE ${n} "
-                f"OR COALESCE(c.name, '') ILIKE ${n})"
+                f"OR COALESCE(c.title, '') ILIKE ${n})"
             )
         board_where = " AND ".join(filters)
         board_from = """
@@ -116,6 +118,7 @@ class RfqReadMixin:
             LEFT JOIN company_stats cs ON cs.company_id = c.id
         """
         async with self.connection() as conn:
+            await expire_overdue_rfqs(conn)
             total, rows = await fetch_page(
                 conn,
                 f"SELECT COUNT(*) {board_from} WHERE {board_where}",
@@ -150,6 +153,7 @@ class RfqReadMixin:
         """
         params = [OPEN_RFQ_STATUSES]
         async with self.connection() as conn:
+            await expire_overdue_rfqs(conn)
             total, rows = await fetch_page(
                 conn,
                 f"SELECT COUNT(*) FROM rfqs r WHERE {public_where}",

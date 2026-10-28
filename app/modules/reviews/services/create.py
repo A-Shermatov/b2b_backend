@@ -124,17 +124,29 @@ class ReviewCreateMixin:
             return shaped[0]
 
     async def _update_actor_rating(self, target_actor_id: int) -> None:
-        avg = await self.conn.fetchval(
-            "SELECT AVG(rating)::float FROM reviews WHERE target_actor_id = $1",
-            target_actor_id,
-        )
-        rating = round(float(avg or 0.0), 2)
         company_id = await self.conn.fetchval(
             "SELECT company_id FROM actors WHERE id = $1",
             target_actor_id,
         )
         if not company_id:
             return
+        avg = await self.conn.fetchval(
+            """
+            SELECT AVG(r.rating)::float
+            FROM reviews r
+            JOIN actors a ON a.id = r.target_actor_id
+            WHERE a.company_id = $1
+              AND (
+                  a.side::text = 'supplier'
+                  OR NOT EXISTS (
+                      SELECT 1 FROM actors s
+                      WHERE s.company_id = $1 AND s.side::text = 'supplier'
+                  )
+              )
+            """,
+            company_id,
+        )
+        rating = round(float(avg or 0.0), 2)
         await self.conn.execute(
             "UPDATE companies SET rating = $1, updated_at = NOW() WHERE id = $2",
             rating,

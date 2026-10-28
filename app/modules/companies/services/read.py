@@ -1,11 +1,17 @@
 from app.core.exceptions import NotFoundError
 from app.core.pagination import build_page, fetch_page
-from app.modules.companies.schemas import CompanyWithRelations, PublicBuyer, PublicSupplier
+from app.modules.companies.schemas import (
+    CompanyWithRelations,
+    PublicBuyer,
+    PublicCompanyDetail,
+    PublicSupplier,
+)
 from app.modules.companies.services.common import (
     ensure_company_member,
     load_company_schema,
     row_to_public_buyer,
     row_to_public_supplier,
+    to_public_company_detail,
 )
 
 SUPPLIER_SELECT = """
@@ -128,9 +134,10 @@ BUYER_SELECT = """
 
 
 class CompanyReadMixin:
-    async def get_company(self, company_id: int) -> CompanyWithRelations:
+    async def get_public_company(self, company_id: int) -> PublicCompanyDetail:
         async with self.connection() as conn:
-            return await load_company_schema(conn, company_id)
+            company = await load_company_schema(conn, company_id)
+        return to_public_company_detail(company)
 
     async def get_member_company(self, company_id: int, user_id: int) -> CompanyWithRelations:
         async with self.connection() as conn:

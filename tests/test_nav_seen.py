@@ -1,5 +1,7 @@
 import pytest
 
+from tests.sql import execute
+
 API = "/api/v1"
 
 
@@ -8,6 +10,12 @@ async def test_supplier_nav_seen_clears_new_rfqs(client, supplier_auth):
     if not supplier_auth["actor_id"]:
         pytest.skip("No supplier actor")
     headers = supplier_auth["headers"]
+    # Reset "seen" state left over from previous runs on a reused DB.
+    await execute(
+        "DELETE FROM nav_section_seen WHERE user_id = $1 AND actor_id = $2 AND section = 'rfqs'",
+        supplier_auth["me"]["user"]["id"],
+        supplier_auth["actor_id"],
+    )
     before = await client.get(f"{API}/supplier/nav-counts", headers=headers)
     assert before.status_code == 200, before.text
     body = before.json()

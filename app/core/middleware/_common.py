@@ -18,11 +18,26 @@ REDACT_KEYS = frozenset(
     {
         "password",
         "password_hash",
+        "new_password",
+        "current_password",
         "access_token",
         "refresh_token",
         "token",
         "secret",
         "secret_key",
+        "code",
+        "otp",
+        "totp",
+        "backup_code",
+        "challenge_token",
+        "authorization",
+        "details",
+        "card",
+        "account_number",
+        "iban",
+        "pan",
+        "cvv",
+        "key",
     }
 )
 

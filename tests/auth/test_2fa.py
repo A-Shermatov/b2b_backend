@@ -1,3 +1,5 @@
+import uuid
+
 import pyotp
 import pytest
 
@@ -21,7 +23,7 @@ async def _register(client, email: str, password: str = "Password1!") -> dict:
 
 @pytest.mark.asyncio
 async def test_2fa_setup_confirm_login_challenge(client):
-    email = "totp-user@example.com"
+    email = f"totp-user-{uuid.uuid4().hex[:8]}@example.com"
     password = "Password1!"
     tokens = await _register(client, email, password)
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
@@ -68,7 +70,7 @@ async def test_2fa_setup_confirm_login_challenge(client):
 
 @pytest.mark.asyncio
 async def test_2fa_backup_code_and_disable(client):
-    email = "totp-backup@example.com"
+    email = f"totp-backup-{uuid.uuid4().hex[:8]}@example.com"
     password = "Password1!"
     tokens = await _register(client, email, password)
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}

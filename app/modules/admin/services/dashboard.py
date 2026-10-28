@@ -76,7 +76,7 @@ class AdminDashboardMixin:
                     await conn.fetchval(
                         """
                         SELECT COUNT(*) FROM catalog_items
-                        WHERE status::text IN ('pending_review', 'changes_requested')
+                        WHERE status::text = 'pending_review'
                         """
                     )
                 ),

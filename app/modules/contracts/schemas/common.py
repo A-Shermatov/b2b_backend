@@ -148,3 +148,7 @@ class WorkSubmissionCreate(BaseModel):
 
 class DisputeRequest(BaseModel):
     reason: str = Field(min_length=10)
+
+
+class DisputeStatementRequest(BaseModel):
+    text: str = Field(min_length=10, max_length=5000)

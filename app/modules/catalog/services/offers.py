@@ -6,6 +6,7 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, Va
 from app.modules.catalog.schemas.offers import CatalogOfferCreate, CatalogOfferResponse
 from app.modules.finance.services.commission import ensure_contract_amount_allowed
 from app.modules.notifications.services import NotificationService
+from app.modules.proposals.services.common import ensure_not_self_dealing
 from app.modules.rfqs.services.common import insert_invites
 from app.modules.settings.service import get_platform_settings
 
@@ -79,6 +80,7 @@ class CatalogOfferMixin:
                 raise ConflictError("Catalog item is not available")
             if item["actor_id"] == buyer_actor_id:
                 raise ForbiddenError("Cannot create an offer on your own catalog item")
+            await ensure_not_self_dealing(conn, buyer_actor_id, item["actor_id"])
 
             pricing = await conn.fetchrow(
                 """

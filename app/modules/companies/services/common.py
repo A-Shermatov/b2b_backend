@@ -10,6 +10,7 @@ from app.modules.companies.schemas import (
     CompanyUserSchema,
     CompanyWithRelations,
     PublicBuyer,
+    PublicCompanyDetail,
     PublicSupplier,
 )
 
@@ -168,6 +169,30 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
         ],
         reviews=[],
         company_users=[CompanyUserSchema.model_validate(dict(row)) for row in members],
+    )
+
+
+def to_public_company_detail(company: CompanyWithRelations) -> PublicCompanyDetail:
+    return PublicCompanyDetail(
+        id=company.id,
+        title=company.title,
+        actor_type=company.actor_type,
+        actor_types=company.actor_types,
+        legal_name=company.legal_name,
+        has_tax_number=bool((company.tax_number or "").strip()),
+        website=company.website,
+        description=company.description,
+        logo=company.logo,
+        country=company.country,
+        city=company.city,
+        verification_status=company.verification_status,
+        rating=company.rating,
+        created_at=company.created_at,
+        updated_at=company.updated_at,
+        profile=company.profile,
+        categories=company.categories,
+        stats=company.stats,
+        certificates=company.certificates,
     )
 
 

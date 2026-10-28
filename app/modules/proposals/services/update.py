@@ -6,11 +6,14 @@ from app.modules.finance.services.commission import ensure_contract_amount_allow
 from app.modules.notifications.services import NotificationService
 from app.modules.proposals.schemas import ProposalUpdate
 from app.modules.proposals.services.common import (
-    FINAL_PROPOSAL_STATUSES,
+    ACCEPTABLE_RFQ_STATUSES,
+    BUYER_REVIEWABLE_PROPOSAL_STATUSES,
+    ensure_not_self_dealing,
     load_proposal_context,
     load_proposal_row,
     proposal_to_response,
 )
+from app.modules.rfqs.services.common import rfq_deadline_passed
 from app.modules.settings.service import get_platform_settings
 from app.enums import PaymentType
 
@@ -23,6 +26,8 @@ class ProposalUpdateMixin:
                 raise ForbiddenError("Access denied")
             if row["status"] != "submitted":
                 raise ConflictError("Proposal cannot be edited")
+            if await rfq_deadline_passed(conn, row["rfq_id"]):
+                raise ConflictError("Срок приёма предложений истёк")
             if data.price is not None or data.currency is not None:
                 ensure_contract_amount_allowed(
                     data.price if data.price is not None else row["price"],
@@ -100,6 +105,8 @@ class ProposalUpdateMixin:
             row = await load_proposal_context(conn, proposal_id)
             if row["rfq_actor_id"] != buyer_actor_id:
                 raise ForbiddenError("Access denied")
+            if row["status"] not in BUYER_REVIEWABLE_PROPOSAL_STATUSES:
+                raise ConflictError("Proposal cannot be shortlisted")
             await conn.execute(
                 "UPDATE proposals SET status = 'shortlisted'::proposal_status WHERE id = $1",
                 proposal_id,
@@ -111,6 +118,8 @@ class ProposalUpdateMixin:
             row = await load_proposal_context(conn, proposal_id)
             if row["rfq_actor_id"] != buyer_actor_id:
                 raise ForbiddenError("Access denied")
+            if row["status"] not in BUYER_REVIEWABLE_PROPOSAL_STATUSES:
+                raise ConflictError("Proposal cannot be rejected")
             await conn.execute(
                 "UPDATE proposals SET status = 'rejected'::proposal_status WHERE id = $1",
                 proposal_id,
@@ -162,6 +171,9 @@ class ProposalUpdateMixin:
                     raise ForbiddenError("Access denied")
                 if row["status"] != "pending_supplier":
                     raise ConflictError("Only pending catalog offers can be accepted")
+                await ensure_not_self_dealing(
+                    conn, row["rfq_actor_id"], row["supplier_actor_id"]
+                )
                 ensure_contract_amount_allowed(
                     row["price"],
                     row["currency"],
@@ -224,10 +236,23 @@ class ProposalUpdateMixin:
                 row = await load_proposal_context(conn, proposal_id)
                 if row["rfq_actor_id"] != buyer_actor_id:
                     raise ForbiddenError("Access denied")
+                await conn.fetchval(
+                    "SELECT id FROM rfqs WHERE id = $1 FOR UPDATE", row["rfq_id"]
+                )
+                row = await load_proposal_context(conn, proposal_id)
                 if row["status"] == "pending_supplier":
                     raise ConflictError("Catalog offer must be accepted by the supplier")
-                if row["status"] in FINAL_PROPOSAL_STATUSES:
+                if row["status"] not in BUYER_REVIEWABLE_PROPOSAL_STATUSES:
                     raise ConflictError("Proposal already finalized")
+                if row["rfq_status"] not in ACCEPTABLE_RFQ_STATUSES:
+                    raise ConflictError("RFQ is not accepting proposals")
+                if await conn.fetchval(
+                    "SELECT 1 FROM contracts WHERE rfq_id = $1 LIMIT 1", row["rfq_id"]
+                ):
+                    raise ConflictError("RFQ already has a contract")
+                await ensure_not_self_dealing(
+                    conn, buyer_actor_id, row["supplier_actor_id"]
+                )
                 ensure_contract_amount_allowed(
                     row["price"], row["currency"], await get_platform_settings(conn, use_cache=False)
                 )

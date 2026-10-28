@@ -79,6 +79,41 @@ def pytest_sessionstart(session):
     asyncio.run(_ensure_test_database())
 
 
+_SETTINGS_CONSUMERS = (
+    "app.modules.payments.api.read",
+    "app.modules.payments.api.callbacks",
+    "app.modules.payments.gateways.alif",
+    "app.modules.payments.services.update",
+    "app.modules.payments.services.gateway",
+    "app.modules.subscription.services.payment",
+)
+
+
+@pytest.fixture(autouse=True)
+def mock_payment_settings(monkeypatch):
+    """Force the mock payment provider so tests do not depend on the developer's .env.
+
+    Tests that exercise Alif / fail-closed behaviour monkeypatch ``get_settings`` in
+    the relevant module themselves; their patches are applied after this fixture
+    and therefore take precedence.
+    """
+    from app.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        database_url=TEST_DATABASE_URL,
+        payment_provider="mock",
+        allow_mock_payments=True,
+        alif_terminal_key=None,
+        alif_terminal_password=None,
+        alif_test_merchant_1=None,
+        alif_test_merchant_2=None,
+    )
+    for module in _SETTINGS_CONSUMERS:
+        monkeypatch.setattr(f"{module}.get_settings", lambda: settings)
+    return settings
+
+
 @pytest.fixture
 async def client(monkeypatch):
     from app.db.schema import prepare_database

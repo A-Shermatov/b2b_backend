@@ -319,6 +319,7 @@ class DisputeAdminActionResponse(BaseModel):
     status: str
     resolution: str | None = None
     contract_status: str
+    partial_buyer_amount: float | None = None
 
 
 class AdminFinanceParty(BaseModel):

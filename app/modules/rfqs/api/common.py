@@ -9,6 +9,7 @@ from app.deps import (
 from app.modules.rfqs.schemas import (
     InviteSuppliersRequest,
     ProductRfqCreate,
+    RfqUpdate,
     ServiceRfqCreate,
 )
 from app.modules.rfqs.services import RfqService

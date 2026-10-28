@@ -14,7 +14,23 @@ from app.database import pool
 
 logger = logging.getLogger(__name__)
 
-_REDACT_KEYS = frozenset({"password", "alif_terminal_password", "secret", "client_secret"})
+_REDACT_KEYS = frozenset(
+    {
+        "password",
+        "alif_terminal_password",
+        "secret",
+        "client_secret",
+        "key",
+        "token",
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "pan",
+        "card",
+        "cvv",
+    }
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -37,9 +53,21 @@ def sanitize_for_log(payload: Any) -> Any:
             else:
                 out[key] = sanitize_for_log(value)
         return out
-    if isinstance(payload, list):
+    if isinstance(payload, (list, tuple)):
         return [sanitize_for_log(item) for item in payload]
     return _json_safe(payload)
+
+
+def sanitize_raw_for_log(raw: str | None) -> str | None:
+    if not raw:
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw
+    if not isinstance(parsed, (dict, list)):
+        return raw
+    return json.dumps(sanitize_for_log(parsed), ensure_ascii=False, default=str)
 
 
 def extract_order_id(body: Any) -> str | None:
@@ -112,7 +140,7 @@ async def log_gateway_response(
     if log_id is None:
         return
     body_json = None
-    raw = response_raw
+    raw = sanitize_raw_for_log(response_raw)
     if response_body is not None:
         try:
             body_json = json.dumps(

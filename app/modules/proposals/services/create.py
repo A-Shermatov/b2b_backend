@@ -5,21 +5,34 @@ from app.modules.proposals.schemas import ProposalCreate, ProposalMessageCreate
 from app.modules.proposals.services.common import (
     OPEN_CHAT_STATUSES,
     assert_chat_access,
+    ensure_not_self_dealing,
     load_proposal_context,
     load_proposal_row,
     message_to_response,
     proposal_to_response,
 )
-from app.modules.rfqs.services.common import fetch_invites_map, load_rfq_row
+from app.modules.rfqs.services.common import (
+    expire_overdue_rfqs,
+    fetch_invites_map,
+    load_rfq_row,
+    rfq_deadline_passed,
+)
 from app.modules.settings.service import get_platform_settings
 
 
 class ProposalCreateMixin:
     async def submit(self, rfq_id: str, supplier_id: int, data: ProposalCreate):
         async with self.connection() as conn:
+            await expire_overdue_rfqs(conn)
             rfq = await load_rfq_row(conn, rfq_id)
+            if rfq["status"] == "expired" or (
+                rfq["status"] in ("published", "receiving_proposals")
+                and await rfq_deadline_passed(conn, rfq_id)
+            ):
+                raise ConflictError("Срок приёма предложений истёк")
             if rfq["status"] not in ("published", "receiving_proposals"):
                 raise ConflictError("RFQ is not accepting proposals")
+            await ensure_not_self_dealing(conn, rfq["actor_id"], supplier_id)
             if rfq["visibility"] == "invited_only":
                 invites = await fetch_invites_map(conn, [rfq_id])
                 if supplier_id not in invites.get(rfq_id, []):

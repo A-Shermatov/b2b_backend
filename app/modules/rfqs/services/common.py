@@ -88,7 +88,7 @@ KNOWN_RFQ_STATUSES = {
     "archived",
 }
 
-RFQ_UPDATABLE = {
+RFQ_UPDATABLE_COMMON = {
     "title",
     "description",
     "category_id",
@@ -97,18 +97,21 @@ RFQ_UPDATABLE = {
     "budget_to",
     "currency",
     "deadline",
-    "visibility",
-    "status",
+}
+
+RFQ_UPDATABLE_PRODUCT = {
     "quantity",
     "delivery_country",
     "delivery_city",
     "delivery_address",
     "delivery_date",
+}
+
+RFQ_UPDATABLE_SERVICE = {
     "project_duration",
     "start_date",
     "team_size_required",
     "experience_required",
-    "created_by",
 }
 
 
@@ -241,6 +244,37 @@ async def fetch_invites_map(conn, rfq_ids: list[str]) -> dict[str, list[int]]:
 
 
 OPEN_RFQ_STATUSES = ["published", "receiving_proposals"]
+
+
+def deadline_passed_sql(alias: str = "r") -> str:
+    deadline = f"LEFT({alias}.deadline, 10)"
+    return (
+        f"({deadline} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' "
+        f"AND {deadline} < TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD'))"
+    )
+
+
+async def expire_overdue_rfqs(conn) -> None:
+    await conn.execute(
+        f"""
+        UPDATE rfqs r
+        SET status = 'expired'::rfq_status, updated_at = NOW()
+        WHERE r.status::text = ANY($1::text[])
+          AND r.catalog_item_id IS NULL
+          AND {deadline_passed_sql('r')}
+          AND NOT EXISTS (SELECT 1 FROM contracts c WHERE c.rfq_id = r.id)
+        """,
+        OPEN_RFQ_STATUSES,
+    )
+
+
+async def rfq_deadline_passed(conn, rfq_id: str) -> bool:
+    return bool(
+        await conn.fetchval(
+            f"SELECT {deadline_passed_sql('r')} FROM rfqs r WHERE r.id = $1",
+            rfq_id,
+        )
+    )
 
 
 async def validate_supplier_actor_ids(

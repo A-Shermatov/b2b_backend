@@ -2,7 +2,12 @@ import json
 from datetime import datetime, timezone
 
 from app.core.exceptions import ConflictError, ForbiddenError
-from app.modules.contracts.schemas import DisputeRequest, MessageCreate, WorkSubmissionCreate
+from app.modules.contracts.schemas import (
+    DisputeRequest,
+    DisputeStatementRequest,
+    MessageCreate,
+    WorkSubmissionCreate,
+)
 from app.modules.contracts.services.common import (
     ACTIVE_DISPUTE_STATUSES,
     _custom_milestones,
@@ -395,6 +400,21 @@ class ContractCreateMixin:
                     """,
                     contract_id,
                 )
+                if row["status"] in ("cancelled", "completed"):
+                    appeal_window_open = await conn.fetchval(
+                        """
+                        SELECT COALESCE(MAX(resolved_at), NOW() - INTERVAL '100 years')
+                               > NOW() - INTERVAL '14 days'
+                        FROM disputes
+                        WHERE contract_id = $1 AND status::text = 'resolved'
+                        """,
+                        contract_id,
+                    )
+                    if not appeal_window_open:
+                        raise ConflictError(
+                            "Спор по закрытому контракту можно открыть только в течение "
+                            "14 дней после решения по предыдущему спору"
+                        )
                 status = "appealed" if had_resolved else "open"
                 buyer_statement = data.reason if actor_id == row["buyer_actor_id"] else None
                 supplier_statement = (
@@ -446,4 +466,36 @@ class ContractCreateMixin:
                         "opened_by_actor_id": actor_id,
                     },
                 )
+            result = await load_contract_schema(conn, contract_id)
+        if actor_id == row["buyer_actor_id"]:
+            counterparty_actor_id = row["supplier_actor_id"]
+            href = f"/supplier/contracts/{contract_id}"
+        else:
+            counterparty_actor_id = row["buyer_actor_id"]
+            href = f"/customer/contracts/{contract_id}"
+        await NotificationService().notify_actor_members(
+            counterparty_actor_id,
+            "contract",
+            "Открыт спор" if status == "open" else "Подана апелляция по спору",
+            f"По договору «{row['title']}» открыт спор. Добавьте своё заявление и доказательства.",
+            href,
+        )
+        return result
+
+    async def add_dispute_statement(
+        self, contract_id: int, actor_id: int, data: DisputeStatementRequest
+    ):
+        async with self.connection() as conn:
+            row = await load_contract_row(conn, contract_id)
+            dispute_id = await self._active_dispute_id(conn, contract_id, actor_id)
+            column = (
+                "buyer_statement"
+                if actor_id == row["buyer_actor_id"]
+                else "supplier_statement"
+            )
+            await conn.execute(
+                f"UPDATE disputes SET {column} = $1, updated_at = NOW() WHERE id = $2",
+                data.text.strip(),
+                dispute_id,
+            )
             return await load_contract_schema(conn, contract_id)

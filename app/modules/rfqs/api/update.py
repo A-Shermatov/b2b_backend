@@ -7,6 +7,7 @@ from app.modules.rfqs.api.common import (
     BuyerContext,
     InviteSuppliersRequest,
     RfqService,
+    RfqUpdate,
     buyer_router,
 )
 
@@ -14,7 +15,7 @@ from app.modules.rfqs.api.common import (
 @buyer_router.patch("/{rfq_id}")
 async def update_rfq(
     rfq_id: str,
-    data: dict,
+    data: RfqUpdate,
     ctx: Annotated[
         BuyerContext,
         Depends(buyer_perm("rfqs.update")),

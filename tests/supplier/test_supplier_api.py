@@ -1,6 +1,49 @@
 import pytest
 
+from tests.sql import execute, fetchrow
+
 API = "/api/v1"
+
+
+@pytest.fixture
+async def supplier_business_plan(client, supplier_auth):
+    """Give the seeded supplier an unlimited-companies plan; restore the old one after."""
+    user_id = supplier_auth["me"]["user"]["id"]
+    previous = await fetchrow(
+        "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1",
+        user_id,
+    )
+    if previous:
+        await execute(
+            """
+            UPDATE supplier_subscriptions
+            SET plan = 'business'::subscription_plan, active_until = NOW() + INTERVAL '30 days'
+            WHERE user_id = $1
+            """,
+            user_id,
+        )
+    else:
+        await execute(
+            """
+            INSERT INTO supplier_subscriptions (user_id, plan, active_until, created_at)
+            VALUES ($1, 'business'::subscription_plan, NOW() + INTERVAL '30 days', NOW())
+            """,
+            user_id,
+        )
+    yield
+    if previous:
+        await execute(
+            """
+            UPDATE supplier_subscriptions
+            SET plan = $2::subscription_plan, active_until = $3
+            WHERE user_id = $1
+            """,
+            user_id,
+            previous["plan"],
+            previous["active_until"],
+        )
+    else:
+        await execute("DELETE FROM supplier_subscriptions WHERE user_id = $1", user_id)
 
 
 @pytest.mark.asyncio
@@ -81,7 +124,7 @@ async def test_supplier_companies_me(client, supplier_auth):
 
 
 @pytest.mark.asyncio
-async def test_supplier_create_company(client, supplier_auth):
+async def test_supplier_create_company(client, supplier_auth, supplier_business_plan):
     if not supplier_auth["actor_id"]:
         pytest.skip("No supplier actor")
     res = await client.post(

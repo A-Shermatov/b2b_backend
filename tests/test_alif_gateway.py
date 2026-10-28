@@ -27,7 +27,8 @@ def _settings(**overrides) -> Settings:
         "alif_terminal_password": TERMINAL_PASSWORD,
     }
     values.update(overrides)
-    return Settings(**values)
+    # Ignore the developer's .env so results do not depend on local configuration.
+    return Settings(_env_file=None, **values)
 
 
 def _reference_sign(data: str) -> str:

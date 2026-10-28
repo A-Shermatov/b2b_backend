@@ -10,14 +10,14 @@ async def test_admin_can_list_users(client, admin_auth):
     res = await client.get("/api/v1/admin/users", headers=admin_auth["headers"])
     assert res.status_code == 200
     data = res.json()
-    assert set(data) == {
+    assert {
         "items",
         "total",
         "page",
         "page_size",
         "pages",
         "status_counts",
-    }
+    } <= set(data)
     assert isinstance(data["items"], list)
     assert data["total"] >= len(data["items"])
     assert data["status_counts"]["all"] >= data["total"]

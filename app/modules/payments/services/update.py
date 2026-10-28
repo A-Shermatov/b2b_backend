@@ -3,9 +3,12 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.modules.payments.gateways.alif import AlifGatewayError
 
 FUNDABLE_MILESTONE_STATUSES = ("pending", "awaiting_payment")
+CLOSED_CONTRACT_STATUSES = ("cancelled", "completed", "disputed")
+ACTIVE_DISPUTE_STATUSES = ("open", "under_review", "appealed")
 ALIF_NOT_CONFIGURED = (
     "Alif не настроен: задайте ALIF_TERMINAL_KEY и ALIF_TERMINAL_PASSWORD"
 )
+GATEWAY_NOT_CONFIGURED = "Платёжный шлюз не настроен"
 
 
 def ensure_alif_configured() -> bool:
@@ -13,6 +16,31 @@ def ensure_alif_configured() -> bool:
     if settings.alif_requested and not settings.alif_enabled:
         raise AlifGatewayError(ALIF_NOT_CONFIGURED)
     return settings.alif_enabled
+
+
+def ensure_mock_payments_allowed() -> None:
+    if not get_settings().allow_mock_payments:
+        raise ConflictError(GATEWAY_NOT_CONFIGURED)
+
+
+def ensure_contract_fundable(row) -> None:
+    if row["contract_status"] in CLOSED_CONTRACT_STATUSES:
+        raise ConflictError("Contract does not accept payments in its current status")
+
+
+async def ensure_no_active_dispute(conn, contract_id: int) -> None:
+    has_dispute = await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM disputes
+            WHERE contract_id = $1 AND status::text = ANY($2::text[])
+        )
+        """,
+        contract_id,
+        list(ACTIVE_DISPUTE_STATUSES),
+    )
+    if has_dispute:
+        raise ConflictError("Contract is under dispute")
 
 
 class PaymentUpdateMixin:
@@ -52,6 +80,7 @@ class PaymentUpdateMixin:
     ):
         if ensure_alif_configured():
             return await self.start_alif_payment(milestone_id, buyer_id)
+        ensure_mock_payments_allowed()
 
         async with self.connection() as conn:
             async with conn.transaction():
@@ -60,31 +89,33 @@ class PaymentUpdateMixin:
                     raise ForbiddenError("Access denied")
                 if row["status"] == "funded":
                     return {"id": row["id"], "status": row["status"]}
+                ensure_contract_fundable(row)
                 if row["status"] not in FUNDABLE_MILESTONE_STATUSES:
                     raise ConflictError("Milestone cannot be funded")
                 await self._apply_milestone_funded(conn, row)
         return {"id": milestone_id, "status": "funded"}
+
+    async def _ensure_milestone_approvable(self, conn, row, buyer_id: int) -> None:
+        if row["buyer_actor_id"] != buyer_id:
+            raise ForbiddenError("Access denied")
+        if row["status"] != "funded":
+            raise ConflictError("Milestone must be funded first")
+        ensure_contract_fundable(row)
+        await ensure_no_active_dispute(conn, row["contract_id"])
 
     async def approve_milestone(self, milestone_id: int, buyer_id: int):
         from app.modules.finance.services.commission import record_milestone_release
 
         async with self.connection() as conn:
             row = await self._load_milestone_contract(conn, milestone_id)
-            if row["buyer_actor_id"] != buyer_id:
-                raise ForbiddenError("Access denied")
-            if row["status"] != "funded":
-                raise ConflictError("Milestone must be funded first")
-            contract_id = row["contract_id"]
+            await self._ensure_milestone_approvable(conn, row, buyer_id)
 
-        await self.confirm_marketplace_deliveries_for_contract(contract_id)
+        await self.confirm_marketplace_delivery_for_milestone(milestone_id)
 
         async with self.connection() as conn:
             async with conn.transaction():
-                row = await self._load_milestone_contract(conn, milestone_id)
-                if row["buyer_actor_id"] != buyer_id:
-                    raise ForbiddenError("Access denied")
-                if row["status"] != "funded":
-                    raise ConflictError("Milestone must be funded first")
+                row = await self._load_milestone_contract(conn, milestone_id, for_update=True)
+                await self._ensure_milestone_approvable(conn, row, buyer_id)
                 await conn.execute(
                     "UPDATE payment_milestones SET status = 'released'::milestone_status WHERE id = $1",
                     milestone_id,
@@ -95,6 +126,7 @@ class PaymentUpdateMixin:
     async def mock_confirm_payment(self, milestone_id: int, buyer_id: int) -> dict:
         if ensure_alif_configured():
             raise ConflictError("Mock payments are disabled while Alif is enabled")
+        ensure_mock_payments_allowed()
         async with self.connection() as conn:
             row = await self._load_milestone_contract(conn, milestone_id)
             if row["buyer_actor_id"] != buyer_id:

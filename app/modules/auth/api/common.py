@@ -3,12 +3,16 @@ from fastapi import APIRouter
 from app.deps import get_auth_context, get_current_user, raw_db_dependency
 from app.modules.auth.schemas import (
     ActivateRoleRequest,
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     LoginResult,
     LogoutRequest,
     MeResponse,
+    MessageResponse,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     SwitchActorRequest,
     SwitchCompanyRequest,
     TokenResponse,

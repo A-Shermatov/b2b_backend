@@ -13,6 +13,7 @@ from app.modules.companies.schemas import (
     CompanyWizardInput,
     CompanyWithRelations,
     PublicBuyer,
+    PublicCompanyDetail,
     PublicSupplier,
     UpdateTeamMemberRequest,
 )

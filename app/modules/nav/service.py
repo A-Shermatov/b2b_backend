@@ -219,7 +219,7 @@ class NavService:
                     SELECT COUNT(*)
                     FROM catalog_items
                     WHERE actor_id = $1
-                      AND status::text IN ('pending_review', 'changes_requested')
+                      AND status::text = 'pending_review'
                     """,
                     actor_id,
                 )
@@ -231,7 +231,7 @@ class NavService:
                     SELECT COUNT(*)
                     FROM catalog_items
                     WHERE actor_id = $1
-                      AND status::text IN ('pending_review', 'changes_requested')
+                      AND status::text = 'pending_review'
                       AND created_at > $2
                     """,
                     actor_id,
@@ -282,7 +282,7 @@ class NavService:
                 await conn.fetchval(
                     """
                     SELECT COUNT(*) FROM catalog_items
-                    WHERE status::text IN ('pending_review', 'changes_requested')
+                    WHERE status::text = 'pending_review'
                     """
                 )
                 or 0

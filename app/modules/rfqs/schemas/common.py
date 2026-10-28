@@ -108,5 +108,26 @@ class ServiceRfqCreate(BaseModel):
 RfqCreate = Union[ProductRfqCreate, ServiceRfqCreate]
 
 
+class RfqUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=5)
+    description: str | None = None
+    category_id: str | None = None
+    budget_type: str | None = None
+    budget_from: float | None = None
+    budget_to: float | None = None
+    currency: str | None = None
+    deadline: str | None = None
+    visibility: Literal["public", "invited_only"] | None = None
+    quantity: int | None = Field(default=None, ge=1)
+    delivery_country: str | None = None
+    delivery_city: str | None = None
+    delivery_address: str | None = None
+    delivery_date: str | None = None
+    project_duration: str | None = None
+    start_date: str | None = None
+    team_size_required: int | None = None
+    experience_required: str | None = None
+
+
 class InviteSuppliersRequest(BaseModel):
     supplier_ids: list[int] = Field(min_length=1, max_length=50)

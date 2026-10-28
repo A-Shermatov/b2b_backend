@@ -252,7 +252,15 @@ async def admin_apply_report_action(
 @router.post(
     "/chats/{chat_id}/messages",
     response_model=AdminChatDetail,
-    dependencies=[Depends(admin_perm("admin_contracts.update", "admin_proposals.update"))],
+    dependencies=[
+        Depends(
+            admin_perm(
+                "admin_contracts.update",
+                "admin_proposals.update",
+                "admin_disputes.update",
+            )
+        )
+    ],
 )
 async def admin_post_chat_message(
     chat_id: str,
@@ -265,7 +273,15 @@ async def admin_post_chat_message(
 @router.delete(
     "/chats/{chat_id}/messages/{message_id}",
     response_model=AdminChatDetail,
-    dependencies=[Depends(admin_perm("admin_contracts.update", "admin_proposals.update"))],
+    dependencies=[
+        Depends(
+            admin_perm(
+                "admin_contracts.update",
+                "admin_proposals.update",
+                "admin_disputes.update",
+            )
+        )
+    ],
 )
 async def admin_delete_chat_message(
     chat_id: str,

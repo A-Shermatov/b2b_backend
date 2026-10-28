@@ -111,6 +111,34 @@ class CompanyWithRelations(CompanySchema):
     company_users: list[CompanyUserSchema] = []
 
 
+class PublicCompanyDetail(BaseModel):
+    id: int
+    title: str
+    actor_type: str
+    actor_types: list[str] = []
+    legal_name: str | None = None
+    has_tax_number: bool = False
+    website: str | None = None
+    description: str | None = None
+    logo: str | None = None
+    country: str | None = None
+    city: str | None = None
+    verification_status: str
+    rating: float
+    created_at: datetime
+    updated_at: datetime
+    profile: CompanyProfileSchema | None = None
+    categories: list[CompanyCategorySchema] = []
+    stats: CompanyStatsSchema | None = None
+    certificates: list[CompanyCertificateSchema] = []
+
+    @field_serializer("logo")
+    def serialize_logo(self, value: str | None) -> str | None:
+        if not value:
+            return value
+        return public_file_url(value)
+
+
 class CompanyLogoUploadResponse(BaseModel):
     logo: str
 

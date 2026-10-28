@@ -1,4 +1,4 @@
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.utils.storage import public_file_url
 
 PROPOSAL_COLUMNS = """
@@ -15,6 +15,8 @@ PROPOSAL_COLUMNS = """
 
 OPEN_CHAT_STATUSES = ("submitted", "viewed", "shortlisted", "pending_supplier")
 FINAL_PROPOSAL_STATUSES = ("accepted", "rejected", "withdrawn", "archived")
+BUYER_REVIEWABLE_PROPOSAL_STATUSES = ("submitted", "viewed", "shortlisted")
+ACCEPTABLE_RFQ_STATUSES = ("published", "receiving_proposals", "expired")
 
 
 def attachment_from_row(row) -> dict | None:
@@ -203,3 +205,39 @@ def assert_chat_access(row, actor_id: int, as_buyer: bool) -> None:
         return
     if row["supplier_actor_id"] != actor_id:
         raise ForbiddenError("Access denied")
+
+
+async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id: int) -> None:
+    if buyer_actor_id == supplier_actor_id:
+        raise ConflictError("Нельзя заключить сделку с самим собой")
+    rows = await conn.fetch(
+        """
+        SELECT
+            a.id,
+            a.company_id,
+            CASE WHEN a.kind::text = 'company' THEN c.owner_id ELSE a.user_id END AS owner_user_id
+        FROM actors a
+        LEFT JOIN companies c ON c.id = a.company_id
+        WHERE a.id = ANY($1::int[])
+        """,
+        [buyer_actor_id, supplier_actor_id],
+    )
+    by_id = {row["id"]: row for row in rows}
+    buyer = by_id.get(buyer_actor_id)
+    supplier = by_id.get(supplier_actor_id)
+    if not buyer or not supplier:
+        return
+    same_company = buyer["company_id"] is not None and buyer["company_id"] == supplier["company_id"]
+    same_owner = (
+        buyer["owner_user_id"] is not None
+        and buyer["owner_user_id"] == supplier["owner_user_id"]
+    )
+    if same_company or same_owner:
+        raise ConflictError("Нельзя заключить сделку с самим собой")
+
+
+async def ensure_proposal_buyer_reviewable(row) -> None:
+    if row["status"] == "pending_supplier":
+        raise ConflictError("Catalog offer must be handled by the supplier")
+    if row["status"] not in BUYER_REVIEWABLE_PROPOSAL_STATUSES:
+        raise ConflictError("Proposal already finalized")

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import List
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     )
 
     payment_provider: str = "mock"
+    allow_mock_payments: bool | None = None
     alif_base_url: str = "https://test-web.alif.tj"
     alif_terminal_key: str | None = None
     alif_terminal_password: str | None = None
@@ -64,12 +65,31 @@ class Settings(BaseSettings):
     public_api_url: str = "http://localhost:8080"
     frontend_url: str = "http://localhost:4000"
 
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "BrandMarket"
+    smtp_use_tls: bool = True  # STARTTLS
+    smtp_use_ssl: bool = False  # implicit SSL (port 465)
+    smtp_timeout: int = 15
+    password_reset_ttl_minutes: int = 60
+    rate_limit_password_forgot_per_minute: int = 5
+    rate_limit_password_reset_per_minute: int = 10
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors(cls, v: str | List[str]) -> str:
         if isinstance(v, list):
             return ",".join(v)
         return v
+
+    @model_validator(mode="after")
+    def default_allow_mock_payments(self) -> "Settings":
+        if self.allow_mock_payments is None:
+            self.allow_mock_payments = self.app_env.strip().lower() == "development"
+        return self
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -82,6 +102,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from_email)
 
     @property
     def alif_requested(self) -> bool:

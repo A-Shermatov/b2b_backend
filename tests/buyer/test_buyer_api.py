@@ -143,7 +143,9 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
     completed_id = await _create_draft_rfq(client, buyer_auth, "Buyer list completed RFQ")
     await _set_rfq_status(completed_id, "completed")
 
-    all_res = await client.get(f"{API}/buyer/rfqs/", headers=buyer_auth["headers"])
+    all_res = await client.get(
+        f"{API}/buyer/rfqs/", params={"page_size": 100}, headers=buyer_auth["headers"]
+    )
     assert all_res.status_code == 200, all_res.text
     all_ids = {item["id"] for item in all_res.json()["items"]}
     assert draft_id in all_ids
@@ -151,7 +153,7 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
 
     draft_res = await client.get(
         f"{API}/buyer/rfqs/",
-        params={"tab": "draft"},
+        params={"tab": "draft", "page_size": 100},
         headers=buyer_auth["headers"],
     )
     assert draft_res.status_code == 200, draft_res.text
@@ -162,12 +164,14 @@ async def test_buyer_rfqs_list_all_and_filter_by_status(client, buyer_auth):
 
     completed_res = await client.get(
         f"{API}/buyer/rfqs/",
-        params={"tab": "completed"},
+        params={"tab": "completed", "page_size": 100},
         headers=buyer_auth["headers"],
     )
     assert completed_res.status_code == 200, completed_res.text
     completed_items = completed_res.json()["items"]
-    assert all(item["status"] == "completed" for item in completed_items)
+    assert all(
+        item["status"] in {"completed", "cancelled", "expired"} for item in completed_items
+    )
     assert completed_id in {item["id"] for item in completed_items}
     assert draft_id not in {item["id"] for item in completed_items}
 

@@ -1,4 +1,4 @@
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.modules.contracts.services.common import (
     ensure_not_under_dispute,
     ensure_party,
@@ -129,31 +129,60 @@ class ContractUpdateMixin:
             )
             return {"message_ids": [item["id"] for item in updated_ids], "messages": payloads}
 
+    async def _ensure_submission_reviewable(
+        self,
+        conn,
+        row,
+        submission_id: int,
+        buyer_id: int,
+        *,
+        require_funded: bool = False,
+    ) -> None:
+        if row["buyer_actor_id"] != buyer_id:
+            raise ForbiddenError("Access denied")
+        await ensure_not_under_dispute(conn, row)
+        if row["status"] not in ("active", "delivered"):
+            raise ConflictError("Contract is not active")
+        sub = await conn.fetchrow(
+            "SELECT id, status::text AS status FROM work_submissions WHERE id = $1 AND contract_id = $2",
+            submission_id,
+            row["id"],
+        )
+        if not sub:
+            raise NotFoundError("Submission not found")
+        if sub["status"] != "pending":
+            raise ConflictError("Submission already reviewed")
+        if require_funded and await conn.fetchval(
+            """
+            SELECT 1 FROM payment_milestones
+            WHERE contract_id = $1 AND status::text = 'awaiting_payment'
+            LIMIT 1
+            """,
+            row["id"],
+        ):
+            raise ConflictError("Сначала оплатите все этапы")
+
     async def approve_submission(self, contract_id: int, submission_id: int, buyer_id: int):
         from app.modules.payments.services import PaymentService
 
         async with self.connection() as conn:
             row = await load_contract_row(conn, contract_id)
-            if row["buyer_actor_id"] != buyer_id:
-                raise ForbiddenError("Access denied")
-            await ensure_not_under_dispute(conn, row)
-            sub = await conn.fetchrow(
-                "SELECT id FROM work_submissions WHERE id = $1 AND contract_id = $2",
-                submission_id,
-                contract_id,
+            await self._ensure_submission_reviewable(
+                conn, row, submission_id, buyer_id, require_funded=True
             )
-            if not sub:
-                raise NotFoundError("Submission not found")
 
         # Release Alif Marketplace hold before marking milestones released locally.
         await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
 
         async with self.connection() as conn:
             async with conn.transaction():
+                await conn.fetchval(
+                    "SELECT id FROM contracts WHERE id = $1 FOR UPDATE", contract_id
+                )
                 row = await load_contract_row(conn, contract_id)
-                if row["buyer_actor_id"] != buyer_id:
-                    raise ForbiddenError("Access denied")
-                await ensure_not_under_dispute(conn, row)
+                await self._ensure_submission_reviewable(
+                    conn, row, submission_id, buyer_id, require_funded=True
+                )
                 await conn.execute(
                     """
                     UPDATE work_submissions
@@ -194,25 +223,20 @@ class ContractUpdateMixin:
 
     async def reject_submission(self, contract_id: int, submission_id: int, buyer_id: int):
         async with self.connection() as conn:
-            row = await load_contract_row(conn, contract_id)
-            if row["buyer_actor_id"] != buyer_id:
-                raise ForbiddenError("Access denied")
-            await ensure_not_under_dispute(conn, row)
-            sub = await conn.fetchrow(
-                "SELECT id FROM work_submissions WHERE id = $1 AND contract_id = $2",
-                submission_id,
-                contract_id,
-            )
-            if not sub:
-                raise NotFoundError("Submission not found")
-            await conn.execute(
-                "UPDATE work_submissions SET status = 'rejected'::submission_status WHERE id = $1",
-                submission_id,
-            )
-            await conn.execute(
-                "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
-                contract_id,
-            )
+            async with conn.transaction():
+                await conn.fetchval(
+                    "SELECT id FROM contracts WHERE id = $1 FOR UPDATE", contract_id
+                )
+                row = await load_contract_row(conn, contract_id)
+                await self._ensure_submission_reviewable(conn, row, submission_id, buyer_id)
+                await conn.execute(
+                    "UPDATE work_submissions SET status = 'rejected'::submission_status WHERE id = $1",
+                    submission_id,
+                )
+                await conn.execute(
+                    "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
+                    contract_id,
+                )
             result = await load_contract_schema(conn, contract_id)
         await NotificationService().notify_submission_rejected(row)
         return result

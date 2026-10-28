@@ -11,19 +11,30 @@ API = "/api/v1"
 
 
 async def _hide_active_catalog_items(client, admin_auth, supplier_auth) -> None:
-    list_res = await client.get(
-        f"{API}/supplier/catalog/items",
-        params={"status": "active"},
-        headers=supplier_auth["headers"],
-    )
-    if list_res.status_code != 200:
-        return
-    for item in list_res.json():
-        await client.post(
-            f"{API}/admin/catalog/{item['id']}/action",
-            json={"action": "hide", "reason": "Free catalog slots for reports tests"},
-            headers=admin_auth["headers"],
+    # Hiding removes items from the "active" filter, so keep re-reading page 1
+    # until nothing is left (bounded to avoid looping on failed hides).
+    for _ in range(20):
+        list_res = await client.get(
+            f"{API}/supplier/catalog/items",
+            params={"status": "active", "page": 1, "page_size": 100},
+            headers=supplier_auth["headers"],
         )
+        if list_res.status_code != 200:
+            return
+        items = list_res.json()["items"]
+        if not items:
+            return
+        hidden = 0
+        for item in items:
+            res = await client.post(
+                f"{API}/admin/catalog/{item['id']}/action",
+                json={"action": "hide", "reason": "Free catalog slots for reports tests"},
+                headers=admin_auth["headers"],
+            )
+            if res.status_code == 200:
+                hidden += 1
+        if not hidden:
+            return
 
 
 async def _create_pending_item(client, supplier_auth, admin_auth=None) -> int:

@@ -82,7 +82,7 @@ def catalog_view_sql(view: str) -> str | None:
         return f"ci.type::text = 'service' AND {not_draft}"
     if view == "draft":
         # Moderation queue (not supplier-only drafts).
-        return "ci.status::text IN ('pending_review', 'changes_requested')"
+        return "ci.status::text = 'pending_review'"
     if view == "reported":
         return f"""
             EXISTS (
@@ -197,23 +197,24 @@ def escrow_summary(milestones: list, currency: str) -> dict:
     }
 
 
-def apply_partial_refund(milestones: list, movable: set[str], buyer_amount: float) -> None:
+def escrow_pool(milestones: list, movable: set[str] | tuple[str, ...] = ESCROW_LOCKED_STATUSES) -> float:
+    return sum(float(m["amount"]) for m in milestones if m["status"] in movable)
+
+
+def apply_partial_refund(milestones: list, movable: set[str], buyer_amount: float) -> float:
     remaining_refund = buyer_amount
+    refunded = 0.0
     for milestone in milestones:
         if milestone["status"] not in movable:
             continue
-        if remaining_refund <= 1e-9:
-            milestone["status"] = "released"
-            continue
-        if milestone["amount"] <= remaining_refund + 1e-9:
+        amount = float(milestone["amount"])
+        if amount <= remaining_refund + 1e-9:
             milestone["status"] = "refunded"
-            remaining_refund -= milestone["amount"]
+            remaining_refund -= amount
+            refunded += amount
         else:
-            if remaining_refund >= milestone["amount"] / 2:
-                milestone["status"] = "refunded"
-            else:
-                milestone["status"] = "released"
-            remaining_refund = 0
+            milestone["status"] = "released"
+    return refunded
 
 
 def serialize_owner(row) -> dict:

@@ -5,6 +5,7 @@ from app.modules.rfqs.schemas.common import (
     RfqAttachmentSchema,
     RfqCreate,
     RfqResponse,
+    RfqUpdate,
     ServiceRfqCreate,
     ServiceRfqResponse,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "RfqAttachmentSchema",
     "RfqCreate",
     "RfqResponse",
+    "RfqUpdate",
     "ServiceRfqCreate",
     "ServiceRfqResponse",
 ]
