@@ -9,10 +9,23 @@ from fastapi import status
 
 from app.config import Settings, get_settings
 from app.core.exceptions import AppError
+from app.modules.payments.gateways.http_log import (
+    extract_order_id,
+    log_gateway_request,
+    log_gateway_response,
+)
 
 logger = logging.getLogger(__name__)
 
 TWO_PLACES = Decimal("0.01")
+
+_PATH_OPERATIONS = {
+    "/v2/": "create_payment",
+    "/v2": "create_payment",
+    "/checktxn": "checktxn",
+    "/confirm-delivery": "confirm_delivery",
+    "/cancel/marketplace": "cancel_marketplace",
+}
 
 
 class AlifGatewayError(AppError):
@@ -133,22 +146,59 @@ class AlifClient:
             return self._matches(data, token)
         return False
 
-    async def _post(self, path: str, body: dict[str, Any], headers: dict[str, str] | None = None):
+    async def _post(
+        self,
+        path: str,
+        body: dict[str, Any],
+        headers: dict[str, str] | None = None,
+        *,
+        operation: str | None = None,
+    ):
+        url = f"{self.base_url}{path}"
+        op = operation or _PATH_OPERATIONS.get(path, path.strip("/") or "request")
+        request_headers = {"Content-Type": "application/json", **(headers or {})}
+        log_id = await log_gateway_request(
+            gateway="alif",
+            direction="outbound",
+            operation=op,
+            method="POST",
+            url=url,
+            request_headers=request_headers,
+            request_body=body,
+            order_id=extract_order_id(body),
+        )
         try:
             async with httpx.AsyncClient(timeout=self.settings.alif_timeout_seconds) as client:
-                response = await client.post(
-                    f"{self.base_url}{path}",
-                    json=body,
-                    headers={"Content-Type": "application/json", **(headers or {})},
-                )
+                response = await client.post(url, json=body, headers=request_headers)
         except httpx.HTTPError as exc:
+            await log_gateway_response(
+                log_id,
+                error=f"{exc.__class__.__name__}: {exc}",
+            )
             logger.warning("Alif request %s failed: %s", path, exc.__class__.__name__)
             raise AlifGatewayError("Платёжный шлюз недоступен, попробуйте позже") from exc
+
+        raw_text = response.text
         try:
             data = response.json()
         except ValueError as exc:
+            # Persist raw bank body before raising / processing.
+            await log_gateway_response(
+                log_id,
+                response_status=response.status_code,
+                response_raw=raw_text,
+                error="non_json_response",
+            )
             logger.warning("Alif %s returned non-JSON response (HTTP %s)", path, response.status_code)
             raise AlifGatewayError("Некорректный ответ платёжного шлюза") from exc
+
+        await log_gateway_response(
+            log_id,
+            response_status=response.status_code,
+            response_body=data,
+            response_raw=raw_text,
+            order_id=extract_order_id(data) if isinstance(data, dict) else None,
+        )
         return response.status_code, data
 
     async def create_payment(
