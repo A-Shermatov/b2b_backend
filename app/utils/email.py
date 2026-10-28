@@ -62,5 +62,16 @@ async def send_email(to: str, subject: str, text: str, html: str | None = None) 
         logger.info("Email sent to=%s subject=%r", to, subject)
         return True
     except Exception:
-        logger.exception("Failed to send email to=%s subject=%r", to, subject)
+        logger.exception(
+            "Failed to send email to=%s subject=%r host=%s port=%s tls=%s ssl=%s "
+            "username=%r password_len=%s",
+            to,
+            subject,
+            settings.smtp_host,
+            settings.smtp_port,
+            settings.smtp_use_tls,
+            settings.smtp_use_ssl,
+            settings.smtp_username,
+            len(settings.smtp_password),
+        )
         return False
