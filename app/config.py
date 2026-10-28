@@ -85,6 +85,23 @@ class Settings(BaseSettings):
             return ",".join(v)
         return v
 
+    @field_validator(
+        "smtp_host", "smtp_username", "smtp_password", "smtp_from_email", "smtp_from_name",
+        mode="before",
+    )
+    @classmethod
+    def strip_smtp(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip().strip("\"'").strip()
+        return v
+
+    @model_validator(mode="after")
+    def normalize_gmail_app_password(self) -> "Settings":
+        # Google shows app passwords as "abcd efgh ijkl mnop"; SMTP expects them without spaces.
+        if self.smtp_host.lower() == "smtp.gmail.com":
+            self.smtp_password = self.smtp_password.replace(" ", "")
+        return self
+
     @model_validator(mode="after")
     def default_allow_mock_payments(self) -> "Settings":
         if self.allow_mock_payments is None:
