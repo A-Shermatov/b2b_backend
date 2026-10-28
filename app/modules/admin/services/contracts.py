@@ -613,6 +613,60 @@ class AdminContractsMixin:
             "view_counts": count_values,
         }
 
+    async def get_active_dispute_for_evidence(self, dispute_id: int) -> None:
+        async with self.connection() as conn:
+            status = await conn.fetchval(
+                "SELECT status::text FROM disputes WHERE id = $1", dispute_id
+            )
+        if status is None:
+            raise NotFoundError("Dispute not found")
+        if status == "resolved":
+            raise ConflictError("Dispute is already resolved")
+
+    async def upload_dispute_evidence(
+        self,
+        dispute_id: int,
+        current_user,
+        file_name: str,
+        file_url: str,
+        file_type: str,
+        note: str | None = None,
+    ) -> dict:
+        ensure_permission(current_user, "admin_disputes.update")
+        async with self.connection() as conn:
+            status = await conn.fetchval(
+                "SELECT status::text FROM disputes WHERE id = $1", dispute_id
+            )
+            if status is None:
+                raise NotFoundError("Dispute not found")
+            if status == "resolved":
+                raise ConflictError("Dispute is already resolved")
+            user_id = actor_id_of(current_user)
+            actor_id = await conn.fetchval(
+                "SELECT id FROM actors WHERE user_id = $1 ORDER BY id LIMIT 1",
+                user_id,
+            )
+            admin_note = note
+            if actor_id is None:
+                prefix = f"[admin:{user_id}]"
+                admin_note = f"{prefix} {note}".strip() if note else prefix
+            await conn.execute(
+                """
+                INSERT INTO dispute_evidence (
+                    dispute_id, uploaded_by_actor_id, file_name, file_url,
+                    file_type, note, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                """,
+                dispute_id,
+                actor_id,
+                file_name,
+                file_url,
+                file_type,
+                admin_note,
+            )
+        return await self.get_dispute_detail(dispute_id)
+
     async def get_dispute_detail(self, dispute_id: int) -> dict:
         async with self.connection() as conn:
             dispute = await conn.fetchrow(

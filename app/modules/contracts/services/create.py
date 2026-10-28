@@ -277,6 +277,55 @@ class ContractCreateMixin:
             )
             return await load_contract_schema(conn, contract_id)
 
+    async def _active_dispute_id(self, conn, contract_id: int, actor_id: int) -> int:
+        row = await load_contract_row(conn, contract_id)
+        await ensure_party(row, actor_id)
+        dispute_id = await conn.fetchval(
+            """
+            SELECT id FROM disputes
+            WHERE contract_id = $1 AND status::text = ANY($2::text[])
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            contract_id,
+            list(ACTIVE_DISPUTE_STATUSES),
+        )
+        if not dispute_id:
+            raise ConflictError("No active dispute for this contract")
+        return dispute_id
+
+    async def ensure_active_dispute(self, contract_id: int, actor_id: int) -> int:
+        async with self.connection() as conn:
+            return await self._active_dispute_id(conn, contract_id, actor_id)
+
+    async def add_dispute_evidence(
+        self,
+        contract_id: int,
+        actor_id: int,
+        file_name: str,
+        file_url: str,
+        file_type: str,
+        note: str | None = None,
+    ):
+        async with self.connection() as conn:
+            dispute_id = await self._active_dispute_id(conn, contract_id, actor_id)
+            await conn.execute(
+                """
+                INSERT INTO dispute_evidence (
+                    dispute_id, uploaded_by_actor_id, file_name, file_url,
+                    file_type, note, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                """,
+                dispute_id,
+                actor_id,
+                file_name,
+                file_url,
+                file_type,
+                note,
+            )
+            return await load_contract_schema(conn, contract_id)
+
     async def submit_work(
         self, contract_id: int, supplier_id: int, data: WorkSubmissionCreate
     ):

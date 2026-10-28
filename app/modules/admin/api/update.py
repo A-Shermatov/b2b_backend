@@ -1,11 +1,12 @@
 from typing import Annotated, Literal
 
-from fastapi import Depends
+from fastapi import Depends, File, Form, UploadFile
 
 from app.deps import CurrentUser, admin_perm, require_admin
 from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
     AdminChatDetail,
+    AdminDisputeDetail,
     AdminChatMessageCreate,
     AdminUserListItem,
     CatalogAdminActionRequest,
@@ -33,6 +34,7 @@ from app.modules.admin.schemas import (
     VerifyCompanyRequest,
 )
 from app.modules.companies.services import CompanyService
+from app.utils.storage import storage_service
 
 
 @router.patch("/users/{user_id}/status", response_model=AdminUserListItem)
@@ -191,6 +193,26 @@ async def admin_apply_dispute_action(
         current_user=current_user,
         reason=data.reason,
         partial_buyer_amount=data.partial_buyer_amount,
+    )
+
+
+@router.post("/disputes/{dispute_id}/evidence", response_model=AdminDisputeDetail)
+async def admin_upload_dispute_evidence(
+    dispute_id: int,
+    current_user: Annotated[CurrentUser, Depends(admin_perm("admin_disputes.update"))],
+    file: UploadFile = File(...),
+    note: str | None = Form(None),
+):
+    service = AdminService()
+    await service.get_active_dispute_for_evidence(dispute_id)
+    key, _ = await storage_service.upload(file, f"disputes/{dispute_id}")
+    return await service.upload_dispute_evidence(
+        dispute_id,
+        current_user,
+        file.filename or "file",
+        key,
+        file.content_type or "application/octet-stream",
+        (note or "").strip() or None,
     )
 
 

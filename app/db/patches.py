@@ -175,7 +175,7 @@ COMPAT_PATCHES = [
     CREATE TABLE IF NOT EXISTS dispute_evidence (
         id SERIAL PRIMARY KEY,
         dispute_id INTEGER NOT NULL REFERENCES disputes(id),
-        uploaded_by_actor_id INTEGER NOT NULL REFERENCES actors(id),
+        uploaded_by_actor_id INTEGER REFERENCES actors(id),
         file_name VARCHAR(255) NOT NULL,
         file_url VARCHAR(500) NOT NULL,
         file_type VARCHAR(100) NOT NULL,
@@ -633,4 +633,5 @@ COMPAT_PATCHES = [
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_http_logs_order_id ON payment_gateway_http_logs (order_id);",
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_http_logs_created_at ON payment_gateway_http_logs (created_at DESC);",
     "CREATE INDEX IF NOT EXISTS ix_payment_gateway_http_logs_operation ON payment_gateway_http_logs (gateway, operation, created_at DESC);",
+    "ALTER TABLE dispute_evidence ALTER COLUMN uploaded_by_actor_id DROP NOT NULL;",
 ]

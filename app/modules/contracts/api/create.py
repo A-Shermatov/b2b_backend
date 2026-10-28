@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, File, UploadFile
+from fastapi import Depends, File, Form, UploadFile
 
 from app.deps import buyer_perm, supplier_perm
 from app.modules.contracts.api.common import (
@@ -70,6 +70,45 @@ async def supplier_upload_file(
         key,
         file.content_type or "application/octet-stream",
     )
+
+
+async def _upload_dispute_evidence(
+    contract_id: int,
+    actor_id: int,
+    file: UploadFile,
+    note: str | None,
+):
+    service = ContractService()
+    dispute_id = await service.ensure_active_dispute(contract_id, actor_id)
+    key, _ = await storage_service.upload(file, f"disputes/{dispute_id}")
+    return await service.add_dispute_evidence(
+        contract_id,
+        actor_id,
+        file.filename or "file",
+        key,
+        file.content_type or "application/octet-stream",
+        (note or "").strip() or None,
+    )
+
+
+@buyer_router.post("/{contract_id}/dispute/evidence")
+async def buyer_upload_dispute_evidence(
+    contract_id: int,
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
+    file: UploadFile = File(...),
+    note: str | None = Form(None),
+):
+    return await _upload_dispute_evidence(contract_id, ctx.actor.id, file, note)
+
+
+@supplier_router.post("/{contract_id}/dispute/evidence")
+async def supplier_upload_dispute_evidence(
+    contract_id: int,
+    ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
+    file: UploadFile = File(...),
+    note: str | None = Form(None),
+):
+    return await _upload_dispute_evidence(contract_id, ctx.actor.id, file, note)
 
 
 @supplier_router.post("/{contract_id}/submissions")
