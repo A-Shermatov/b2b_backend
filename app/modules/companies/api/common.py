@@ -7,6 +7,8 @@ from app.modules.companies.schemas import (
     CertificateUpdateRequest,
     CompanyCertificateSchema,
     CompanyCertificateUploadResponse,
+    CompanyChangeRequestCreate,
+    CompanyChangeRequestSchema,
     CompanyUpdateRequest,
     CompanyWizardInput,
     CompanyWithRelations,

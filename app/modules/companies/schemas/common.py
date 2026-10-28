@@ -211,6 +211,33 @@ class CertificateUpdateRequest(BaseModel):
     file_url: str | None = None
 
 
+class CompanyChangeRequestCreate(BaseModel):
+    title: str | None = None
+    legal_name: str | None = None
+    tax_number: str | None = None
+    address: str | None = None
+    city: str | None = None
+    country: str | None = None
+    reason: str | None = None
+
+
+class CompanyChangeRequestSchema(BaseModel):
+    id: int
+    company_id: int
+    company_title: str | None = None
+    requested_by_user_id: int
+    status: str
+    proposed: dict
+    current_snapshot: dict
+    reason_from_user: str | None = None
+    admin_reason: str | None = None
+    reviewed_by_user_id: int | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    field_labels: dict[str, str] = {}
+
+
 class PublicSupplier(BaseModel):
     actor_id: int
     kind: str

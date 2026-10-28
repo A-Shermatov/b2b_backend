@@ -664,12 +664,17 @@ class AdminContractsMixin:
             supplier_user_ids = set(
                 await resolve_actor_user_ids(conn, dispute["supplier_actor_id"])
             )
+            conversation_id = await conn.fetchval(
+                "SELECT id FROM conversations WHERE contract_id = $1",
+                extra["contract_id"],
+            )
             messages = await conn.fetch(
                 """
                 SELECT m.id, m.sender_id, m.text, m.created_at
                 FROM conversations conv
                 JOIN messages m ON m.conversation_id = conv.id
                 WHERE conv.contract_id = $1
+                  AND m.deleted_at IS NULL
                 ORDER BY m.created_at DESC
                 """,
                 extra["contract_id"],
@@ -727,6 +732,8 @@ class AdminContractsMixin:
                 "messages": [dict(row) for row in messages],
                 "escrow": escrow,
                 "timeline": history,
+                "conversation_id": conversation_id,
+                "chat_id": f"contract:{conversation_id}" if conversation_id else None,
             }
         )
         return payload

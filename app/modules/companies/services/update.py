@@ -20,6 +20,34 @@ class CompanyUpdateMixin:
     async def update_company(
         self, company_id: int, user_id: int, data: CompanyUpdateRequest
     ) -> CompanyWithRelations:
+        from app.modules.companies.services.changes import MODERATED_FIELDS
+
+        skip_moderated = False
+        async with self.connection() as conn:
+            company_row = await conn.fetchrow(
+                """
+                SELECT verification_status::text AS verification_status,
+                       title, legal_name, tax_number, address, city, country
+                FROM companies WHERE id = $1
+                """,
+                company_id,
+            )
+        if not company_row:
+            raise NotFoundError("Company not found")
+
+        if company_row["verification_status"] == "verified":
+            skip_moderated = True
+            changed = {}
+            for field in MODERATED_FIELDS:
+                val = getattr(data, field, None)
+                if val is None:
+                    continue
+                current = str(company_row[field] or "").strip()
+                if str(val).strip() != current:
+                    changed[field] = val
+            if changed:
+                await self.submit_change_request(company_id, user_id, changed)
+
         async with self.connection() as conn:
             async with conn.transaction():
                 await load_company_schema(conn, company_id)
@@ -38,6 +66,8 @@ class CompanyUpdateMixin:
                 sets = []
                 params: list = []
                 for field in fields:
+                    if skip_moderated and field in MODERATED_FIELDS:
+                        continue
                     val = getattr(data, field)
                     if val is not None:
                         params.append(val)

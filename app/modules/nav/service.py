@@ -282,7 +282,7 @@ class NavService:
                 await conn.fetchval(
                     """
                     SELECT COUNT(*) FROM catalog_items
-                    WHERE status::text = 'pending_review'
+                    WHERE status::text IN ('pending_review', 'changes_requested')
                     """
                 )
                 or 0

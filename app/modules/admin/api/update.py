@@ -12,6 +12,8 @@ from app.modules.admin.schemas import (
     CatalogAdminActionResponse,
     CompanyAdminActionRequest,
     CompanyAdminActionResponse,
+    CompanyChangeRequestAction,
+    CompanyChangeRequestAdminSchema,
     CompanyVipResponse,
     CompanyVipUpdate,
     ContractAdminActionRequest,
@@ -30,6 +32,7 @@ from app.modules.admin.schemas import (
     UserStatusUpdate,
     VerifyCompanyRequest,
 )
+from app.modules.companies.services import CompanyService
 
 
 @router.patch("/users/{user_id}/status", response_model=AdminUserListItem)
@@ -82,6 +85,24 @@ async def admin_apply_company_action(
 ):
     return await AdminService().apply_company_action(
         company_id=company_id,
+        action=data.action,
+        current_user=current_user,
+        reason=data.reason,
+    )
+
+
+@router.post(
+    "/companies/change-requests/{request_id}/action",
+    response_model=CompanyChangeRequestAdminSchema,
+    dependencies=[Depends(admin_perm("admin_companies.update"))],
+)
+async def admin_apply_change_request_action(
+    request_id: int,
+    data: CompanyChangeRequestAction,
+    current_user: Annotated[CurrentUser, Depends(require_admin)],
+):
+    return await CompanyService().admin_apply_change_request(
+        request_id=request_id,
         action=data.action,
         current_user=current_user,
         reason=data.reason,
@@ -209,7 +230,7 @@ async def admin_apply_report_action(
 @router.post(
     "/chats/{chat_id}/messages",
     response_model=AdminChatDetail,
-    dependencies=[Depends(admin_perm("admin_contracts.update", "admin_proposals.update", "admin_contracts.view"))],
+    dependencies=[Depends(admin_perm("admin_contracts.update", "admin_proposals.update"))],
 )
 async def admin_post_chat_message(
     chat_id: str,
@@ -217,3 +238,16 @@ async def admin_post_chat_message(
     current_user: Annotated[CurrentUser, Depends(require_admin)],
 ):
     return await AdminService().post_chat_message(chat_id, current_user.id, data.text)
+
+
+@router.delete(
+    "/chats/{chat_id}/messages/{message_id}",
+    response_model=AdminChatDetail,
+    dependencies=[Depends(admin_perm("admin_contracts.update", "admin_proposals.update"))],
+)
+async def admin_delete_chat_message(
+    chat_id: str,
+    message_id: int,
+    current_user: Annotated[CurrentUser, Depends(require_admin)],
+):
+    return await AdminService().delete_chat_message(chat_id, message_id, current_user.id)

@@ -3,6 +3,23 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class ReviewPhotoInput(BaseModel):
+    file_name: str
+    file_url: str
+
+
+class ReviewMediaSchema(BaseModel):
+    id: int | None = None
+    file_name: str
+    file_url: str
+    sort_order: int = 0
+
+
+class ReviewMediaUploadResponse(BaseModel):
+    file_name: str
+    file_url: str
+
+
 class ReviewCreate(BaseModel):
     contract_id: int
     target_actor_id: int
@@ -12,6 +29,7 @@ class ReviewCreate(BaseModel):
     quality_rating: int | None = Field(default=None, ge=1, le=5)
     tags: list[str] = Field(default_factory=list, max_length=12)
     comment: str | None = None
+    photos: list[ReviewPhotoInput] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode="after")
     def resolve_rating(self):
@@ -41,3 +59,6 @@ class ReviewResponse(BaseModel):
     tags: list[str] = []
     comment: str | None
     created_at: datetime
+    photos: list[ReviewMediaSchema] = []
+    helpful_count: int = 0
+    viewer_voted: bool = False

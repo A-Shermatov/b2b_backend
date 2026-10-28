@@ -1,12 +1,15 @@
 import asyncpg
 
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.modules.reviews.schemas import ReviewCreate, ReviewResponse
-from app.modules.reviews.services.common import REVIEW_COLUMNS, shape_review_row
+from app.modules.reviews.services.common import REVIEW_COLUMNS, shape_review_rows
 
 
 class ReviewCreateMixin:
     async def create(self, reviewer_actor_id: int, data: ReviewCreate) -> ReviewResponse:
+        if len(data.photos) > 5:
+            raise ValidationError("Можно прикрепить не более 5 фото")
+
         async with self.conn.transaction():
             contract = await self.conn.fetchrow(
                 """
@@ -67,8 +70,58 @@ class ReviewCreateMixin:
             except asyncpg.UniqueViolationError as exc:
                 raise ConflictError("Review already exists") from exc
 
+            for index, photo in enumerate(data.photos):
+                await self.conn.execute(
+                    """
+                    INSERT INTO review_media (review_id, file_name, file_url, sort_order)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    row["id"],
+                    photo.file_name[:255],
+                    photo.file_url[:500],
+                    index,
+                )
+
             await self._update_actor_rating(data.target_actor_id)
-            return shape_review_row(row)
+            shaped = await shape_review_rows(self.conn, [row], reviewer_actor_id)
+            return shaped[0]
+
+    async def vote_helpful(self, review_id: int, voter_actor_id: int) -> ReviewResponse:
+        async with self.conn.transaction():
+            review = await self.conn.fetchrow(
+                f"SELECT {REVIEW_COLUMNS} FROM reviews WHERE id = $1 FOR UPDATE",
+                review_id,
+            )
+            if not review:
+                raise NotFoundError("Review not found")
+            if review["reviewer_actor_id"] == voter_actor_id:
+                raise ForbiddenError("Нельзя голосовать за свой отзыв")
+
+            inserted = await self.conn.fetchval(
+                """
+                INSERT INTO review_helpful_votes (review_id, voter_actor_id)
+                VALUES ($1, $2)
+                ON CONFLICT DO NOTHING
+                RETURNING review_id
+                """,
+                review_id,
+                voter_actor_id,
+            )
+            if inserted:
+                await self.conn.execute(
+                    """
+                    UPDATE reviews
+                    SET helpful_count = COALESCE(helpful_count, 0) + 1
+                    WHERE id = $1
+                    """,
+                    review_id,
+                )
+            row = await self.conn.fetchrow(
+                f"SELECT {REVIEW_COLUMNS} FROM reviews WHERE id = $1",
+                review_id,
+            )
+            shaped = await shape_review_rows(self.conn, [row], voter_actor_id)
+            return shaped[0]
 
     async def _update_actor_rating(self, target_actor_id: int) -> None:
         avg = await self.conn.fetchval(

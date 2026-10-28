@@ -297,3 +297,4 @@ class PlatformPaymentGateway(str, enum.Enum):
     mock = "mock"
     stripe = "stripe"
     yookassa = "yookassa"
+    alif = "alif"

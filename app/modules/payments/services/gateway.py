@@ -388,6 +388,20 @@ class PaymentGatewayMixin:
         event = payload.get("event") or "payment"
         if event == "payment":
             order_id = str(payload.get("orderId", ""))
+            if order_id.startswith("SUB"):
+                from app.modules.subscription.services import SubscriptionService
+
+                try:
+                    return await SubscriptionService().apply_subscription_gateway_status(
+                        order_id,
+                        str(payload.get("status", "")),
+                        payload.get("transactionId"),
+                        payload,
+                        amount=payload.get("amount"),
+                    )
+                except NotFoundError:
+                    logger.warning("Alif subscription callback for unknown order=%s", order_id)
+                    return {"order_id": order_id, "ignored": True}
             try:
                 return await self.apply_gateway_status(
                     order_id,

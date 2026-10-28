@@ -384,6 +384,7 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
             FROM messages m
             LEFT JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = $1
+              AND m.deleted_at IS NULL
             ORDER BY m.created_at ASC, m.id ASC
             """,
             conversation_row["id"],

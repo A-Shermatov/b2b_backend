@@ -76,7 +76,7 @@ class AdminDashboardMixin:
                     await conn.fetchval(
                         """
                         SELECT COUNT(*) FROM catalog_items
-                        WHERE status::text = 'pending_review'
+                        WHERE status::text IN ('pending_review', 'changes_requested')
                         """
                     )
                 ),
@@ -99,7 +99,15 @@ class AdminDashboardMixin:
                     )
                 ),
                 "flagged_chats": 0,
-                "pending_company_changes": 0,
+                "pending_company_changes": int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM company_change_requests
+                        WHERE status = 'pending'
+                        """
+                    )
+                    or 0
+                ),
                 "users_without_2fa": int(
                     await conn.fetchval(
                         """

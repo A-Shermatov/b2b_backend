@@ -10,7 +10,7 @@ from app.modules.finance.schemas import (
 SUBSCRIPTION_PLAN_AMOUNTS: dict[str, float] = {
     "start": 1990.0,
     "pro": 4990.0,
-    "business": 14990.0,
+    "business": 9990.0,
 }
 
 

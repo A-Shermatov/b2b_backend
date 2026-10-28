@@ -206,6 +206,28 @@ class CompanyAdminActionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
 
 
+class CompanyChangeRequestAction(BaseModel):
+    action: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class CompanyChangeRequestAdminSchema(BaseModel):
+    id: int
+    company_id: int
+    company_title: str | None = None
+    requested_by_user_id: int
+    status: str
+    proposed: dict
+    current_snapshot: dict
+    reason_from_user: str | None = None
+    admin_reason: str | None = None
+    reviewed_by_user_id: int | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    field_labels: dict[str, str] = {}
+
+
 class CompanyAdminActionResponse(BaseModel):
     id: int
     action: str
@@ -275,6 +297,8 @@ class AdminDisputeDetail(AdminDisputeListItem):
     messages: list[dict[str, Any]]
     escrow: dict[str, Any]
     timeline: list[dict[str, Any]]
+    chat_id: str | None = None
+    conversation_id: int | None = None
 
 
 class DisputeAdminActionRequest(BaseModel):
@@ -774,6 +798,7 @@ class AdminChatMessage(BaseModel):
     text: str
     created_at: datetime
     flagged: bool = False
+    deleted: bool = False
 
 
 class AdminChatDetail(BaseModel):

@@ -27,7 +27,9 @@ from app.modules.admin.schemas import (
     AdminRfqListResponse,
     AdminUserDetail,
     AdminUsersResponse,
+    CompanyChangeRequestAdminSchema,
 )
+from app.modules.companies.services import CompanyService
 
 
 @router.get(
@@ -94,6 +96,30 @@ async def admin_list_companies(
 )
 async def admin_pending_verification(pagination: PaginationDep):
     return await AdminService().list_pending_verification(pagination.page, pagination.page_size)
+
+
+@router.get(
+    "/companies/change-requests",
+    dependencies=[Depends(admin_perm("admin_companies.view"))],
+)
+async def admin_list_change_requests(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    status: Literal["pending", "approved", "rejected"] = "pending",
+    query: Annotated[str | None, Query(max_length=200)] = None,
+):
+    return await CompanyService().admin_list_change_requests(
+        status=status, page=page, page_size=page_size, query=query
+    )
+
+
+@router.get(
+    "/companies/change-requests/{request_id}",
+    response_model=CompanyChangeRequestAdminSchema,
+    dependencies=[Depends(admin_perm("admin_companies.view"))],
+)
+async def admin_get_change_request(request_id: int):
+    return await CompanyService().admin_get_change_request(request_id)
 
 
 @router.get(

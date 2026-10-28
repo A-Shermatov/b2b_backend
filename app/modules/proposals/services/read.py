@@ -144,6 +144,7 @@ class ProposalReadMixin:
                 FROM proposal_messages m
                 LEFT JOIN users u ON u.id = m.sender_id
                 WHERE m.proposal_id = $1
+                  AND m.deleted_at IS NULL
                 ORDER BY m.created_at ASC
                 """,
                 proposal_id,
@@ -178,12 +179,12 @@ class ProposalReadMixin:
                 JOIN LATERAL (
                     SELECT COUNT(*)::int AS message_count, MAX(m.created_at) AS last_at
                     FROM proposal_messages m
-                    WHERE m.proposal_id = p.id
+                    WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                 ) stats ON stats.message_count > 0
                 JOIN LATERAL (
                     SELECT m.id, m.text, m.sender_id, m.created_at
                     FROM proposal_messages m
-                    WHERE m.proposal_id = p.id
+                    WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                     ORDER BY m.created_at DESC, m.id DESC
                     LIMIT 1
                 ) lm ON TRUE
@@ -218,12 +219,12 @@ class ProposalReadMixin:
                 JOIN LATERAL (
                     SELECT COUNT(*)::int AS message_count, MAX(m.created_at) AS last_at
                     FROM proposal_messages m
-                    WHERE m.proposal_id = p.id
+                    WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                 ) stats ON stats.message_count > 0
                 JOIN LATERAL (
                     SELECT m.id, m.text, m.sender_id, m.created_at
                     FROM proposal_messages m
-                    WHERE m.proposal_id = p.id
+                    WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                     ORDER BY m.created_at DESC, m.id DESC
                     LIMIT 1
                 ) lm ON TRUE
@@ -256,7 +257,8 @@ class ProposalReadMixin:
                             'Исполнитель'
                         ) AS counterpart_name,
                         (
-                            SELECT COUNT(*)::int FROM proposal_messages m WHERE m.proposal_id = p.id
+                            SELECT COUNT(*)::int FROM proposal_messages m
+                            WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                         ) AS message_count,
                         lm.id AS last_message_id,
                         lm.text AS last_message_text,
@@ -271,7 +273,7 @@ class ProposalReadMixin:
                     LEFT JOIN LATERAL (
                         SELECT m.id, m.text, m.sender_id, m.created_at
                         FROM proposal_messages m
-                        WHERE m.proposal_id = p.id
+                        WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                         ORDER BY m.created_at DESC, m.id DESC
                         LIMIT 1
                     ) lm ON TRUE
@@ -295,7 +297,8 @@ class ProposalReadMixin:
                             'Заказчик'
                         ) AS counterpart_name,
                         (
-                            SELECT COUNT(*)::int FROM proposal_messages m WHERE m.proposal_id = p.id
+                            SELECT COUNT(*)::int FROM proposal_messages m
+                            WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                         ) AS message_count,
                         lm.id AS last_message_id,
                         lm.text AS last_message_text,
@@ -310,7 +313,7 @@ class ProposalReadMixin:
                     LEFT JOIN LATERAL (
                         SELECT m.id, m.text, m.sender_id, m.created_at
                         FROM proposal_messages m
-                        WHERE m.proposal_id = p.id
+                        WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                         ORDER BY m.created_at DESC, m.id DESC
                         LIMIT 1
                     ) lm ON TRUE

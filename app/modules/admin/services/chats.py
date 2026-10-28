@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.pagination import build_page
 
 # Same spirit as BrendMarket-v5 RISK — off-platform payment / contacts.
@@ -27,7 +27,7 @@ class AdminChatsMixin:
                 SELECT COUNT(DISTINCT conv.id)
                 FROM conversations conv
                 JOIN messages m ON m.conversation_id = conv.id
-                WHERE m.text ~* $1
+                WHERE m.deleted_at IS NULL AND m.text ~* $1
                 """,
                 CHAT_RISK_RE.pattern,
             )
@@ -36,7 +36,7 @@ class AdminChatsMixin:
                 SELECT COUNT(DISTINCT p.id)
                 FROM proposals p
                 JOIN proposal_messages m ON m.proposal_id = p.id
-                WHERE m.text ~* $1
+                WHERE m.deleted_at IS NULL AND m.text ~* $1
                 """,
                 CHAT_RISK_RE.pattern,
             )
@@ -67,7 +67,9 @@ class AdminChatsMixin:
                     lm.created_at AS last_at,
                     EXISTS (
                         SELECT 1 FROM messages mx
-                        WHERE mx.conversation_id = conv.id AND mx.text ~* $1
+                        WHERE mx.conversation_id = conv.id
+                          AND mx.deleted_at IS NULL
+                          AND mx.text ~* $1
                     ) AS flagged,
                     EXISTS (
                         SELECT 1 FROM disputes d
@@ -83,7 +85,7 @@ class AdminChatsMixin:
                 JOIN LATERAL (
                     SELECT m.text, m.created_at
                     FROM messages m
-                    WHERE m.conversation_id = conv.id
+                    WHERE m.conversation_id = conv.id AND m.deleted_at IS NULL
                     ORDER BY m.created_at DESC
                     LIMIT 1
                 ) lm ON TRUE
@@ -106,7 +108,9 @@ class AdminChatsMixin:
                     lm.created_at AS last_at,
                     EXISTS (
                         SELECT 1 FROM proposal_messages mx
-                        WHERE mx.proposal_id = p.id AND mx.text ~* $1
+                        WHERE mx.proposal_id = p.id
+                          AND mx.deleted_at IS NULL
+                          AND mx.text ~* $1
                     ) AS flagged,
                     FALSE AS has_dispute
                 FROM proposals p
@@ -118,7 +122,7 @@ class AdminChatsMixin:
                 JOIN LATERAL (
                     SELECT m.text, m.created_at
                     FROM proposal_messages m
-                    WHERE m.proposal_id = p.id
+                    WHERE m.proposal_id = p.id AND m.deleted_at IS NULL
                     ORDER BY m.created_at DESC
                     LIMIT 1
                 ) lm ON TRUE
@@ -208,6 +212,7 @@ class AdminChatsMixin:
                     SELECT
                         m.id, m.sender_id, m.text, m.created_at,
                         m.status::text AS status,
+                        m.deleted_at,
                         u.first_name, u.last_name, u.email,
                         CASE
                             WHEN EXISTS (
@@ -261,6 +266,7 @@ class AdminChatsMixin:
                     SELECT
                         m.id, m.sender_id, m.text, m.created_at,
                         'sent'::text AS status,
+                        m.deleted_at,
                         u.first_name, u.last_name, u.email,
                         CASE
                             WHEN m.sender_id IN (
@@ -288,23 +294,25 @@ class AdminChatsMixin:
         msg_items = []
         flagged = False
         for m in messages:
-            text = m["text"] or ""
-            is_flag = message_is_flagged(text)
+            deleted = m["deleted_at"] is not None
+            text = "" if deleted else (m["text"] or "")
+            is_flag = (not deleted) and message_is_flagged(text)
             if is_flag:
                 flagged = True
             name_parts = [m["first_name"] or "", m["last_name"] or ""]
             sender_name = " ".join(p for p in name_parts if p).strip() or m["email"] or "Участник"
             if m["side"] == "admin":
-                sender_name = "Администратор"
+                sender_name = "Модератор"
             msg_items.append(
                 {
                     "id": m["id"],
                     "sender_id": m["sender_id"],
                     "sender_name": sender_name,
                     "side": m["side"],
-                    "text": text,
+                    "text": "[сообщение удалено]" if deleted else text,
                     "created_at": m["created_at"],
                     "flagged": is_flag,
+                    "deleted": deleted,
                 }
             )
 
@@ -365,6 +373,61 @@ class AdminChatsMixin:
                     thread_id,
                     admin_user_id,
                     body,
+                )
+        return await self.get_chat(chat_id)
+
+    async def delete_chat_message(
+        self, chat_id: str, message_id: int, admin_user_id: int
+    ) -> dict:
+        kind, thread_id = self._parse_chat_id(chat_id)
+        async with self.connection() as conn:
+            if kind == "contract":
+                row = await conn.fetchrow(
+                    """
+                    SELECT m.id, m.deleted_at
+                    FROM messages m
+                    WHERE m.id = $1 AND m.conversation_id = $2
+                    """,
+                    message_id,
+                    thread_id,
+                )
+                if not row:
+                    raise NotFoundError("Message not found")
+                if row["deleted_at"] is not None:
+                    raise ConflictError("Сообщение уже удалено")
+                await conn.execute(
+                    """
+                    UPDATE messages
+                    SET deleted_at = NOW(), deleted_by_user_id = $2,
+                        text = '[сообщение удалено]'
+                    WHERE id = $1
+                    """,
+                    message_id,
+                    admin_user_id,
+                )
+            else:
+                row = await conn.fetchrow(
+                    """
+                    SELECT m.id, m.deleted_at
+                    FROM proposal_messages m
+                    WHERE m.id = $1 AND m.proposal_id = $2
+                    """,
+                    message_id,
+                    thread_id,
+                )
+                if not row:
+                    raise NotFoundError("Message not found")
+                if row["deleted_at"] is not None:
+                    raise ConflictError("Сообщение уже удалено")
+                await conn.execute(
+                    """
+                    UPDATE proposal_messages
+                    SET deleted_at = NOW(), deleted_by_user_id = $2,
+                        text = '[сообщение удалено]'
+                    WHERE id = $1
+                    """,
+                    message_id,
+                    admin_user_id,
                 )
         return await self.get_chat(chat_id)
 
