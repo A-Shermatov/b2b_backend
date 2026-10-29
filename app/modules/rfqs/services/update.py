@@ -12,6 +12,7 @@ from app.modules.rfqs.services.common import (
     notify_invited_suppliers,
     validate_supplier_actor_ids,
 )
+from app.utils.audit import log_event
 
 
 class RfqUpdateMixin:
@@ -42,9 +43,14 @@ class RfqUpdateMixin:
                     raise ConflictError("Visibility can only be changed for draft RFQs")
                 sets = []
                 params: list = []
+                before: dict = {}
+                after: dict = {}
                 for key, val in data.model_dump(exclude_none=True).items():
                     if key not in allowed:
                         continue
+                    if key in row.keys() and row[key] != val:
+                        before[key] = row[key]
+                        after[key] = val
                     params.append(val)
                     if key == "budget_type":
                         sets.append(f"budget_type = ${len(params)}::budget_type")
@@ -67,6 +73,14 @@ class RfqUpdateMixin:
                         "UPDATE rfqs SET updated_at = NOW() WHERE id = $1",
                         rfq_id,
                     )
+                await log_event(
+                    conn,
+                    "rfq.update",
+                    "rfq",
+                    rfq_id,
+                    actor_id=actor_id,
+                    details={"before": before, "after": after},
+                )
             return await load_rfq_response(conn, rfq_id)
 
     async def publish(self, rfq_id: str, actor_id: int):
@@ -86,6 +100,14 @@ class RfqUpdateMixin:
                 WHERE id = $1
                 """,
                 rfq_id,
+            )
+            await log_event(
+                conn,
+                "rfq.publish",
+                "rfq",
+                rfq_id,
+                actor_id=actor_id,
+                details={"before": {"status": "draft"}, "after": {"status": "receiving_proposals"}},
             )
             response = await load_rfq_response(conn, rfq_id)
         if invited:
@@ -109,7 +131,7 @@ class RfqUpdateMixin:
                     """,
                     rfq_id,
                 )
-                await conn.execute(
+                rejected = await conn.execute(
                     """
                     UPDATE proposals
                     SET status = 'rejected'::proposal_status
@@ -117,6 +139,18 @@ class RfqUpdateMixin:
                       AND status::text IN ('submitted', 'viewed', 'shortlisted', 'pending_supplier')
                     """,
                     rfq_id,
+                )
+                await log_event(
+                    conn,
+                    "rfq.close",
+                    "rfq",
+                    rfq_id,
+                    actor_id=actor_id,
+                    details={
+                        "before": {"status": row["status"]},
+                        "after": {"status": "cancelled"},
+                        "rejected_proposals": int(rejected.split()[-1]),
+                    },
                 )
             return await load_rfq_response(conn, rfq_id)
 
@@ -154,6 +188,14 @@ class RfqUpdateMixin:
                 if not valid_ids:
                     raise ValidationError("Исполнитель для персональной заявки не найден")
                 newly_invited = await insert_invites(conn, rfq_id, valid_ids)
+                await log_event(
+                    conn,
+                    "rfq.invite",
+                    "rfq",
+                    rfq_id,
+                    actor_id=actor_id,
+                    details={"supplier_actor_ids": list(newly_invited or [])},
+                )
                 await conn.execute(
                     """
                     UPDATE rfqs

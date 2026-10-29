@@ -14,7 +14,7 @@ from app.core.middleware._common import (
     resource_id_from_path,
 )
 from app.database import pool
-from app.utils.audit import AuditLogger
+from app.utils.audit import AuditLogger, request_ip, request_user_agent, request_user_id
 from app.utils.request_meta import client_ip
 
 logger = logging.getLogger(__name__)
@@ -64,17 +64,26 @@ class HttpAuditMiddleware(BaseHTTPMiddleware):
         if not _skip_path(path) and method in MUTATING:
             body = await _json_body(request)
 
-        response = await call_next(request)
-        if _skip_path(path) or not _should_write(method, int(response.status_code)):
-            return response
-        if not pool.ready:
-            return response
-
         payload = decode_access_payload(request.headers.get("authorization") or "")
         try:
             user_id = int(payload["sub"]) if payload and payload.get("sub") is not None else None
         except (TypeError, ValueError):
             user_id = None
+
+        user_agent = request.headers.get("user-agent")
+        ip_token = request_ip.set(client_ip(request))
+        agent_token = request_user_agent.set(user_agent)
+        user_token = request_user_id.set(user_id)
+        try:
+            response = await call_next(request)
+        finally:
+            request_ip.reset(ip_token)
+            request_user_agent.reset(agent_token)
+            request_user_id.reset(user_token)
+        if _skip_path(path) or not _should_write(method, int(response.status_code)):
+            return response
+        if not pool.ready:
+            return response
 
         actor_id = parse_optional_int(request.headers.get("x-actor-id"))
         company_id = parse_optional_int(request.headers.get("x-company-id"))
@@ -99,6 +108,7 @@ class HttpAuditMiddleware(BaseHTTPMiddleware):
                     resource_id=resource_id_from_path(path),
                     details=details,
                     ip_address=client_ip(request),
+                    user_agent=user_agent,
                 )
         except Exception:
             logger.exception("HTTP audit write failed")

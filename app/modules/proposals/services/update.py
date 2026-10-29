@@ -16,6 +16,23 @@ from app.modules.proposals.services.common import (
 from app.modules.rfqs.services.common import rfq_deadline_passed
 from app.modules.settings.service import get_platform_settings
 from app.enums import PaymentType
+from app.utils.audit import log_event
+
+
+async def _log_transition(conn, action, row, actor_id, after_status, **extra):
+    await log_event(
+        conn,
+        action,
+        "proposal",
+        row["id"],
+        actor_id=actor_id,
+        details={
+            "rfq_id": row["rfq_id"],
+            "before": {"status": row["status"]},
+            "after": {"status": after_status},
+            **extra,
+        },
+    )
 
 
 class ProposalUpdateMixin:
@@ -54,6 +71,24 @@ class ProposalUpdateMixin:
                     f"UPDATE proposals SET {', '.join(sets)} WHERE id = ${len(params)}",
                     *params,
                 )
+            changes = {
+                key: value
+                for key, value in data.model_dump(exclude_none=True).items()
+                if key in ("price", "currency", "delivery_time", "message")
+            }
+            await log_event(
+                conn,
+                "proposal.update",
+                "proposal",
+                proposal_id,
+                actor_id=supplier_id,
+                details={
+                    "rfq_id": row["rfq_id"],
+                    "before": {key: row[key] for key in changes if key != "message"},
+                    "after": {key: value for key, value in changes.items() if key != "message"},
+                    "message_changed": "message" in changes,
+                },
+            )
             return proposal_to_response(await load_proposal_row(conn, proposal_id))
 
     async def withdraw(self, proposal_id: int, supplier_id: int):
@@ -69,6 +104,7 @@ class ProposalUpdateMixin:
                 "UPDATE proposals SET status = 'withdrawn'::proposal_status WHERE id = $1",
                 proposal_id,
             )
+            await _log_transition(conn, "proposal.withdraw", row, supplier_id, "withdrawn")
             return proposal_to_response(await load_proposal_row(conn, proposal_id))
 
     async def buyer_withdraw_offer(self, proposal_id: int, buyer_actor_id: int):
@@ -81,6 +117,9 @@ class ProposalUpdateMixin:
             await conn.execute(
                 "UPDATE proposals SET status = 'withdrawn'::proposal_status WHERE id = $1",
                 proposal_id,
+            )
+            await _log_transition(
+                conn, "proposal.offer_withdraw", row, buyer_actor_id, "withdrawn"
             )
             await conn.execute(
                 """
@@ -111,6 +150,7 @@ class ProposalUpdateMixin:
                 "UPDATE proposals SET status = 'shortlisted'::proposal_status WHERE id = $1",
                 proposal_id,
             )
+            await _log_transition(conn, "proposal.shortlist", row, buyer_actor_id, "shortlisted")
             return proposal_to_response(await load_proposal_row(conn, proposal_id))
 
     async def reject(self, proposal_id: int, buyer_actor_id: int):
@@ -124,6 +164,7 @@ class ProposalUpdateMixin:
                 "UPDATE proposals SET status = 'rejected'::proposal_status WHERE id = $1",
                 proposal_id,
             )
+            await _log_transition(conn, "proposal.reject", row, buyer_actor_id, "rejected")
             rejected = proposal_to_response(await load_proposal_row(conn, proposal_id))
         await NotificationService().notify_actor_members(
             row["supplier_actor_id"],
@@ -144,6 +185,9 @@ class ProposalUpdateMixin:
             await conn.execute(
                 "UPDATE proposals SET status = 'rejected'::proposal_status WHERE id = $1",
                 proposal_id,
+            )
+            await _log_transition(
+                conn, "proposal.supplier_reject", row, supplier_id, "rejected"
             )
             await conn.execute(
                 """
@@ -206,6 +250,14 @@ class ProposalUpdateMixin:
                     payment_type=PaymentType.full_postpayment,
                     milestones=None,
                     buyer_user_id=None,
+                )
+                await _log_transition(
+                    conn,
+                    "proposal.supplier_accept",
+                    row,
+                    supplier_id,
+                    "accepted",
+                    contract_id=contract["id"],
                 )
                 await conn.execute(
                     "UPDATE rfqs SET status = 'contract_created'::rfq_status WHERE id = $1",
@@ -294,6 +346,16 @@ class ProposalUpdateMixin:
                     payment_type=payment_type,
                     milestones=milestones,
                     buyer_user_id=buyer_user_id,
+                )
+                await _log_transition(
+                    conn,
+                    "proposal.accept",
+                    row,
+                    buyer_actor_id,
+                    "accepted",
+                    contract_id=contract["id"],
+                    price=row["price"],
+                    currency=row["currency"],
                 )
                 await conn.execute(
                     "UPDATE rfqs SET status = 'contract_created'::rfq_status WHERE id = $1",

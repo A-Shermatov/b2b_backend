@@ -13,8 +13,11 @@ from app.modules.companies.services.common import (
     row_to_public_supplier,
     to_public_company_detail,
 )
+from app.modules.verification.common import actor_verification_sql
 
-SUPPLIER_SELECT = """
+ACTOR_VERIFICATION_SQL = actor_verification_sql("a", "c")
+
+SUPPLIER_SELECT = f"""
     SELECT
         a.id,
         a.kind::text AS kind,
@@ -28,7 +31,7 @@ SUPPLIER_SELECT = """
         c.description,
         c.website,
         c.rating,
-        c.verification_status::text AS verification_status,
+        {ACTOR_VERIFICATION_SQL} AS verification_status,
         (
             COALESCE(c.vip, FALSE)
             AND (c.vip_until IS NULL OR c.vip_until > NOW())
@@ -81,7 +84,7 @@ SUPPLIER_SELECT = """
       )
 """
 
-BUYER_SELECT = """
+BUYER_SELECT = f"""
     SELECT
         a.id,
         a.kind::text AS kind,
@@ -96,7 +99,7 @@ BUYER_SELECT = """
         c.website,
         c.legal_name,
         c.rating,
-        c.verification_status::text AS verification_status,
+        {ACTOR_VERIFICATION_SQL} AS verification_status,
         cs.average_rating,
         u.first_name,
         u.last_name,
@@ -206,7 +209,7 @@ class CompanyReadMixin:
                 """
             )
         if verified:
-            filters.append("c.verification_status::text = 'verified'")
+            filters.append(f"{ACTOR_VERIFICATION_SQL} = 'verified'")
         where = (" AND " + " AND ".join(filters)) if filters else ""
         count_sql = f"SELECT COUNT(*) FROM ({SUPPLIER_SELECT + where}) AS listed"
         rows_sql = SUPPLIER_SELECT + where + " ORDER BY a.display_name ASC"

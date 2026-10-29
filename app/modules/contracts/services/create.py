@@ -25,7 +25,7 @@ from app.modules.contracts.services.common import (
 )
 from app.modules.finance.services.commission import calculate_commission, split_commission
 from app.modules.settings.service import get_platform_settings
-from app.utils.audit import AuditLogger
+from app.utils.audit import AuditLogger, log_event
 from app.utils.storage import storage_key_from_url
 from app.enums import PaymentType
 from app.modules.notifications.services import NotificationService
@@ -130,6 +130,25 @@ class ContractCreateMixin:
                 data["rfq_id"],
                 buyer_actor_id,
                 buyer_user_id,
+            )
+            await log_event(
+                conn,
+                "contract.create",
+                "contract",
+                contract["id"],
+                user_id=buyer_user_id,
+                actor_id=buyer_actor_id,
+                details={
+                    "rfq_id": data["rfq_id"],
+                    "proposal_id": data["id"],
+                    "buyer_actor_id": buyer_actor_id,
+                    "supplier_actor_id": data["supplier_actor_id"],
+                    "amount": contract["agreed_amount"],
+                    "currency": data["currency"],
+                    "payment_type": ptype,
+                    "milestones": len(plan_milestones),
+                    "commission_amount": quote.amount,
+                },
             )
         return {"id": contract["id"]}
 
@@ -329,6 +348,14 @@ class ContractCreateMixin:
                 file_type,
                 note,
             )
+            await log_event(
+                conn,
+                "dispute.evidence.add",
+                "dispute",
+                dispute_id,
+                actor_id=actor_id,
+                details={"contract_id": contract_id, "file_name": file_name, "file_type": file_type},
+            )
             return await load_contract_schema(conn, contract_id)
 
     async def submit_work(
@@ -353,7 +380,7 @@ class ContractCreateMixin:
                 for asset in data.assets
             ]
             file_names = data.file_names or [asset["name"] for asset in assets]
-            await conn.execute(
+            submission_id = await conn.fetchval(
                 """
                 INSERT INTO work_submissions (
                     contract_id, type, note, status, submitted_at, file_names, assets
@@ -362,6 +389,7 @@ class ContractCreateMixin:
                     $1, $2::submission_type, $3, 'pending'::submission_status,
                     NOW(), $4::text[], $5::jsonb
                 )
+                RETURNING id
                 """,
                 contract_id,
                 data.type,
@@ -372,6 +400,20 @@ class ContractCreateMixin:
             await conn.execute(
                 "UPDATE contracts SET status = 'delivered'::contract_status WHERE id = $1",
                 contract_id,
+            )
+            await log_event(
+                conn,
+                "contract.submission.submit",
+                "contract",
+                contract_id,
+                actor_id=supplier_id,
+                details={
+                    "submission_id": submission_id,
+                    "type": data.type,
+                    "files": len(file_names or []),
+                    "before": {"status": row["status"]},
+                    "after": {"status": "delivered"},
+                },
             )
             result = await load_contract_schema(conn, contract_id)
         await NotificationService().notify_work_submitted(row)
@@ -497,5 +539,13 @@ class ContractCreateMixin:
                 f"UPDATE disputes SET {column} = $1, updated_at = NOW() WHERE id = $2",
                 data.text.strip(),
                 dispute_id,
+            )
+            await log_event(
+                conn,
+                "dispute.statement",
+                "dispute",
+                dispute_id,
+                actor_id=actor_id,
+                details={"contract_id": contract_id, "side": column.split("_")[0]},
             )
             return await load_contract_schema(conn, contract_id)

@@ -6,6 +6,7 @@ from app.modules.finance.services.common import (
     withdrawal_schema,
 )
 from app.modules.payments.services import PaymentService
+from app.utils.audit import log_event
 
 
 class FinanceCreateMixin:
@@ -71,5 +72,18 @@ class FinanceCreateMixin:
                     status="pending",
                     actor_id=actor_id,
                     withdrawal_id=row["id"],
+                )
+                await log_event(
+                    conn,
+                    "withdrawal.request",
+                    "withdrawal",
+                    row["id"],
+                    actor_id=actor_id,
+                    details={
+                        "amount": row["amount"],
+                        "currency": row["currency"],
+                        "destination_id": row["destination_id"],
+                        "available_before": balance.available,
+                    },
                 )
         return withdrawal_schema(row)

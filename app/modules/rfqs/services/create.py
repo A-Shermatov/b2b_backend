@@ -10,6 +10,7 @@ from app.modules.rfqs.services.common import (
     notify_invited_suppliers,
     validate_supplier_actor_ids,
 )
+from app.utils.audit import log_event
 
 
 class RfqCreateMixin:
@@ -74,6 +75,20 @@ class RfqCreateMixin:
                     None if is_product else data.experience_required,
                 )
                 await insert_invites(conn, rfq_id, invited)
+                await log_event(
+                    conn,
+                    "rfq.create",
+                    "rfq",
+                    rfq_id,
+                    actor_id=actor_id,
+                    details={
+                        "title": data.title,
+                        "type": "product" if is_product else "service",
+                        "status": status,
+                        "visibility": visibility,
+                        "invited_count": len(invited),
+                    },
+                )
             response = await load_rfq_response(conn, rfq_id)
         if invited and status in OPEN_RFQ_STATUSES:
             await notify_invited_suppliers(rfq_id, data.title, invited)

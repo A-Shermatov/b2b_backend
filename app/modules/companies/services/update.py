@@ -14,6 +14,50 @@ from app.modules.companies.services.common import (
     ensure_can_manage,
     load_company_schema,
 )
+from app.utils.audit import log_event
+
+AUDITED_COMPANY_FIELDS = (
+    "title",
+    "legal_name",
+    "tax_number",
+    "website",
+    "description",
+    "logo",
+    "country",
+    "city",
+    "address",
+)
+AUDITED_PROFILE_FIELDS = (
+    "founded_year",
+    "employees_count",
+    "annual_revenue_range",
+    "languages",
+    "industries",
+    "warehouse_area",
+    "markets",
+    "brands",
+    "notable_clients",
+    "gallery",
+    "category_ids",
+    "actor_types",
+)
+
+
+def _company_update_details(data: CompanyUpdateRequest, before_row, skip_moderated: bool) -> dict:
+    from app.modules.companies.services.changes import MODERATED_FIELDS
+
+    before: dict = {}
+    after: dict = {}
+    for field in AUDITED_COMPANY_FIELDS:
+        if skip_moderated and field in MODERATED_FIELDS:
+            continue
+        value = getattr(data, field, None)
+        if value is None or before_row is None or before_row[field] == value:
+            continue
+        before[field] = before_row[field]
+        after[field] = value
+    profile_fields = [field for field in AUDITED_PROFILE_FIELDS if getattr(data, field, None) is not None]
+    return {"before": before, "after": after, "profile_fields": profile_fields}
 
 
 class CompanyUpdateMixin:
@@ -52,6 +96,14 @@ class CompanyUpdateMixin:
             async with conn.transaction():
                 await load_company_schema(conn, company_id)
                 await ensure_can_manage(conn, company_id, user_id, "company_profile.update")
+                before_row = await conn.fetchrow(
+                    """
+                    SELECT title, legal_name, tax_number, website, description, logo,
+                           country, city, address
+                    FROM companies WHERE id = $1
+                    """,
+                    company_id,
+                )
                 fields = (
                     "title",
                     "legal_name",
@@ -153,6 +205,15 @@ class CompanyUpdateMixin:
                         company_id,
                     )
                     await ActorService(conn).sync_company_actors(dict(company), actor_types)
+                await log_event(
+                    conn,
+                    "company.update",
+                    "company",
+                    company_id,
+                    user_id=user_id,
+                    company_id=company_id,
+                    details=_company_update_details(data, before_row, skip_moderated),
+                )
                 return await load_company_schema(conn, company_id)
 
     async def remove_team_member(self, company_id: int, user_id: int, target_user_id: int):
@@ -172,6 +233,15 @@ class CompanyUpdateMixin:
             if membership["role"] == "director":
                 raise ForbiddenError("Cannot remove company director")
             await conn.execute("DELETE FROM company_users WHERE id = $1", membership["id"])
+            await log_event(
+                conn,
+                "company.member.remove",
+                "company",
+                company_id,
+                user_id=user_id,
+                company_id=company_id,
+                details={"member_user_id": target_user_id, "role": membership["role"]},
+            )
 
     async def update_team_member(
         self, company_id: int, user_id: int, target_user_id: int, data: UpdateTeamMemberRequest
@@ -206,6 +276,20 @@ class CompanyUpdateMixin:
                 data.role,
                 membership["id"],
             )
+            if membership["role"] != row["role"]:
+                await log_event(
+                    conn,
+                    "company.member.role_change",
+                    "company",
+                    company_id,
+                    user_id=user_id,
+                    company_id=company_id,
+                    details={
+                        "member_user_id": target_user_id,
+                        "before": {"role": membership["role"]},
+                        "after": {"role": row["role"]},
+                    },
+                )
         return {
             "id": row["id"],
             "company_id": row["company_id"],
@@ -270,3 +354,12 @@ class CompanyUpdateMixin:
             )
             if result == "DELETE 0":
                 raise NotFoundError("Certificate not found")
+            await log_event(
+                conn,
+                "company.certificate.remove",
+                "company",
+                company_id,
+                user_id=user_id,
+                company_id=company_id,
+                details={"certificate_id": certificate_id},
+            )

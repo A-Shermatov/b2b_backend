@@ -13,6 +13,7 @@ from app.modules.auth.schemas import (
     UserUpdateRequest,
 )
 from app.modules.auth.services.common import USER_COLUMNS, load_user, shape_user_public
+from app.utils.audit import log_event
 from app.utils.totp import (
     build_otpauth_url,
     decrypt_totp_secret,
@@ -59,6 +60,16 @@ class AuthUpdateMixin:
         actor = await actor_svc.get_by_id(actor_id)
         if not actor or not await actor_svc.user_owns_actor(user_id, actor):
             raise ValidationError("Actor not linked to user")
+        async with self.connection() as conn:
+            await log_event(
+                conn,
+                "auth.switch_actor",
+                "user",
+                user_id,
+                user_id=user_id,
+                actor_id=actor_id,
+                details={"actor_id": actor_id},
+            )
         return await self.get_me(user_id, active_actor_id=actor_id)
 
     async def switch_company(self, user_id: int, company_id: int) -> MeResponse:
@@ -84,6 +95,17 @@ class AuthUpdateMixin:
         )
         if not actor:
             raise ValidationError("Company actor not found")
+        async with self.connection() as conn:
+            await log_event(
+                conn,
+                "auth.switch_company",
+                "user",
+                user_id,
+                user_id=user_id,
+                actor_id=actor["id"],
+                company_id=company_id,
+                details={"company_id": company_id, "actor_id": actor["id"]},
+            )
         return await self.get_me(user_id, active_actor_id=actor["id"])
 
     async def setup_2fa(self, user_id: int) -> TwoFactorSetupResponse:
@@ -171,6 +193,7 @@ class AuthUpdateMixin:
                 """,
                 user_id,
             )
+            await log_event(conn, "auth.2fa.enable", "user", user_id, user_id=user_id)
         logger.info("totp_confirm_ok user_id=%s", user_id)
         return shape_user_public(dict(row))
 
@@ -210,6 +233,7 @@ class AuthUpdateMixin:
                 """,
                 user_id,
             )
+            await log_event(conn, "auth.2fa.disable", "user", user_id, user_id=user_id)
         logger.info("totp_disable_ok user_id=%s", user_id)
         return shape_user_public(dict(row))
 
@@ -219,7 +243,7 @@ class AuthUpdateMixin:
             user = await load_user(conn, user_id)
             if not user:
                 raise UnauthorizedError("User not found")
-            role = user["role"]
+            role = previous_role = user["role"]
             if side == "buyer" and role == "supplier":
                 role = "both"
             elif side == "supplier" and role == "buyer":
@@ -248,4 +272,13 @@ class AuthUpdateMixin:
             )
             user = dict(row)
             actor = await ActorService(conn).ensure_individual_actor(user, side)
+            await log_event(
+                conn,
+                "auth.activate_role",
+                "user",
+                user_id,
+                user_id=user_id,
+                actor_id=actor["id"],
+                details={"side": side, "before": {"role": previous_role}, "after": {"role": role}},
+            )
         return await self.get_me(user_id, active_actor_id=actor["id"])

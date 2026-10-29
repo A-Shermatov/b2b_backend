@@ -18,6 +18,7 @@ from app.modules.rfqs.services.common import (
     rfq_deadline_passed,
 )
 from app.modules.settings.service import get_platform_settings
+from app.utils.audit import log_event
 
 
 class ProposalCreateMixin:
@@ -69,6 +70,19 @@ class ProposalCreateMixin:
                 data.message,
             )
             created = await load_proposal_row(conn, row["id"])
+            await log_event(
+                conn,
+                "proposal.submit",
+                "proposal",
+                row["id"],
+                actor_id=supplier_id,
+                details={
+                    "rfq_id": rfq_id,
+                    "price": data.price,
+                    "currency": data.currency,
+                    "delivery_time": data.delivery_time,
+                },
+            )
         await NotificationService().notify_actor_members(
             rfq["actor_id"],
             "proposal",

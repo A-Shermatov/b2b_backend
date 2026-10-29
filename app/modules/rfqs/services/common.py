@@ -1,5 +1,6 @@
 from app.core.exceptions import NotFoundError
 from app.modules.notifications.services import NotificationService
+from app.modules.verification.common import actor_verification_sql
 from app.utils.storage import public_file_url
 
 RFQ_COLUMNS = """
@@ -31,12 +32,12 @@ RFQ_COLUMNS = """
     r.updated_at
 """
 
-BUYER_COLUMNS = """
+BUYER_COLUMNS = f"""
     a.id AS buyer_id,
     a.kind::text AS buyer_kind,
     a.display_name AS buyer_display_name,
     c.rating AS buyer_rating,
-    c.verification_status::text AS buyer_verification_status,
+    {actor_verification_sql("a", "c")} AS buyer_verification_status,
     c.city AS buyer_city,
     c.country AS buyer_country,
     c.legal_name AS buyer_legal_name,

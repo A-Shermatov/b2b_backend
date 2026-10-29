@@ -21,7 +21,12 @@ class ActorCreateMixin:
                 )
                 VALUES (
                     'individual', $1::actor_side, $2, NULL, $3,
-                    'basic', TRUE, NOW(), NOW()
+                    (
+                        SELECT CASE WHEN u.individual_verification_status = 'verified'
+                            THEN 'verified' ELSE 'basic' END::trust_level
+                        FROM users u WHERE u.id = $2
+                    ),
+                    TRUE, NOW(), NOW()
                 )
                 RETURNING id
                 """,

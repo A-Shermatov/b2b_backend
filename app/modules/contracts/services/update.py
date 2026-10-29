@@ -11,6 +11,7 @@ from app.modules.contracts.services.common import (
 from app.modules.finance.services.commission import record_milestone_releases
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
+from app.utils.audit import log_event
 
 
 class ContractUpdateMixin:
@@ -217,6 +218,26 @@ class ContractUpdateMixin:
                     """,
                     contract_id,
                 )
+                await log_event(
+                    conn,
+                    "contract.submission.approve",
+                    "contract",
+                    contract_id,
+                    actor_id=buyer_id,
+                    details={"submission_id": submission_id},
+                )
+                await log_event(
+                    conn,
+                    "contract.complete",
+                    "contract",
+                    contract_id,
+                    actor_id=buyer_id,
+                    details={
+                        "before": {"status": row["status"]},
+                        "after": {"status": "completed"},
+                        "released_milestone_ids": [item["id"] for item in released],
+                    },
+                )
             result = await load_contract_schema(conn, contract_id)
         await NotificationService().notify_contract_closed(row)
         return result
@@ -236,6 +257,18 @@ class ContractUpdateMixin:
                 await conn.execute(
                     "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
                     contract_id,
+                )
+                await log_event(
+                    conn,
+                    "contract.submission.reject",
+                    "contract",
+                    contract_id,
+                    actor_id=buyer_id,
+                    details={
+                        "submission_id": submission_id,
+                        "before": {"status": row["status"]},
+                        "after": {"status": "active"},
+                    },
                 )
             result = await load_contract_schema(conn, contract_id)
         await NotificationService().notify_submission_rejected(row)

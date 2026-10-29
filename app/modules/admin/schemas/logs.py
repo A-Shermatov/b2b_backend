@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 AdminLogAudience = Literal["users", "staff"]
 AdminLogKind = Literal["login", "register", "create", "update", "delete", "view"]
@@ -36,6 +36,30 @@ AdminLogSection = Literal[
     "other",
 ]
 AdminLogPeriod = Literal["24h", "7d", "30d", "all"]
+AdminLogSource = Literal["events", "http", "all"]
+AdminLogEventCategory = Literal[
+    "auth",
+    "admin.company",
+    "admin.user",
+    "admin.catalog",
+    "admin.contract",
+    "admin.dispute",
+    "admin.finance",
+    "admin.rfq",
+    "admin.proposal",
+    "admin.report",
+    "admin.staff",
+    "rfq",
+    "proposal",
+    "contract",
+    "payment",
+    "catalog",
+    "company",
+    "review",
+    "dispute",
+    "finance",
+    "other",
+]
 
 
 class AdminLogUser(BaseModel):
@@ -46,6 +70,7 @@ class AdminLogUser(BaseModel):
 
 
 class AdminLogItem(BaseModel):
+    source: Literal["http"] = "http"
     id: int
     created_at: datetime
     audience: AdminLogAudience
@@ -68,10 +93,42 @@ class AdminLogDetail(AdminLogItem):
     fields: list[AdminLogField] = []
 
 
+class AdminLogEventItem(BaseModel):
+    source: Literal["event"] = "event"
+    id: int
+    created_at: datetime
+    audience: AdminLogAudience
+    user: AdminLogUser | None = None
+    action: str
+    category: AdminLogEventCategory
+    resource_type: str
+    resource_id: str
+    actor_id: int | None = None
+    company_id: int | None = None
+    details: dict[str, Any] = {}
+    ip_address: str | None = None
+
+
+class AdminLogEventDetail(AdminLogEventItem):
+    user_agent: str | None = None
+
+
+AnyAdminLogItem = Annotated[AdminLogItem | AdminLogEventItem, Field(discriminator="source")]
+AnyAdminLogDetail = Annotated[AdminLogDetail | AdminLogEventDetail, Field(discriminator="source")]
+
+
 class AdminLogListResponse(BaseModel):
-    items: list[AdminLogItem]
+    items: list[AnyAdminLogItem]
     total: int
     page: int
     page_size: int
     pages: int
     audience_counts: dict[AdminLogAudience, int]
+
+
+class AdminLogEntityResponse(BaseModel):
+    items: list[AdminLogEventItem]
+    total: int
+    page: int
+    page_size: int
+    pages: int

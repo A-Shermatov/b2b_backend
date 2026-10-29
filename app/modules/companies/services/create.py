@@ -14,6 +14,7 @@ from app.modules.companies.services.common import (
     parse_actor_types,
     user_as_dict,
 )
+from app.utils.audit import log_event
 
 
 class CompanyCreateMixin:
@@ -173,6 +174,15 @@ class CompanyCreateMixin:
                     },
                     actor_types,
                 )
+                await log_event(
+                    conn,
+                    "company.create",
+                    "company",
+                    company_id,
+                    user_id=user_dict["id"],
+                    company_id=company_id,
+                    details={"title": data.title, "actor_types": actor_types},
+                )
                 return await load_company_schema(conn, company_id)
 
     async def add_certificate(
@@ -194,6 +204,15 @@ class CompanyCreateMixin:
                 data.issue_date,
                 data.expiry_date,
                 data.file_url,
+            )
+            await log_event(
+                conn,
+                "company.certificate.add",
+                "company",
+                company_id,
+                user_id=user_id,
+                company_id=company_id,
+                details={"certificate_id": row["id"], "title": data.title},
             )
         return row
 
@@ -229,5 +248,14 @@ class CompanyCreateMixin:
                 company_id,
                 member["id"],
                 data.role,
+            )
+            await log_event(
+                conn,
+                "company.member.invite",
+                "company",
+                company_id,
+                user_id=user_id,
+                company_id=company_id,
+                details={"member_user_id": member["id"], "role": data.role},
             )
         return row

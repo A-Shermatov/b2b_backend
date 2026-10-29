@@ -231,6 +231,7 @@ COMPAT_PATCHES = [
     _migrate_report_reason_sql("proposal_report_reason", "proposal_reports"),
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id INTEGER;",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS company_id INTEGER;",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent VARCHAR(500);",
     "ALTER TABLE reviews ALTER COLUMN created_at SET DEFAULT NOW();",
     """
     CREATE TABLE IF NOT EXISTS platform_settings (
@@ -646,4 +647,67 @@ COMPAT_PATCHES = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user ON password_reset_tokens (user_id, created_at DESC);",
+    "ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;",
+    "UPDATE catalog_items SET updated_at = created_at WHERE updated_at IS NULL;",
+    "ALTER TABLE catalog_items ALTER COLUMN updated_at SET DEFAULT NOW();",
+    """
+    CREATE OR REPLACE FUNCTION catalog_items_touch_updated_at() RETURNS trigger AS $$
+    BEGIN
+        NEW.updated_at := NOW();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'trg_catalog_items_updated_at'
+              AND tgrelid = 'catalog_items'::regclass
+        ) THEN
+            CREATE TRIGGER trg_catalog_items_updated_at
+            BEFORE UPDATE ON catalog_items
+            FOR EACH ROW EXECUTE FUNCTION catalog_items_touch_updated_at();
+        END IF;
+    END
+    $$;
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_catalog_items_status_created ON catalog_items (status, created_at DESC);",
+    """
+    ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS individual_verification_status VARCHAR(20) NOT NULL DEFAULT 'none',
+        ADD COLUMN IF NOT EXISTS individual_verification_reason TEXT,
+        ADD COLUMN IF NOT EXISTS individual_verification_submitted_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS individual_verified_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS individual_verified_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+    """,
+    """
+    DO $$
+    BEGIN
+        ALTER TABLE users ADD CONSTRAINT users_individual_verification_status_check
+            CHECK (individual_verification_status IN ('none', 'pending', 'needs_documents', 'verified', 'rejected'));
+    EXCEPTION
+        WHEN duplicate_object THEN NULL;
+    END
+    $$;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_users_individual_verification_status
+        ON users (individual_verification_status)
+        WHERE individual_verification_status <> 'none';
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_documents (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        doc_type VARCHAR(20) NOT NULL DEFAULT 'other',
+        file_name VARCHAR(255),
+        file_url TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'uploaded',
+        uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_user_documents_user ON user_documents (user_id, uploaded_at DESC);",
 ]

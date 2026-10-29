@@ -69,7 +69,14 @@ class AdminDashboardMixin:
                 ),
                 "pending_verifications": int(
                     await conn.fetchval(
-                        "SELECT COUNT(*) FROM companies WHERE verification_status::text = 'pending'"
+                        """
+                        SELECT
+                          (SELECT COUNT(*) FROM companies
+                           WHERE verification_status::text = 'pending')
+                        + (SELECT COUNT(*) FROM users
+                           WHERE individual_verification_status = 'pending'
+                             AND role::text NOT IN ('admin', 'superadmin', 'moderator'))
+                        """
                     )
                 ),
                 "pending_catalog": int(

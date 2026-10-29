@@ -1,6 +1,7 @@
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.pagination import build_page, fetch_page
 from app.core.permissions import ensure_permission
+from app.modules.actors.services.common import trust_level_for_company
 from app.modules.admin.services.common import (
     actor_id_of,
     actor_role_of,
@@ -24,6 +25,18 @@ COMPANY_LIST_COLUMNS = """
     u.id AS owner_user_id, u.email AS owner_email,
     u.first_name AS owner_first_name, u.last_name AS owner_last_name
 """
+
+
+async def sync_company_trust_level(conn, company_id: int, verification_status: str) -> None:
+    await conn.execute(
+        """
+        UPDATE actors
+        SET trust_level = $1::trust_level, updated_at = NOW()
+        WHERE kind::text = 'company' AND company_id = $2
+        """,
+        trust_level_for_company(verification_status),
+        company_id,
+    )
 
 
 def _company_search_sql(normalized: str, params: list) -> str:
@@ -104,19 +117,57 @@ class AdminCompaniesMixin:
         page_size: int = 20,
         status: str = "all",
         query: str | None = None,
+        *,
+        actor_type: str | None = None,
+        verification_status: str | None = None,
+        operational_status: str | None = None,
+        vip: bool | None = None,
+        sort: str = "created_at",
+        order: str = "desc",
     ) -> dict:
         normalized = normalize_query(query)
         search_params: list = []
         search_sql = _company_search_sql(normalized, search_params)
         join_sql = "FROM companies c JOIN users u ON u.id = c.owner_id"
+        filter_clauses = [search_sql] if search_sql else []
+        if actor_type:
+            search_params.append(actor_type)
+            idx = len(search_params)
+            filter_clauses.append(
+                f"""(
+                    c.actor_type::text = ${idx}
+                    OR EXISTS (
+                        SELECT 1 FROM actors fa
+                        WHERE fa.company_id = c.id AND fa.kind::text = 'company'
+                          AND fa.is_active = TRUE AND fa.side::text = ${idx}
+                    )
+                )"""
+            )
+        if verification_status:
+            search_params.append(verification_status)
+            filter_clauses.append(f"c.verification_status::text = ${len(search_params)}")
+        if operational_status:
+            search_params.append(operational_status)
+            filter_clauses.append(f"c.operational_status::text = ${len(search_params)}")
+        if vip is not None:
+            search_params.append(vip)
+            filter_clauses.append(f"COALESCE(c.vip, FALSE) = ${len(search_params)}")
 
-        async def _count(conn, extra_sql: str | None, extra_params: list | None = None):
-            params = list(search_params)
-            clauses = [search_sql] if search_sql else []
+        async def _count(conn, extra_sql: str | None):
+            clauses = list(filter_clauses)
             if extra_sql:
                 clauses.append(extra_sql)
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-            return int(await conn.fetchval(f"SELECT COUNT(*) {join_sql} {where}", *params))
+            return int(
+                await conn.fetchval(f"SELECT COUNT(*) {join_sql} {where}", *search_params)
+            )
+
+        sort_sql = {
+            "created_at": "c.created_at",
+            "title": "LOWER(c.title)",
+            "rating": "c.rating",
+        }.get(sort, "c.created_at")
+        direction = "ASC" if order == "asc" else "DESC"
 
         async with self.connection() as conn:
             status_sql = company_status_sql(status)
@@ -125,17 +176,31 @@ class AdminCompaniesMixin:
             for count_status in ("all", "verified", "pending", "rejected", "blocked"):
                 count_values[count_status] = await _count(conn, company_status_sql(count_status))
             params = list(search_params)
-            clauses = [search_sql] if search_sql else []
+            clauses = list(filter_clauses)
             if status_sql:
                 clauses.append(status_sql)
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             params.extend([page_size, (page - 1) * page_size])
             companies = await conn.fetch(
                 f"""
-                SELECT {COMPANY_LIST_COLUMNS}
+                SELECT {COMPANY_LIST_COLUMNS},
+                    (SELECT COUNT(*) FROM company_users mu WHERE mu.company_id = c.id)
+                        AS members_count,
+                    (
+                        SELECT COUNT(*) FROM catalog_items ci
+                        JOIN actors ca ON ca.id = ci.actor_id
+                        WHERE ca.company_id = c.id AND ci.status::text <> 'deleted'
+                    ) AS products_count,
+                    (
+                        SELECT COUNT(*) FROM contracts ct
+                        WHERE ct.buyer_actor_id IN (SELECT id FROM actors WHERE company_id = c.id)
+                           OR ct.supplier_actor_id IN (
+                               SELECT id FROM actors WHERE company_id = c.id
+                           )
+                    ) AS contracts_count
                 {join_sql}
                 {where}
-                ORDER BY c.created_at DESC, c.id DESC
+                ORDER BY {sort_sql} {direction} NULLS LAST, c.id {direction}
                 LIMIT ${len(params) - 1} OFFSET ${len(params)}
                 """,
                 *params,
@@ -152,11 +217,15 @@ class AdminCompaniesMixin:
         by_company: dict[int, list[str]] = {}
         for row in actor_rows:
             by_company.setdefault(row["company_id"], []).append(row["side"])
+        items = []
+        for company in companies:
+            item = _serialize_company_list_item(company, by_company.get(company["id"], []))
+            item["members_count"] = int(company["members_count"] or 0)
+            item["products_count"] = int(company["products_count"] or 0)
+            item["contracts_count"] = int(company["contracts_count"] or 0)
+            items.append(item)
         return {
-            "items": [
-                _serialize_company_list_item(company, by_company.get(company["id"], []))
-                for company in companies
-            ],
+            "items": items,
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -204,13 +273,26 @@ class AdminCompaniesMixin:
                 FROM company_users cu
                 JOIN users u ON u.id = cu.user_id
                 WHERE cu.company_id = $1
+                ORDER BY (cu.user_id = $2) DESC, cu.id
                 """,
                 company_id,
+                company["owner_id"],
             )
             certificates = await conn.fetch(
                 """
                 SELECT id, title, issuer, issue_date, expiry_date, file_url
                 FROM company_certificates WHERE company_id = $1
+                ORDER BY id
+                """,
+                company_id,
+            )
+            categories = await conn.fetch(
+                """
+                SELECT cat.id, cat.name
+                FROM company_categories cc
+                JOIN categories cat ON cat.id = cc.category_id
+                WHERE cc.company_id = $1
+                ORDER BY cat.name
                 """,
                 company_id,
             )
@@ -298,9 +380,11 @@ class AdminCompaniesMixin:
                         "email": member["email"],
                         "name": f"{member['first_name']} {member['last_name']}".strip(),
                         "status": member["status"],
+                        "is_owner": member["user_id"] == company["owner_id"],
                     }
                     for member in members
                 ],
+                "categories": [{"id": row["id"], "name": row["name"]} for row in categories],
                 "certificates": [
                     {
                         "id": cert["id"],
@@ -397,6 +481,8 @@ class AdminCompaniesMixin:
                 operational,
                 company_id,
             )
+            if verification != previous_verification:
+                await sync_company_trust_level(conn, company_id, verification)
             if action in {"block", "deactivate"}:
                 await conn.execute(
                     "UPDATE actors SET is_active = FALSE WHERE company_id = $1",

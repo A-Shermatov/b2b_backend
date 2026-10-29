@@ -12,6 +12,7 @@ from app.modules.admin.services.common import (
     log_admin,
     normalize_query,
     notify_user,
+    parse_json,
     resolve_owner_user_id,
     with_reason,
 )
@@ -35,6 +36,11 @@ def _catalog_search_sql(normalized: str, params: list) -> str:
     search += ")"
     clauses.append(search)
     return " AND ".join(clauses)
+
+
+def _parse_tiers(value) -> list:
+    parsed = parse_json(value) if value is not None else []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _serialize_catalog_list_item(item, owner) -> dict:
@@ -69,9 +75,16 @@ def _catalog_action_notification(action: str, item_title: str, reason: str | Non
         "approve": ("Позиция одобрена", f"Позиция «{item_title}» опубликована в каталоге."),
         "hide": ("Позиция скрыта", f"Позиция «{item_title}» скрыта модератором."),
         "delete": ("Позиция удалена", f"Позиция «{item_title}» удалена администратором."),
+        "restore": (
+            "Позиция восстановлена",
+            f"Позиция «{item_title}» восстановлена администратором и снова опубликована.",
+        ),
     }
     title, body = messages[action]
     return title, with_reason(body, reason)
+
+
+RESTORABLE_STATUSES = {"hidden", "archived", "deleted"}
 
 
 CATALOG_LIST_SQL = """
@@ -161,11 +174,13 @@ class AdminCatalogMixin:
                 f"{CATALOG_LIST_SQL} WHERE ci.id = $1",
                 item_id,
             )
-            if not item or item["status"] in {"deleted", "draft"}:
+            if not item:
                 raise NotFoundError("Catalog item not found")
             detail = await conn.fetchrow(
                 """
                 SELECT ci.description, ci.created_at,
+                       COALESCE(ci.updated_at, ci.created_at) AS updated_at,
+                       COALESCE(ci.invoice, TRUE) AS invoice,
                        cat.id AS category_id, cat.name AS category_name, cat.slug AS category_slug,
                        ip.pricing_type::text AS pricing_type, ip.currency,
                        ip.fixed_price, ip.hourly_rate, ip.monthly_rate, ip.tiers
@@ -212,7 +227,8 @@ class AdminCatalogMixin:
         payload.update(
             {
                 "description": detail["description"],
-                "updated_at": detail["created_at"],
+                "updated_at": detail["updated_at"],
+                "invoice": bool(detail["invoice"]),
                 "category": (
                     {
                         "id": detail["category_id"],
@@ -230,7 +246,7 @@ class AdminCatalogMixin:
                         "fixed_price": detail["fixed_price"],
                         "hourly_rate": detail["hourly_rate"],
                         "monthly_rate": detail["monthly_rate"],
-                        "tiers": detail["tiers"] or [],
+                        "tiers": _parse_tiers(detail["tiers"]),
                     }
                     if detail["pricing_type"]
                     else None
@@ -274,8 +290,9 @@ class AdminCatalogMixin:
         action: str,
         current_user,
         reason: str | None = None,
+        extra_details: dict | None = None,
     ) -> dict:
-        allowed = {"approve", "hide", "reject", "delete"}
+        allowed = {"approve", "hide", "reject", "delete", "restore"}
         if action not in allowed:
             raise ValidationError("Unsupported catalog action")
         ensure_permission(
@@ -293,9 +310,12 @@ class AdminCatalogMixin:
                 """,
                 item_id,
             )
-            if not item or item["status"] in {"deleted", "draft"}:
+            if not item:
                 raise NotFoundError("Catalog item not found")
             previous_status = item["status"]
+            if previous_status == "deleted" and action != "restore":
+                raise ValidationError("Catalog item is deleted; restore it first")
+            report_status: str | None
             if action == "approve":
                 status = "active"
                 report_status = "dismissed"
@@ -305,6 +325,11 @@ class AdminCatalogMixin:
             elif action == "reject":
                 status = "changes_requested"
                 report_status = "resolved"
+            elif action == "restore":
+                if previous_status not in RESTORABLE_STATUSES:
+                    raise ValidationError("Only hidden, archived or deleted items can be restored")
+                status = "active"
+                report_status = None
             else:
                 status = "deleted"
                 report_status = "resolved"
@@ -337,16 +362,19 @@ class AdminCatalogMixin:
                     body,
                     href=f"/supplier/catalog/{item_id}",
                 )
+            details = {
+                "reason": reason.strip() if reason else None,
+                "previous_status": previous_status,
+                "status": status,
+            }
+            if extra_details:
+                details.update(extra_details)
             await log_admin(
                 conn,
                 actor_id_of(current_user),
                 f"admin.catalog.{action}",
                 "catalog_item",
                 item_id,
-                {
-                    "reason": reason.strip() if reason else None,
-                    "previous_status": previous_status,
-                    "status": status,
-                },
+                details,
             )
         return {"id": item_id, "action": action, "status": status}

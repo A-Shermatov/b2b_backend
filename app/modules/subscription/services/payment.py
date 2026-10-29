@@ -19,6 +19,7 @@ from app.modules.subscription.schemas import (
     SubscriptionResponse,
 )
 from app.modules.subscription.services.common import shape_subscription
+from app.utils.audit import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,22 @@ class SubscriptionPaymentMixin:
                         external_id,
                         raw,
                     )
+                    await log_event(
+                        conn,
+                        "payment.callback.success",
+                        "payment",
+                        order_id,
+                        user_id=tx["user_id"],
+                        details={
+                            "order_id": order_id,
+                            "purpose": "subscription",
+                            "plan": tx["plan"],
+                            "amount": tx["amount"],
+                            "gateway_status": normalized,
+                            "before": {"status": tx["status"]},
+                            "after": {"status": "ok"},
+                        },
+                    )
                     await self._activate_paid_conn(
                         conn,
                         tx["user_id"],
@@ -282,6 +299,22 @@ class SubscriptionPaymentMixin:
                         store,
                         external_id,
                         raw,
+                    )
+                    await log_event(
+                        conn,
+                        "payment.callback.fail",
+                        "payment",
+                        order_id,
+                        user_id=tx["user_id"],
+                        details={
+                            "order_id": order_id,
+                            "purpose": "subscription",
+                            "plan": tx["plan"],
+                            "amount": tx["amount"],
+                            "gateway_status": normalized,
+                            "before": {"status": tx["status"]},
+                            "after": {"status": store},
+                        },
                     )
                     return self._subscription_result(tx, store)
 
@@ -425,6 +458,19 @@ class SubscriptionPaymentMixin:
                 external_id=external_id,
                 metadata={"plan": plan},
             )
+        await log_event(
+            conn,
+            "subscription.activate",
+            "user",
+            user_id,
+            user_id=user_id,
+            details={
+                "plan": plan,
+                "amount": amount,
+                "gateway": gateway,
+                "active_until": active_until,
+            },
+        )
         row = await conn.fetchrow(
             """
             SELECT plan::text AS plan, active_until

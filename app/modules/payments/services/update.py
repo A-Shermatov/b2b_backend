@@ -1,6 +1,7 @@
 from app.config import get_settings
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.modules.payments.gateways.alif import AlifGatewayError
+from app.utils.audit import log_event
 
 FUNDABLE_MILESTONE_STATUSES = ("pending", "awaiting_payment")
 CLOSED_CONTRACT_STATUSES = ("cancelled", "completed", "disputed")
@@ -64,15 +65,42 @@ class PaymentUpdateMixin:
             raise NotFoundError("Milestone not found")
         return row
 
-    async def _apply_milestone_funded(self, conn, row) -> None:
+    async def _apply_milestone_funded(self, conn, row, source: str = "mock") -> None:
         await conn.execute(
             "UPDATE payment_milestones SET status = 'funded'::milestone_status WHERE id = $1",
             row["id"],
+        )
+        await log_event(
+            conn,
+            "payment.milestone.fund",
+            "milestone",
+            row["id"],
+            actor_id=row["buyer_actor_id"],
+            details={
+                "contract_id": row["contract_id"],
+                "amount": row["amount"],
+                "currency": row["currency"],
+                "source": source,
+                "before": {"status": row["status"]},
+                "after": {"status": "funded"},
+            },
         )
         if row["contract_status"] == "pending_payment":
             await conn.execute(
                 "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
                 row["contract_id"],
+            )
+            await log_event(
+                conn,
+                "contract.activate",
+                "contract",
+                row["contract_id"],
+                actor_id=row["buyer_actor_id"],
+                details={
+                    "milestone_id": row["id"],
+                    "before": {"status": "pending_payment"},
+                    "after": {"status": "active"},
+                },
             )
 
     async def fund_milestone(
@@ -121,6 +149,20 @@ class PaymentUpdateMixin:
                     milestone_id,
                 )
                 await record_milestone_release(conn, milestone_id)
+                await log_event(
+                    conn,
+                    "payment.milestone.release",
+                    "milestone",
+                    milestone_id,
+                    actor_id=buyer_id,
+                    details={
+                        "contract_id": row["contract_id"],
+                        "amount": row["amount"],
+                        "currency": row["currency"],
+                        "before": {"status": row["status"]},
+                        "after": {"status": "released"},
+                    },
+                )
         return {"id": milestone_id, "status": "released"}
 
     async def mock_confirm_payment(self, milestone_id: int, buyer_id: int) -> dict:

@@ -159,6 +159,9 @@ class AdminCompanyListItem(BaseModel):
     vip: bool = False
     vip_until: datetime | None = None
     created_at: datetime
+    members_count: int = 0
+    products_count: int = 0
+    contracts_count: int = 0
 
 
 class AdminCompanyStatusCounts(BaseModel):
@@ -186,12 +189,62 @@ class AdminCompanyDetail(AdminCompanyListItem):
     profile: dict[str, Any] | None = None
     stats: dict[str, Any] | None = None
     members: list[dict[str, Any]]
+    categories: list[dict[str, Any]] = Field(default_factory=list)
     certificates: list[dict[str, Any]]
     products: list[dict[str, Any]]
     services: list[dict[str, Any]]
     contracts: list[dict[str, Any]]
     reviews: list[dict[str, Any]]
     verification_checklist: dict[str, bool]
+
+
+AdminCompanyMemberRole = Literal["admin", "moderator", "accountant"]
+
+
+class AdminCompanyUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    legal_name: str | None = Field(default=None, max_length=255)
+    tax_number: str | None = Field(default=None, max_length=50)
+    website: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=10000)
+    country: str | None = Field(default=None, max_length=100)
+    city: str | None = Field(default=None, max_length=100)
+    address: str | None = Field(default=None, max_length=500)
+    logo: str | None = Field(default=None, max_length=500)
+    founded_year: int | None = Field(default=None, ge=1800, le=2100)
+    employees_count: int | None = Field(default=None, ge=0)
+    annual_revenue_range: str | None = Field(default=None, max_length=100)
+    languages: list[str] | None = None
+    industries: list[str] | None = None
+
+
+class AdminCompanyLogoResponse(BaseModel):
+    logo: str
+    logo_url: str | None = None
+
+
+class AdminCompanyMemberAdd(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    role: AdminCompanyMemberRole = "admin"
+
+
+class AdminCompanyMemberUpdate(BaseModel):
+    role: AdminCompanyMemberRole
+
+
+class AdminCompanyOwnerChange(BaseModel):
+    user_id: int | None = Field(default=None, ge=1)
+    email: str | None = Field(default=None, max_length=255)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class AdminCompanyCategoriesUpdate(BaseModel):
+    category_ids: list[int] = Field(default_factory=list, max_length=100)
+
+
+class AdminCompanyVerificationSet(BaseModel):
+    status: Literal["verified", "pending", "needs_documents", "rejected"]
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class CompanyAdminActionRequest(BaseModel):
@@ -440,6 +493,7 @@ class AdminCatalogListResponse(BaseModel):
 class AdminCatalogDetail(AdminCatalogListItem):
     description: str | None = None
     updated_at: datetime
+    invoice: bool = True
     category: dict[str, Any] | None = None
     attributes: list[dict[str, Any]]
     pricing: dict[str, Any] | None = None
@@ -450,7 +504,7 @@ class AdminCatalogDetail(AdminCatalogListItem):
 
 
 class CatalogAdminActionRequest(BaseModel):
-    action: Literal["approve", "hide", "reject", "delete"]
+    action: Literal["approve", "hide", "reject", "delete", "restore"]
     reason: str | None = Field(default=None, max_length=2000)
 
 

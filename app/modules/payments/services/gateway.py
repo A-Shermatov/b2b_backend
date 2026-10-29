@@ -17,6 +17,7 @@ from app.modules.payments.services.update import (
     FUNDABLE_MILESTONE_STATUSES,
     ensure_contract_fundable,
 )
+from app.utils.audit import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -266,8 +267,24 @@ class PaymentGatewayMixin:
                     milestone = await self._load_milestone_contract(
                         conn, tx["milestone_id"], for_update=True
                     )
+                    await log_event(
+                        conn,
+                        "payment.callback.success",
+                        "payment",
+                        order_id,
+                        actor_id=milestone["buyer_actor_id"],
+                        details={
+                            "order_id": order_id,
+                            "milestone_id": tx["milestone_id"],
+                            "contract_id": tx["contract_id"],
+                            "amount": tx["amount"],
+                            "gateway_status": normalized,
+                            "before": {"status": tx["status"]},
+                            "after": {"status": store_status},
+                        },
+                    )
                     if milestone["status"] in FUNDABLE_MILESTONE_STATUSES:
-                        await self._apply_milestone_funded(conn, milestone)
+                        await self._apply_milestone_funded(conn, milestone, source="gateway")
                     else:
                         logger.warning(
                             "Alif hold/ok but milestone %s is %s (order=%s)",
@@ -292,6 +309,21 @@ class PaymentGatewayMixin:
                         store,
                         external_id,
                         raw,
+                    )
+                    await log_event(
+                        conn,
+                        "payment.callback.fail",
+                        "payment",
+                        order_id,
+                        details={
+                            "order_id": order_id,
+                            "milestone_id": tx["milestone_id"],
+                            "contract_id": tx["contract_id"],
+                            "amount": tx["amount"],
+                            "gateway_status": normalized,
+                            "before": {"status": tx["status"]},
+                            "after": {"status": store},
+                        },
                     )
                     if store == "canceled":
                         logger.warning(

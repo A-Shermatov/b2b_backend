@@ -3,6 +3,7 @@ import asyncpg
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.modules.reviews.schemas import ReviewCreate, ReviewResponse
 from app.modules.reviews.services.common import REVIEW_COLUMNS, shape_review_rows
+from app.utils.audit import log_event
 
 
 class ReviewCreateMixin:
@@ -83,6 +84,19 @@ class ReviewCreateMixin:
                 )
 
             await self._update_actor_rating(data.target_actor_id)
+            await log_event(
+                self.conn,
+                "review.create",
+                "review",
+                row["id"],
+                actor_id=reviewer_actor_id,
+                details={
+                    "contract_id": data.contract_id,
+                    "target_actor_id": data.target_actor_id,
+                    "rating": data.rating,
+                    "photos": len(data.photos),
+                },
+            )
             shaped = await shape_review_rows(self.conn, [row], reviewer_actor_id)
             return shaped[0]
 

@@ -14,6 +14,8 @@ from app.modules.catalog.schemas.common import (
     ItemStatsSchema,
 )
 from app.modules.catalog.services.quality import catalog_item_completeness_percent
+from app.modules.verification.common import actor_verification_sql
+from app.utils.audit import log_event
 from app.utils.storage import public_file_url
 
 SUPPLIER_WRITABLE_STATUSES = {
@@ -398,7 +400,7 @@ class CatalogItemMixin:
         if invoice:
             clauses.append("COALESCE(ci.invoice, TRUE) = TRUE")
         if verified:
-            clauses.append("c.verification_status::text = 'verified'")
+            clauses.append(f"{actor_verification_sql('a', 'c')} = 'verified'")
         where = " AND ".join(clauses)
 
         joins = """
@@ -544,13 +546,30 @@ class CatalogItemMixin:
                 "INSERT INTO item_stats (item_id, views, leads) VALUES ($1, 0, 0)",
                 item_id,
             )
+            await log_event(
+                conn,
+                "catalog.create",
+                "catalog_item",
+                item_id,
+                actor_id=actor_id,
+                details={"title": data.title, "type": data.type, "status": status},
+            )
+            if status == "pending_review":
+                await log_event(
+                    conn,
+                    "catalog.submit_review",
+                    "catalog_item",
+                    item_id,
+                    actor_id=actor_id,
+                    details={"before": {"status": None}, "after": {"status": status}},
+                )
             return await self._load_item_schema(conn, item_id)
 
     async def update(self, item_id: int, actor_id: int, data: CatalogItemInput):
         async with self.connection() as conn:
             item = await conn.fetchrow(
                 """
-                SELECT id, actor_id, status::text AS status
+                SELECT id, actor_id, status::text AS status, title, type::text AS type, category_id
                 FROM catalog_items
                 WHERE id = $1 AND status::text != 'deleted'
                 """,
@@ -595,6 +614,34 @@ class CatalogItemMixin:
                 item_id,
             )
             await self._replace_relations(conn, item_id, data)
+            after = {
+                "title": data.title,
+                "type": data.type,
+                "category_id": data.category_id,
+                "status": next_status,
+            }
+            before = {key: item[key] for key in after}
+            changed = [key for key in after if str(before[key]) != str(after[key])]
+            await log_event(
+                conn,
+                "catalog.update",
+                "catalog_item",
+                item_id,
+                actor_id=actor_id,
+                details={
+                    "before": {key: before[key] for key in changed},
+                    "after": {key: after[key] for key in changed},
+                },
+            )
+            if next_status == "pending_review" and item["status"] != "pending_review":
+                await log_event(
+                    conn,
+                    "catalog.submit_review",
+                    "catalog_item",
+                    item_id,
+                    actor_id=actor_id,
+                    details={"before": {"status": item["status"]}, "after": {"status": next_status}},
+                )
             return await self._load_item_schema(conn, item_id)
 
     async def set_status(self, item_id: int, actor_id: int, status: str):
@@ -602,7 +649,7 @@ class CatalogItemMixin:
         async with self.connection() as conn:
             item = await conn.fetchrow(
                 """
-                SELECT id, actor_id FROM catalog_items
+                SELECT id, actor_id, status::text AS status FROM catalog_items
                 WHERE id = $1 AND status::text != 'deleted'
                 """,
                 item_id,
@@ -621,6 +668,14 @@ class CatalogItemMixin:
                 "UPDATE catalog_items SET status = $1::item_status WHERE id = $2",
                 next_status,
                 item_id,
+            )
+            await log_event(
+                conn,
+                "catalog.submit_review" if next_status == "pending_review" else "catalog.status.change",
+                "catalog_item",
+                item_id,
+                actor_id=actor_id,
+                details={"before": {"status": item["status"]}, "after": {"status": next_status}},
             )
             return await self._load_item_schema(conn, item_id)
 
@@ -641,6 +696,7 @@ class CatalogItemMixin:
                 "UPDATE catalog_items SET status = 'deleted'::item_status WHERE id = $1",
                 item_id,
             )
+            await log_event(conn, "catalog.delete", "catalog_item", item_id, actor_id=actor_id)
 
     async def create_report(self, item_id: int, reporter_id: int, data: CatalogItemReportCreate):
         async with self.connection() as conn:

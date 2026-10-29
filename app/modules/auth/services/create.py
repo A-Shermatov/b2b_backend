@@ -26,7 +26,7 @@ from app.modules.auth.services.common import (
     lift_expired_ban,
     load_user,
 )
-from app.utils.audit import AuditLogger
+from app.utils.audit import AuditLogger, log_event
 from app.utils.redis_client import blacklist_refresh_token, is_refresh_token_blacklisted
 from app.utils.totp import (
     consume_backup_code,
@@ -258,6 +258,14 @@ class AuthCreateMixin:
                 jti_hash,
                 expires_at,
             )
+            try:
+                logout_user_id = int(payload.get("sub"))
+            except (TypeError, ValueError):
+                logout_user_id = None
+            if logout_user_id is not None:
+                await log_event(
+                    conn, "auth.logout", "user", logout_user_id, user_id=logout_user_id
+                )
         await blacklist_refresh_token(jti_hash, expires_at)
 
     def _issue_tokens(self, user: dict, side: str | None = None) -> TokenResponse:

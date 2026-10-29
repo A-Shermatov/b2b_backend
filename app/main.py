@@ -36,6 +36,7 @@ from app.modules.roles.router import register as register_roles
 from app.modules.settings.router import register as register_settings
 from app.modules.subscription.router import register as register_subscription
 from app.modules.support.router import register as register_support
+from app.modules.verification.router import register as register_verification
 from app.db.schema import backfill_actors_if_needed, ensure_schema
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,7 @@ register_finance(app, prefix=settings.api_v1_prefix)
 register_admin(app, prefix=settings.api_v1_prefix)
 register_roles(app, prefix=settings.api_v1_prefix)
 register_settings(app, prefix=settings.api_v1_prefix)
+register_verification(app, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health")

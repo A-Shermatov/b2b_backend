@@ -5,6 +5,7 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.pagination import build_page
 from app.modules.companies.services.common import ensure_can_manage
 from app.modules.notifications.services import NotificationService
+from app.utils.audit import AuditLogger, log_event
 
 MODERATED_FIELDS = ("title", "legal_name", "tax_number", "address", "city", "country")
 
@@ -107,6 +108,19 @@ class CompanyChangesMixin:
                     json.dumps(changed, ensure_ascii=False),
                     json.dumps(snapshot, ensure_ascii=False),
                     (reason or "").strip() or None,
+                )
+                await log_event(
+                    conn,
+                    "company.change_request.submit",
+                    "company",
+                    company_id,
+                    user_id=user_id,
+                    company_id=company_id,
+                    details={
+                        "change_request_id": row["id"],
+                        "before": {key: snapshot.get(key) for key in changed},
+                        "after": changed,
+                    },
                 )
                 return _shape_change_request(row, company_title=company["title"])
 
@@ -232,6 +246,9 @@ class CompanyChangesMixin:
                 if isinstance(proposed, str):
                     proposed = json.loads(proposed)
                 proposed = proposed or {}
+                row_snapshot = row["current_snapshot"]
+                if isinstance(row_snapshot, str):
+                    row_snapshot = json.loads(row_snapshot)
 
                 now = datetime.now(timezone.utc)
                 if action == "approve":
@@ -250,6 +267,15 @@ class CompanyChangesMixin:
                             WHERE id = ${len(params)}
                             """,
                             *params,
+                        )
+                    if "title" in proposed:
+                        await conn.execute(
+                            """
+                            UPDATE actors SET display_name = $1, updated_at = NOW()
+                            WHERE kind::text = 'company' AND company_id = $2
+                            """,
+                            proposed["title"],
+                            row["company_id"],
                         )
                     await conn.execute(
                         """
@@ -288,6 +314,27 @@ class CompanyChangesMixin:
                         f"Заявка на изменение данных компании «{row['company_title']}» отклонена. "
                         f"Причина: {reason.strip()}"
                     )
+
+                await AuditLogger(conn).log_action(
+                    user_id=current_user.id,
+                    actor_id=None,
+                    company_id=None,
+                    action=f"admin.company.change_request.{action}",
+                    resource_type="company",
+                    resource_id=str(row["company_id"]),
+                    details={
+                        "request_id": request_id,
+                        "changes": {
+                            field: {
+                                "before": (row_snapshot or {}).get(field),
+                                "after": value,
+                            }
+                            for field, value in proposed.items()
+                        },
+                        "applied": action == "approve",
+                        "reason": reason.strip() if reason and reason.strip() else None,
+                    },
+                )
 
                 href_side = "supplier" if row["actor_type"] == "supplier" else "customer"
                 await NotificationService(conn).notify_user(

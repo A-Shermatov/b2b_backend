@@ -81,12 +81,25 @@ async def admin_list_companies(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status: Literal["all", "verified", "pending", "rejected", "blocked"] = "all",
     query: Annotated[str | None, Query(max_length=200)] = None,
+    actor_type: Literal["buyer", "supplier"] | None = None,
+    verification_status: Literal["pending", "verified", "rejected", "needs_documents"]
+    | None = None,
+    operational_status: Literal["active", "blocked", "deactivated"] | None = None,
+    vip: bool | None = None,
+    sort: Literal["created_at", "title", "rating"] = "created_at",
+    order: Literal["asc", "desc"] = "desc",
 ):
     return await AdminService().list_companies(
         page=page,
         page_size=page_size,
         status=status,
         query=query,
+        actor_type=actor_type,
+        verification_status=verification_status,
+        operational_status=operational_status,
+        vip=vip,
+        sort=sort,
+        order=order,
     )
 
 

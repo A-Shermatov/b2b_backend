@@ -272,8 +272,12 @@ class NavService:
             pending_verifications = int(
                 await conn.fetchval(
                     """
-                    SELECT COUNT(*) FROM companies
-                    WHERE verification_status::text IN ('pending', 'needs_documents')
+                    SELECT
+                      (SELECT COUNT(*) FROM companies
+                       WHERE verification_status::text IN ('pending', 'needs_documents'))
+                    + (SELECT COUNT(*) FROM users
+                       WHERE individual_verification_status IN ('pending', 'needs_documents')
+                         AND role::text NOT IN ('admin', 'superadmin', 'moderator'))
                     """
                 )
                 or 0

@@ -226,3 +226,70 @@ def section_sql(section: str, params: list) -> str:
             f"AND {RESOURCE_SQL} = ANY({_param(params, list(resources))}::text[]))"
         )
     return f"({' OR '.join(parts)})" if parts else "FALSE"
+
+
+# --- Semantic events (``audit_logs.action NOT LIKE 'http.%'``) -------------------------
+
+EVENT_SQL = "al.action NOT LIKE 'http.%'"
+HTTP_SQL = "al.action LIKE 'http.%'"
+
+EVENT_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "auth": ("auth.%", "login", "login\\_%", "register", "password\\_%"),
+    "admin.company": ("admin.company.%",),
+    "admin.user": ("admin.user.%", "admin.individual.%"),
+    "admin.catalog": ("admin.catalog.%",),
+    "admin.contract": ("admin.contract.%",),
+    "admin.dispute": ("admin.dispute.%",),
+    "admin.finance": ("admin.finance.%",),
+    "admin.rfq": ("admin.rfq.%",),
+    "admin.proposal": ("admin.proposal.%",),
+    "admin.report": ("admin.report.%",),
+    "admin.staff": ("admin.staff.%", "admin.role.%", "admin.category.%", "platform\\_settings.%"),
+    "rfq": ("rfq.%",),
+    "proposal": ("proposal.%",),
+    "contract": ("contract.%",),
+    "payment": ("payment.%", "subscription.%"),
+    "catalog": ("catalog.%",),
+    "company": ("company.%",),
+    "review": ("review.%",),
+    "dispute": ("dispute.%",),
+    "finance": ("withdrawal.%", "finance.%"),
+}
+EVENT_CATEGORY_KEYS = (*EVENT_CATEGORIES.keys(), "other")
+_ALL_EVENT_PATTERNS = sorted({pattern for patterns in EVENT_CATEGORIES.values() for pattern in patterns})
+
+
+def _like_regex(pattern: str) -> re.Pattern:
+    parts = []
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\" and index + 1 < len(pattern):
+            parts.append(re.escape(pattern[index + 1]))
+            index += 2
+            continue
+        parts.append(".*" if char == "%" else "." if char == "_" else re.escape(char))
+        index += 1
+    return re.compile(f"^{''.join(parts)}$")
+
+
+_CATEGORY_REGEXES = [
+    (category, [_like_regex(pattern) for pattern in patterns])
+    for category, patterns in EVENT_CATEGORIES.items()
+]
+
+
+def event_category(action: str) -> str:
+    for category, regexes in _CATEGORY_REGEXES:
+        if any(regex.match(action) for regex in regexes):
+            return category
+    return "other"
+
+
+def event_category_sql(category: str, params: list) -> str:
+    if category == "other":
+        return f"NOT (al.action LIKE ANY({_param(params, _ALL_EVENT_PATTERNS)}::text[]))"
+    patterns = EVENT_CATEGORIES.get(category)
+    if not patterns:
+        return "FALSE"
+    return f"al.action LIKE ANY({_param(params, list(patterns))}::text[])"
