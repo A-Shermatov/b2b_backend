@@ -15,6 +15,7 @@ from app.modules.admin.services.gateway_logs import AdminGatewayLogsMixin
 from app.modules.admin.services.individuals import AdminIndividualsMixin
 from app.modules.admin.services.logs import AdminLogsMixin
 from app.modules.admin.services.marketplace import AdminMarketplaceMixin
+from app.modules.admin.services.merchants import AdminMerchantsMixin
 from app.modules.admin.services.reports import AdminReportsMixin
 from app.modules.admin.services.staff import AdminStaffMixin
 from app.modules.admin.services.users import AdminUsersMixin
@@ -35,6 +36,7 @@ class AdminService(
     AdminReportsMixin,
     AdminCategoriesMixin,
     AdminEscrowMixin,
+    AdminMerchantsMixin,
     AdminAnalyticsMixin,
     AdminLogsMixin,
     AdminGatewayLogsMixin,

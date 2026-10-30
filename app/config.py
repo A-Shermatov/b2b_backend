@@ -86,11 +86,21 @@ class Settings(BaseSettings):
         return v
 
     @field_validator(
-        "smtp_host", "smtp_username", "smtp_password", "smtp_from_email", "smtp_from_name",
+        "smtp_host",
+        "smtp_username",
+        "smtp_password",
+        "smtp_from_email",
+        "smtp_from_name",
+        "alif_terminal_key",
+        "alif_terminal_password",
+        "alif_test_merchant_1",
+        "alif_test_merchant_2",
+        "alif_base_url",
+        "alif_gate",
         mode="before",
     )
     @classmethod
-    def strip_smtp(cls, v: object) -> object:
+    def strip_secrets(cls, v: object) -> object:
         if isinstance(v, str):
             return v.strip().strip("\"'").strip()
         return v

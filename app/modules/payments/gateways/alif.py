@@ -249,6 +249,12 @@ class AlifClient:
                 message,
                 bool(mp_terminal_info),
             )
+            if http_status == 401 or code == 401:
+                raise AlifGatewayError(
+                    "Alif отклонил доступ (401). Проверьте ALIF_TERMINAL_KEY, "
+                    "ALIF_TERMINAL_PASSWORD и что терминал активен для "
+                    f"{self.base_url} / gate={gate}."
+                )
             raise AlifGatewayError(f"Alif: {message or 'не удалось создать платёж'}")
         return url
 

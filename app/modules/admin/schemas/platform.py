@@ -73,6 +73,61 @@ class AdminEscrowResponse(BaseModel):
     pages: int
 
 
+class AdminMerchantCard(BaseModel):
+    role: Literal["supplier_pool", "platform"]
+    label: str
+    terminal_id: str | None = None
+    terminal_masked: str | None = None
+    held: float
+    released: float
+    refunded: float
+    net_released: float
+    currency: str
+    configured: bool
+
+
+class AdminMerchantTotals(BaseModel):
+    held: float
+    released: float
+    refunded: float
+    supplier_available: float
+    withdrawn: float
+    currency: str
+
+
+class AdminSupplierBalanceItem(BaseModel):
+    actor_id: int
+    display_name: str | None = None
+    company_id: int | None = None
+    company_title: str | None = None
+    owner_email: str | None = None
+    available: float
+    pending: float
+    escrow_locked: float
+    released: float
+    withdrawn: float
+    currency: str
+
+
+class AdminSupplierBalancesPage(BaseModel):
+    items: list[AdminSupplierBalanceItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class AdminMerchantBalancesResponse(BaseModel):
+    source: Literal["ledger"]
+    note: str
+    gateway_configured: bool
+    marketplace_enabled: bool
+    currency: str
+    merchants: list[AdminMerchantCard]
+    totals: AdminMerchantTotals
+    suppliers: AdminSupplierBalancesPage
+
+
 class AdminAnalyticsMetrics(BaseModel):
     users: float
     companies: float

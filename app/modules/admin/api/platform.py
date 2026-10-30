@@ -13,6 +13,7 @@ from app.modules.admin.schemas import (
     AdminCategoryListResponse,
     AdminCategoryUpdate,
     AdminEscrowResponse,
+    AdminMerchantBalancesResponse,
 )
 
 
@@ -57,6 +58,19 @@ async def admin_escrow(
 ):
     ensure_permission(current_user, "admin_finance.view")
     return await AdminService().get_escrow(view=view, page=page, page_size=page_size, query=query)
+
+
+@router.get("/merchant-balances", response_model=AdminMerchantBalancesResponse)
+async def admin_merchant_balances(
+    current_user: Annotated[CurrentUser, Depends(require_admin)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    query: Annotated[str | None, Query(max_length=255)] = None,
+):
+    ensure_permission(current_user, "admin_finance.view")
+    return await AdminService().get_merchant_balances(
+        page=page, page_size=page_size, query=query
+    )
 
 
 @router.get("/analytics", response_model=AdminAnalyticsResponse)
