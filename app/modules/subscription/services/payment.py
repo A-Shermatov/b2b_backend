@@ -8,7 +8,12 @@ from urllib.parse import urlencode
 from app.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.modules.finance.services import SUBSCRIPTION_PLAN_AMOUNTS
-from app.modules.payments.gateways.alif import AlifClient, AlifGatewayError, format_amount
+from app.modules.payments.gateways.alif import (
+    AlifClient,
+    AlifGatewayError,
+    build_mp_terminal_info,
+    format_amount,
+)
 from app.modules.payments.gateways.dc import DcGatewayError
 from app.modules.payments.gateways.eskhata import EskhataGatewayError
 from app.modules.payments.services.update import ALIF_NOT_CONFIGURED, GATEWAY_NOT_CONFIGURED
@@ -135,11 +140,24 @@ class SubscriptionPaymentMixin:
 
             order_id = f"SUB{user_id}-{secrets.token_hex(6)}"
             amount_dec = Decimal(format_amount(amount))
+            # Same Alif marketplace terminal as deal payments: plain /v2/ without
+            # isMarketPlace returns 401 «доступ в транзакции отказан» on marketplace-only keys.
+            marketplace_meta = None
+            mp_info = None
+            if settings.alif_marketplace_enabled:
+                mp_info = build_mp_terminal_info(
+                    total=amount_dec,
+                    commission=amount_dec,  # 100% to platform merchant
+                    supplier_terminal_id=settings.alif_test_merchant_1 or "",
+                    platform_terminal_id=settings.alif_test_merchant_2 or "",
+                    title=f"Подписка {plan}",
+                )
+                marketplace_meta = {"mpTerminalInfo": mp_info}
             await conn.execute(
                 """
                 INSERT INTO subscription_payment_orders
-                    (order_id, gateway, user_id, plan, amount, currency, status)
-                VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+                    (order_id, gateway, user_id, plan, amount, currency, status, marketplace_meta)
+                VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7::jsonb)
                 """,
                 order_id,
                 GATEWAY_ALIF,
@@ -147,6 +165,7 @@ class SubscriptionPaymentMixin:
                 plan,
                 amount_dec,
                 settings.alif_currency,
+                json.dumps(marketplace_meta) if marketplace_meta else None,
             )
 
         api_base = settings.public_api_url.rstrip("/")
@@ -161,6 +180,7 @@ class SubscriptionPaymentMixin:
                 callback_url=callback_url,
                 return_url=return_url,
                 info=f"Подписка Brend Market: тариф {plan}",
+                mp_terminal_info=mp_info,
             )
         except AlifGatewayError:
             async with self.connection() as conn:
@@ -194,6 +214,54 @@ class SubscriptionPaymentMixin:
             gateway=GATEWAY_ALIF,
         )
 
+    @staticmethod
+    def _parse_marketplace_meta(raw) -> dict:
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return dict(raw)
+        if isinstance(raw, str):
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return {}
+            return data if isinstance(data, dict) else {}
+        return {}
+
+    async def _confirm_subscription_marketplace(self, *, amount, marketplace_meta: dict) -> None:
+        """Release held marketplace funds to the platform terminal after a paid callback."""
+        settings = get_settings()
+        if not settings.alif_marketplace_enabled:
+            return
+        subs = marketplace_meta.get("sub_transactions") or []
+        mp_info = marketplace_meta.get("mpTerminalInfo") or []
+        if not subs:
+            return
+        amount_by_terminal = {
+            str(item.get("terminal_id")): Decimal(format_amount(item.get("amount") or 0))
+            for item in mp_info
+            if isinstance(item, dict)
+        }
+        client = AlifClient(settings)
+        for sub in subs:
+            if not isinstance(sub, dict):
+                continue
+            sub_id = str(sub.get("transaction_id") or "")
+            if not sub_id:
+                continue
+            terminal_id = str(sub.get("terminal_id") or "")
+            sub_amount = amount_by_terminal.get(terminal_id)
+            if sub_amount is None or sub_amount <= 0:
+                sub_amount = Decimal(format_amount(amount)) / max(len(subs), 1)
+            try:
+                await client.confirm_delivery(transaction_id=sub_id, amount=sub_amount)
+            except AlifGatewayError:
+                logger.exception(
+                    "Alif subscription confirm-delivery failed: sub=%s terminal=%s",
+                    sub_id,
+                    terminal_id,
+                )
+
     async def apply_subscription_gateway_status(
         self,
         order_id: str,
@@ -205,12 +273,15 @@ class SubscriptionPaymentMixin:
         external_id = str(transaction_id) if transaction_id not in (None, "") else None
         raw = json.dumps(payload, ensure_ascii=False, default=str)
         normalized = status.strip().lower()
+        confirm_meta: dict | None = None
+        confirm_amount = None
+        result = None
 
         async with self.connection() as conn:
             async with conn.transaction():
                 tx = await conn.fetchrow(
                     """
-                    SELECT id, order_id, user_id, plan, amount, status, currency
+                    SELECT id, order_id, user_id, plan, amount, status, currency, marketplace_meta
                     FROM subscription_payment_orders
                     WHERE order_id = $1
                     FOR UPDATE
@@ -242,12 +313,17 @@ class SubscriptionPaymentMixin:
                         )
                         return self._subscription_result(tx, tx["status"])
 
+                    meta = self._parse_marketplace_meta(tx["marketplace_meta"])
+                    subs = payload.get("sub_transactions")
+                    if isinstance(subs, list):
+                        meta["sub_transactions"] = subs
                     await conn.execute(
                         """
                         UPDATE subscription_payment_orders
                         SET status = 'ok',
                             external_transaction_id = COALESCE($2, external_transaction_id),
                             raw_callback = $3::jsonb,
+                            marketplace_meta = $4::jsonb,
                             paid_at = COALESCE(paid_at, NOW()),
                             updated_at = NOW()
                         WHERE id = $1
@@ -255,6 +331,7 @@ class SubscriptionPaymentMixin:
                         tx["id"],
                         external_id,
                         raw,
+                        json.dumps(meta, ensure_ascii=False, default=str),
                     )
                     await log_event(
                         conn,
@@ -280,11 +357,12 @@ class SubscriptionPaymentMixin:
                         external_id=external_id or order_id,
                         amount=float(tx["amount"]),
                     )
+                    confirm_meta = meta
+                    confirm_amount = tx["amount"]
                     tx = dict(tx)
                     tx["status"] = "ok"
-                    return self._subscription_result(tx, "ok")
-
-                if normalized in ("failed", "canceled", "partially_canceled"):
+                    result = self._subscription_result(tx, "ok")
+                elif normalized in ("failed", "canceled", "partially_canceled"):
                     store = "canceled" if "cancel" in normalized else "failed"
                     await conn.execute(
                         """
@@ -317,20 +395,28 @@ class SubscriptionPaymentMixin:
                         },
                     )
                     return self._subscription_result(tx, store)
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE subscription_payment_orders
+                        SET external_transaction_id = COALESCE($2, external_transaction_id),
+                            raw_callback = $3::jsonb,
+                            updated_at = NOW()
+                        WHERE id = $1
+                        """,
+                        tx["id"],
+                        external_id,
+                        raw,
+                    )
+                    return self._subscription_result(tx, tx["status"])
 
-                await conn.execute(
-                    """
-                    UPDATE subscription_payment_orders
-                    SET external_transaction_id = COALESCE($2, external_transaction_id),
-                        raw_callback = $3::jsonb,
-                        updated_at = NOW()
-                    WHERE id = $1
-                    """,
-                    tx["id"],
-                    external_id,
-                    raw,
+        if result is not None:
+            if confirm_meta is not None:
+                await self._confirm_subscription_marketplace(
+                    amount=confirm_amount, marketplace_meta=confirm_meta
                 )
-                return self._subscription_result(tx, tx["status"])
+            return result
+        raise ConflictError("Unexpected subscription payment state")
 
     def _subscription_result(self, tx, payment_status: str) -> dict:
         return {

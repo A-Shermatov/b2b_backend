@@ -567,6 +567,7 @@ COMPAT_PATCHES = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS ix_subscription_payment_orders_user_id ON subscription_payment_orders (user_id);",
+    "ALTER TABLE subscription_payment_orders ADD COLUMN IF NOT EXISTS marketplace_meta JSONB;",
     """
     CREATE TABLE IF NOT EXISTS company_change_requests (
         id SERIAL PRIMARY KEY,
