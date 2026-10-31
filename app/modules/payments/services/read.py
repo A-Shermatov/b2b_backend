@@ -62,9 +62,24 @@ class PaymentReadMixin:
                 f"""
                 SELECT
                     m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
-                    c.currency::text AS currency, c.created_at
+                    c.currency::text AS currency,
+                    COALESCE(
+                        (
+                            SELECT MAX(pgt.paid_at)
+                            FROM payment_gateway_transactions pgt
+                            WHERE pgt.milestone_id = m.id
+                              AND pgt.paid_at IS NOT NULL
+                        ),
+                        (
+                            SELECT MAX(pgt.updated_at)
+                            FROM payment_gateway_transactions pgt
+                            WHERE pgt.milestone_id = m.id
+                              AND pgt.status IN ('ok', 'to_approve')
+                        ),
+                        c.created_at
+                    ) AS created_at
                 {where}
-                ORDER BY c.created_at DESC, m.id
+                ORDER BY created_at DESC, m.id
                 """,
                 params,
                 page,
@@ -118,9 +133,24 @@ class PaymentReadMixin:
                 f"""
                 SELECT
                     m.id, m.contract_id, m.title, m.amount, m.status::text AS status,
-                    c.currency::text AS currency, c.created_at
+                    c.currency::text AS currency,
+                    COALESCE(
+                        (
+                            SELECT MAX(pgt.paid_at)
+                            FROM payment_gateway_transactions pgt
+                            WHERE pgt.milestone_id = m.id
+                              AND pgt.paid_at IS NOT NULL
+                        ),
+                        (
+                            SELECT MAX(pgt.updated_at)
+                            FROM payment_gateway_transactions pgt
+                            WHERE pgt.milestone_id = m.id
+                              AND pgt.status IN ('ok', 'to_approve')
+                        ),
+                        c.created_at
+                    ) AS created_at
                 {where}
-                ORDER BY c.created_at DESC, m.id
+                ORDER BY created_at DESC, m.id
                 """,
                 params,
                 page,
