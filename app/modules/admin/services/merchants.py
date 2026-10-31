@@ -15,7 +15,9 @@ def _mask_terminal(terminal_id: str | None) -> str | None:
 def _merchant_card(
     *,
     role: str,
+    source: str,
     label: str,
+    hint: str,
     terminal_id: str | None,
     held: float,
     released: float,
@@ -24,7 +26,9 @@ def _merchant_card(
 ) -> dict:
     return {
         "role": role,
+        "source": source,
         "label": label,
+        "hint": hint,
         "terminal_id": terminal_id,
         "terminal_masked": _mask_terminal(terminal_id),
         "held": round(held, 2),
@@ -46,8 +50,8 @@ class AdminMerchantsMixin(AdminServiceBase):
     ) -> dict:
         """Ledger balances for Alif marketplace merchants + per-supplier wallets.
 
-        Alif does not expose a live terminal-balance API, so totals are computed
-        from payment_milestones / withdrawals on our side.
+        Deal commission and subscription revenue share the platform terminal in Alif,
+        but are tracked separately in this ledger.
         """
         settings = get_settings()
         currency = settings.alif_currency or "TJS"
@@ -55,7 +59,7 @@ class AdminMerchantsMixin(AdminServiceBase):
         platform_terminal = settings.alif_test_merchant_2
 
         async with self.connection() as conn:
-            totals = await conn.fetchrow(
+            deal_totals = await conn.fetchrow(
                 """
                 SELECT
                     COALESCE(SUM(
@@ -89,6 +93,25 @@ class AdminMerchantsMixin(AdminServiceBase):
                              ELSE 0 END
                     ), 0) AS platform_refunded
                 FROM payment_milestones m
+                """
+            )
+            subscription_totals = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE(SUM(
+                        CASE WHEN status = 'pending' AND payment_url IS NOT NULL
+                             THEN amount ELSE 0 END
+                    ), 0) AS held,
+                    COALESCE(SUM(
+                        CASE WHEN status = 'ok' THEN amount ELSE 0 END
+                    ), 0) AS released,
+                    COALESCE(SUM(
+                        CASE WHEN status IN ('failed', 'canceled')
+                                  AND paid_at IS NOT NULL
+                             THEN amount ELSE 0 END
+                    ), 0) AS refunded
+                FROM subscription_payment_orders
+                WHERE gateway = 'alif'
                 """
             )
             withdrawn_total = await conn.fetchval(
@@ -166,18 +189,23 @@ class AdminMerchantsMixin(AdminServiceBase):
                 conn, count_sql, page_sql, list_params, page, page_size
             )
 
-        supplier_held = float(totals["supplier_held"] or 0)
-        platform_held = float(totals["platform_held"] or 0)
-        supplier_released = float(totals["supplier_released"] or 0)
-        platform_released = float(totals["platform_released"] or 0)
-        supplier_refunded = float(totals["supplier_refunded"] or 0)
-        platform_refunded = float(totals["platform_refunded"] or 0)
+        supplier_held = float(deal_totals["supplier_held"] or 0)
+        platform_held = float(deal_totals["platform_held"] or 0)
+        supplier_released = float(deal_totals["supplier_released"] or 0)
+        platform_released = float(deal_totals["platform_released"] or 0)
+        supplier_refunded = float(deal_totals["supplier_refunded"] or 0)
+        platform_refunded = float(deal_totals["platform_refunded"] or 0)
+        sub_held = float(subscription_totals["held"] or 0)
+        sub_released = float(subscription_totals["released"] or 0)
+        sub_refunded = float(subscription_totals["refunded"] or 0)
         withdrawn = float(withdrawn_total or 0)
 
         merchants = [
             _merchant_card(
                 role="supplier_pool",
+                source="deals",
                 label="Мерчант исполнителей",
+                hint="Доля исполнителей по сделкам (товары и услуги)",
                 terminal_id=supplier_terminal,
                 held=supplier_held,
                 released=supplier_released,
@@ -185,12 +213,25 @@ class AdminMerchantsMixin(AdminServiceBase):
                 currency=currency,
             ),
             _merchant_card(
-                role="platform",
-                label="Мерчант площадки (комиссия)",
+                role="platform_commission",
+                source="deals",
+                label="Комиссия со сделок",
+                hint="Комиссия площадки с этапов сделок. Тот же терминал Alif, что и у подписок.",
                 terminal_id=platform_terminal,
                 held=platform_held,
                 released=platform_released,
                 refunded=platform_refunded,
+                currency=currency,
+            ),
+            _merchant_card(
+                role="platform_subscriptions",
+                source="subscriptions",
+                label="Подписки",
+                hint="Оплата тарифов Старт / Про / Бизнес. Физически на терминале площадки.",
+                terminal_id=platform_terminal,
+                held=sub_held,
+                released=sub_released,
+                refunded=sub_refunded,
                 currency=currency,
             ),
         ]
@@ -220,8 +261,9 @@ class AdminMerchantsMixin(AdminServiceBase):
         return {
             "source": "ledger",
             "note": (
-                "Суммы по данным платформы (этапы сделок и выводы). "
-                "Alif не отдаёт живой баланс терминала через API."
+                "Сделки и подписки считаются отдельно. Комиссия и подписки физически "
+                "идут на один терминал площадки в Alif; в учёте платформы они разведены. "
+                "Живой баланс терминала Alif API не отдаёт."
             ),
             "gateway_configured": bool(
                 settings.alif_terminal_key and settings.alif_terminal_password
@@ -230,11 +272,13 @@ class AdminMerchantsMixin(AdminServiceBase):
             "currency": currency,
             "merchants": merchants,
             "totals": {
-                "held": round(supplier_held + platform_held, 2),
-                "released": round(supplier_released + platform_released, 2),
-                "refunded": round(supplier_refunded + platform_refunded, 2),
+                "held": round(supplier_held + platform_held + sub_held, 2),
+                "released": round(supplier_released + platform_released + sub_released, 2),
+                "refunded": round(supplier_refunded + platform_refunded + sub_refunded, 2),
                 "supplier_available": round(max(0.0, supplier_released - withdrawn), 2),
                 "withdrawn": round(withdrawn, 2),
+                "deals_commission_released": round(platform_released, 2),
+                "subscriptions_released": round(sub_released, 2),
                 "currency": currency,
             },
             "suppliers": build_page(supplier_items, total, page, page_size),

@@ -1,6 +1,15 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+WithdrawalBank = Literal["alif", "dc", "eskhata"]
+AVAILABLE_WITHDRAWAL_BANKS: frozenset[str] = frozenset({"alif"})
+WITHDRAWAL_BANK_LABELS: dict[str, str] = {
+    "alif": "Alif",
+    "dc": "DC",
+    "eskhata": "Eskhata",
+}
 
 
 class WithdrawalDestinationSchema(BaseModel):
@@ -19,6 +28,7 @@ class WithdrawalSchema(BaseModel):
     amount: float
     currency: str
     status: str
+    bank: str | None = None
     created_at: datetime
     completed_at: datetime | None
 
@@ -47,3 +57,4 @@ class WithdrawalDestinationCreate(BaseModel):
 class WithdrawalCreate(BaseModel):
     destination_id: int
     amount: float = Field(gt=0)
+    bank: WithdrawalBank = "alif"

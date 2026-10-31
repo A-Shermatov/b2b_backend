@@ -711,4 +711,7 @@ COMPAT_PATCHES = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS ix_user_documents_user ON user_documents (user_id, uploaded_at DESC);",
+    "ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS bank VARCHAR(20);",
+    "UPDATE withdrawals SET bank = 'alif' WHERE bank IS NULL;",
+    "CREATE INDEX IF NOT EXISTS ix_withdrawals_bank ON withdrawals (bank);",
 ]

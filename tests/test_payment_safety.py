@@ -195,6 +195,7 @@ class _FakeAlif:
     confirmed: list[str]
     canceled: list[str]
     fail_cancel: set[str]
+    checktxn_by_order: dict[str, dict]
 
     def __init__(self, settings=None):
         pass
@@ -209,12 +210,16 @@ class _FakeAlif:
         _FakeAlif.canceled.append(transaction_id)
         return {}
 
+    async def check_transaction(self, order_id: str):
+        return _FakeAlif.checktxn_by_order.get(order_id)
+
 
 @pytest.fixture
 def fake_alif(monkeypatch):
     _FakeAlif.confirmed = []
     _FakeAlif.canceled = []
     _FakeAlif.fail_cancel = set()
+    _FakeAlif.checktxn_by_order = {}
     settings = _marketplace_settings()
     monkeypatch.setattr("app.modules.payments.services.gateway.get_settings", lambda: settings)
     monkeypatch.setattr("app.modules.payments.services.gateway.AlifClient", _FakeAlif)
@@ -256,6 +261,50 @@ async def test_confirm_for_contract_skips_confirmed_transactions(db_conn, fake_a
     assert fake_alif.confirmed == ["sub-a", "sub-b"]
     assert await _tx_status(db_conn, held) == "ok"
     assert await _tx_status(db_conn, confirmed) == "ok"
+
+
+async def test_confirm_refreshes_empty_sub_transactions_via_checktxn(db_conn, fake_alif):  # noqa: F811
+    milestone = await _create_awaiting_milestone(db_conn)
+    order_id = await _insert_held_transaction(
+        db_conn,
+        milestone,
+        status="to_approve",
+        meta={"mpTerminalInfo": MARKETPLACE_META["mpTerminalInfo"]},
+    )
+    fake_alif.checktxn_by_order[order_id] = {
+        "status": "to_approve",
+        "sub_transactions": MARKETPLACE_META["sub_transactions"],
+    }
+    service = PaymentService(db_conn)
+
+    await service.confirm_marketplace_delivery_for_milestone(milestone["id"])
+
+    assert fake_alif.confirmed == ["sub-a", "sub-b"]
+    assert await _tx_status(db_conn, order_id) == "ok"
+    meta = await db_conn.fetchval(
+        "SELECT marketplace_meta FROM payment_gateway_transactions WHERE order_id = $1",
+        order_id,
+    )
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    assert len(meta.get("sub_transactions") or []) == 2
+
+
+async def test_confirm_fails_when_sub_transactions_missing(db_conn, fake_alif):  # noqa: F811
+    milestone = await _create_awaiting_milestone(db_conn)
+    order_id = await _insert_held_transaction(
+        db_conn,
+        milestone,
+        status="to_approve",
+        meta={"mpTerminalInfo": MARKETPLACE_META["mpTerminalInfo"]},
+    )
+    service = PaymentService(db_conn)
+
+    with pytest.raises(ConflictError, match="нет подтранзакций"):
+        await service.confirm_marketplace_delivery_for_milestone(milestone["id"])
+
+    assert fake_alif.confirmed == []
+    assert await _tx_status(db_conn, order_id) == "to_approve"
 
 
 async def test_cancel_marketplace_raises_and_keeps_failed_transactions(db_conn, fake_alif):  # noqa: F811
@@ -319,13 +368,19 @@ async def test_withdrawal_cannot_exceed_balance_and_takes_advisory_lock(db_conn)
     first_amount = balance.available * 0.6
 
     first = await service.request_withdrawal(
-        supplier_actor_id, WithdrawalCreate(destination_id=destination_id, amount=first_amount)
+        supplier_actor_id,
+        WithdrawalCreate(destination_id=destination_id, amount=first_amount, bank="alif"),
     )
     assert first.status == "pending"
+    assert first.bank == "alif"
     with pytest.raises(ConflictError):
         await service.request_withdrawal(
             supplier_actor_id,
-            WithdrawalCreate(destination_id=destination_id, amount=balance.available * 0.6),
+            WithdrawalCreate(
+                destination_id=destination_id,
+                amount=balance.available * 0.6,
+                bank="alif",
+            ),
         )
 
     count = await db_conn.fetchval(
@@ -336,3 +391,18 @@ async def test_withdrawal_cannot_exceed_balance_and_takes_advisory_lock(db_conn)
         "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"
     )
     assert held_locks >= 1
+
+
+async def test_withdrawal_rejects_unavailable_banks(db_conn):  # noqa: F811
+    supplier_actor_id, destination_id = await _released_supplier_balance(db_conn, 50.0)
+    service = SupplierFinanceService(db_conn)
+    for bank in ("dc", "eskhata"):
+        with pytest.raises(ConflictError, match="пока недоступен"):
+            await service.request_withdrawal(
+                supplier_actor_id,
+                WithdrawalCreate(destination_id=destination_id, amount=10.0, bank=bank),
+            )
+    count = await db_conn.fetchval(
+        "SELECT COUNT(*) FROM withdrawals WHERE actor_id = $1", supplier_actor_id
+    )
+    assert count == 0

@@ -74,8 +74,10 @@ class AdminEscrowResponse(BaseModel):
 
 
 class AdminMerchantCard(BaseModel):
-    role: Literal["supplier_pool", "platform"]
+    role: Literal["supplier_pool", "platform_commission", "platform_subscriptions"]
+    source: Literal["deals", "subscriptions"]
     label: str
+    hint: str = ""
     terminal_id: str | None = None
     terminal_masked: str | None = None
     held: float
@@ -92,6 +94,8 @@ class AdminMerchantTotals(BaseModel):
     refunded: float
     supplier_available: float
     withdrawn: float
+    deals_commission_released: float = 0
+    subscriptions_released: float = 0
     currency: str
 
 

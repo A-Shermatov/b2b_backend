@@ -45,6 +45,14 @@ class ReviewCreate(BaseModel):
         return self
 
 
+class ReviewPartySchema(BaseModel):
+    actor_id: int
+    kind: str
+    display_name: str
+    company_title: str | None = None
+    user_name: str | None = None
+
+
 class ReviewResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,3 +70,5 @@ class ReviewResponse(BaseModel):
     photos: list[ReviewMediaSchema] = []
     helpful_count: int = 0
     viewer_voted: bool = False
+    reviewer: ReviewPartySchema | None = None
+    target: ReviewPartySchema | None = None

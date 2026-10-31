@@ -509,6 +509,37 @@ class PaymentGatewayMixin:
             )
         await self._confirm_marketplace_rows(AlifClient(settings), rows)
 
+    async def _refresh_sub_transactions(self, client: AlifClient, row) -> list:
+        """Fetch sub_transactions via checktxn and persist them when callback missed them."""
+        try:
+            data = await client.check_transaction(row["order_id"])
+        except AlifGatewayError as exc:
+            logger.warning(
+                "Alif checktxn failed while refreshing sub_transactions for order=%s: %s",
+                row["order_id"],
+                exc.detail if hasattr(exc, "detail") else exc,
+            )
+            return []
+        if not isinstance(data, dict):
+            return []
+        subs = data.get("sub_transactions")
+        if not isinstance(subs, list) or not subs:
+            return []
+
+        meta = _parse_meta(row["marketplace_meta"])
+        meta["sub_transactions"] = subs
+        async with self.connection() as conn:
+            await conn.execute(
+                """
+                UPDATE payment_gateway_transactions
+                SET marketplace_meta = $2::jsonb, updated_at = NOW()
+                WHERE id = $1
+                """,
+                row["id"],
+                json.dumps(meta, ensure_ascii=False, default=str),
+            )
+        return subs
+
     async def _confirm_marketplace_rows(self, client: AlifClient, rows) -> None:
         for row in rows:
             meta = _parse_meta(row["marketplace_meta"])
@@ -516,11 +547,19 @@ class PaymentGatewayMixin:
             subs = meta.get("sub_transactions") or []
             if not subs:
                 logger.warning(
-                    "No sub_transactions to confirm for order=%s contract=%s",
+                    "No sub_transactions in meta for order=%s contract=%s — trying checktxn",
                     row["order_id"],
                     row["contract_id"],
                 )
-                continue
+                subs = await self._refresh_sub_transactions(client, row)
+                if subs:
+                    meta["sub_transactions"] = subs
+            if not subs:
+                raise ConflictError(
+                    f"Alif: нет подтранзакций для заказа {row['order_id']}. "
+                    "Банк не разделил платёж — подтверждение доставки невозможно. "
+                    "Повторите после появления sub_transactions в checktxn."
+                )
 
             amount_by_terminal = {
                 str(item.get("terminal_id")): Decimal(format_amount(item.get("amount") or 0))

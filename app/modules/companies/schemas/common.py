@@ -281,6 +281,7 @@ class PublicSupplier(BaseModel):
     industries: list[str] = []
     active_catalog_count: int = 0
     trust_level: str = "basic"
+    reputation_tier: str = "none"
     completed_contracts: int = 0
     active_contracts: int = 0
     disputed_contracts: int = 0
@@ -303,6 +304,7 @@ class PublicBuyer(BaseModel):
     verification_status: str = "pending"
     reviews_count: int = 0
     trust_level: str = "basic"
+    reputation_tier: str = "none"
     completed_contracts: int = 0
     active_contracts: int = 0
     disputed_contracts: int = 0

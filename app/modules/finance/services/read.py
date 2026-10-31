@@ -27,7 +27,7 @@ class FinanceReadMixin:
                 "SELECT COUNT(*) FROM withdrawals WHERE actor_id = $1",
                 """
                 SELECT id, actor_id, destination_id, amount, currency,
-                       status::text AS status, created_at, completed_at
+                       status::text AS status, bank, created_at, completed_at
                 FROM withdrawals
                 WHERE actor_id = $1
                 ORDER BY created_at DESC

@@ -18,25 +18,51 @@ async def test_merchant_balances_for_admin(client, admin_auth):
     data = response.json()
     assert data["source"] == "ledger"
     assert data["note"]
-    assert len(data["merchants"]) == 2
+    assert len(data["merchants"]) == 3
     roles = {item["role"] for item in data["merchants"]}
-    assert roles == {"supplier_pool", "platform"}
+    assert roles == {
+        "supplier_pool",
+        "platform_commission",
+        "platform_subscriptions",
+    }
     for merchant in data["merchants"]:
         assert merchant["held"] >= 0
         assert merchant["released"] >= 0
         assert merchant["refunded"] >= 0
         assert merchant["net_released"] >= 0
+        assert merchant["source"] in ("deals", "subscriptions")
         assert "configured" in merchant
-    assert {"held", "released", "refunded", "supplier_available", "withdrawn", "currency"} <= set(
-        data["totals"]
-    )
+        assert "hint" in merchant
+    assert {
+        "held",
+        "released",
+        "refunded",
+        "supplier_available",
+        "withdrawn",
+        "deals_commission_released",
+        "subscriptions_released",
+        "currency",
+    } <= set(data["totals"])
     supplier = next(m for m in data["merchants"] if m["role"] == "supplier_pool")
-    platform = next(m for m in data["merchants"] if m["role"] == "platform")
+    commission = next(m for m in data["merchants"] if m["role"] == "platform_commission")
+    subscriptions = next(
+        m for m in data["merchants"] if m["role"] == "platform_subscriptions"
+    )
+    assert supplier["source"] == "deals"
+    assert commission["source"] == "deals"
+    assert subscriptions["source"] == "subscriptions"
     assert data["totals"]["held"] == pytest.approx(
-        supplier["held"] + platform["held"], abs=0.01
+        supplier["held"] + commission["held"] + subscriptions["held"], abs=0.01
     )
     assert data["totals"]["released"] == pytest.approx(
-        supplier["released"] + platform["released"], abs=0.01
+        supplier["released"] + commission["released"] + subscriptions["released"],
+        abs=0.01,
+    )
+    assert data["totals"]["deals_commission_released"] == pytest.approx(
+        commission["released"], abs=0.01
+    )
+    assert data["totals"]["subscriptions_released"] == pytest.approx(
+        subscriptions["released"], abs=0.01
     )
     assert {"items", "total", "page", "page_size", "total_pages"} <= set(data["suppliers"])
 

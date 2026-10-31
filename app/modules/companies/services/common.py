@@ -203,6 +203,23 @@ def compute_success_rate(completed: int, disputed: int) -> float | None:
     return round(completed / total * 100, 1)
 
 
+def _reputation_tier(
+    *,
+    verification_status: str | None,
+    completed: int,
+    rating: float,
+    success_rate: float | None,
+) -> str:
+    from app.modules.trust.levels import resolve_reputation_tier
+
+    return resolve_reputation_tier(
+        verification_status=verification_status,
+        completed_contracts=completed,
+        rating=rating,
+        success_rate=success_rate,
+    )
+
+
 def _public_supplier_rating(row) -> float:
     reviews_avg = None
     try:
@@ -222,6 +239,15 @@ def row_to_public_supplier(row) -> PublicSupplier:
     rating = _public_supplier_rating(row)
     vip = bool(row.get("vip")) if "vip" in row.keys() else False
     promoted = bool(row.get("promoted")) if "promoted" in row.keys() else False
+    verification = row["verification_status"] or (
+        "pending" if row["kind"] == "company" and row["company_id"] else "unverified"
+    )
+    reputation = _reputation_tier(
+        verification_status=verification,
+        completed=completed,
+        rating=rating,
+        success_rate=success_rate,
+    )
     if row["kind"] == "company" and row["company_id"]:
         return PublicSupplier(
             actor_id=row["id"],
@@ -233,11 +259,12 @@ def row_to_public_supplier(row) -> PublicSupplier:
             description=row["description"],
             website=row["website"],
             rating=rating,
-            verification_status=row["verification_status"] or "pending",
+            verification_status=verification,
             reviews_count=int(row["reviews_count"] or 0),
             industries=list(row["industries"] or []),
             active_catalog_count=int(row["active_catalog_count"] or 0),
             trust_level=row["trust_level"],
+            reputation_tier=reputation,
             completed_contracts=completed,
             active_contracts=active,
             disputed_contracts=disputed,
@@ -259,11 +286,12 @@ def row_to_public_supplier(row) -> PublicSupplier:
         description=None,
         website=None,
         rating=rating,
-        verification_status=row["verification_status"] or "unverified",
+        verification_status=verification,
         reviews_count=int(row["reviews_count"] or 0),
         industries=[],
         active_catalog_count=int(row["active_catalog_count"] or 0),
         trust_level=row["trust_level"],
+        reputation_tier=reputation,
         completed_contracts=completed,
         active_contracts=active,
         disputed_contracts=disputed,
@@ -279,6 +307,15 @@ def row_to_public_buyer(row) -> PublicBuyer:
     disputed = int(row["disputed_contracts"] or 0)
     success_rate = compute_success_rate(completed, disputed)
     rating = _public_supplier_rating(row)
+    verification = row["verification_status"] or (
+        "pending" if row["kind"] == "company" and row["company_id"] else "unverified"
+    )
+    reputation = _reputation_tier(
+        verification_status=verification,
+        completed=completed,
+        rating=rating,
+        success_rate=success_rate,
+    )
     if row["kind"] == "company" and row["company_id"]:
         return PublicBuyer(
             actor_id=row["id"],
@@ -291,9 +328,10 @@ def row_to_public_buyer(row) -> PublicBuyer:
             website=row["website"],
             legal_name=row.get("legal_name"),
             rating=rating,
-            verification_status=row["verification_status"] or "pending",
+            verification_status=verification,
             reviews_count=int(row["reviews_count"] or 0),
             trust_level=row["trust_level"],
+            reputation_tier=reputation,
             completed_contracts=completed,
             active_contracts=active,
             disputed_contracts=disputed,
@@ -314,9 +352,10 @@ def row_to_public_buyer(row) -> PublicBuyer:
         website=None,
         legal_name=None,
         rating=rating,
-        verification_status=row["verification_status"] or "unverified",
+        verification_status=verification,
         reviews_count=int(row["reviews_count"] or 0),
         trust_level=row["trust_level"],
+        reputation_tier=reputation,
         completed_contracts=completed,
         active_contracts=active,
         disputed_contracts=disputed,

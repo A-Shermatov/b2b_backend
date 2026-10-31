@@ -30,6 +30,11 @@ def destination_schema(row) -> WithdrawalDestinationSchema:
 
 
 def withdrawal_schema(row) -> WithdrawalSchema:
+    bank = None
+    try:
+        bank = row["bank"]
+    except (KeyError, IndexError):
+        bank = None
     return WithdrawalSchema(
         id=row["id"],
         actor_id=row["actor_id"],
@@ -37,6 +42,7 @@ def withdrawal_schema(row) -> WithdrawalSchema:
         amount=row["amount"],
         currency=row["currency"],
         status=row["status"],
+        bank=bank,
         created_at=row["created_at"],
         completed_at=row["completed_at"],
     )

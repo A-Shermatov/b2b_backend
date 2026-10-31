@@ -1,4 +1,4 @@
-from app.modules.reviews.schemas import ReviewMediaSchema, ReviewResponse
+from app.modules.reviews.schemas import ReviewMediaSchema, ReviewPartySchema, ReviewResponse
 
 REVIEW_COLUMNS = """
     id,
@@ -57,17 +57,89 @@ async def load_viewer_votes(
     return {row["review_id"] for row in rows}
 
 
+def _party_label(kind: str, display_name: str | None, company_title: str | None, user_name: str | None) -> str:
+    if kind == "company":
+        return (company_title or display_name or "").strip() or "Компания"
+    name = (user_name or display_name or "").strip()
+    return name or "Пользователь"
+
+
+async def load_review_parties(conn, actor_ids: list[int]) -> dict[int, ReviewPartySchema]:
+    unique_ids = sorted({int(actor_id) for actor_id in actor_ids if actor_id})
+    if not unique_ids:
+        return {}
+    rows = await conn.fetch(
+        """
+        SELECT
+            a.id AS actor_id,
+            a.kind::text AS kind,
+            a.display_name,
+            c.title AS company_title,
+            NULLIF(TRIM(CONCAT_WS(' ', au.first_name, au.last_name)), '') AS actor_user_name,
+            NULLIF(TRIM(CONCAT_WS(' ', ou.first_name, ou.last_name)), '') AS owner_user_name,
+            (
+                SELECT NULLIF(TRIM(CONCAT_WS(' ', du.first_name, du.last_name)), '')
+                FROM company_users cu
+                JOIN users du ON du.id = cu.user_id
+                WHERE cu.company_id = c.id
+                ORDER BY CASE WHEN cu.role::text = 'director' THEN 0 ELSE 1 END, cu.id
+                LIMIT 1
+            ) AS director_user_name
+        FROM actors a
+        LEFT JOIN companies c ON c.id = a.company_id
+        LEFT JOIN users au ON au.id = a.user_id
+        LEFT JOIN users ou ON ou.id = c.owner_id
+        WHERE a.id = ANY($1::int[])
+        """,
+        unique_ids,
+    )
+    parties: dict[int, ReviewPartySchema] = {}
+    for row in rows:
+        kind = row["kind"] or "individual"
+        company_title = (row["company_title"] or "").strip() or None
+        user_name = (
+            row["actor_user_name"]
+            or row["owner_user_name"]
+            or row["director_user_name"]
+            or None
+        )
+        if isinstance(user_name, str):
+            user_name = user_name.strip() or None
+        display_name = _party_label(kind, row["display_name"], company_title, user_name)
+        parties[row["actor_id"]] = ReviewPartySchema(
+            actor_id=row["actor_id"],
+            kind=kind,
+            display_name=display_name,
+            company_title=company_title,
+            user_name=user_name,
+        )
+    for actor_id in unique_ids:
+        if actor_id not in parties:
+            parties[actor_id] = ReviewPartySchema(
+                actor_id=actor_id,
+                kind="individual",
+                display_name=f"Участник #{actor_id}",
+                company_title=None,
+                user_name=None,
+            )
+    return parties
+
+
 def shape_review_row(
     row,
     *,
     photos: list[ReviewMediaSchema] | None = None,
     viewer_voted: bool = False,
+    reviewer: ReviewPartySchema | None = None,
+    target: ReviewPartySchema | None = None,
 ) -> ReviewResponse:
     payload = dict(row)
     payload["tags"] = list(payload.get("tags") or [])
     payload["photos"] = photos or []
     payload["helpful_count"] = int(payload.get("helpful_count") or 0)
     payload["viewer_voted"] = viewer_voted
+    payload["reviewer"] = reviewer
+    payload["target"] = target
     return ReviewResponse.model_validate(payload)
 
 
@@ -77,11 +149,17 @@ async def shape_review_rows(
     ids = [row["id"] for row in rows]
     photos_map = await load_review_photos(conn, ids)
     voted = await load_viewer_votes(conn, ids, viewer_actor_id)
+    actor_ids = [row["reviewer_actor_id"] for row in rows] + [
+        row["target_actor_id"] for row in rows
+    ]
+    parties = await load_review_parties(conn, actor_ids)
     return [
         shape_review_row(
             row,
             photos=photos_map.get(row["id"], []),
             viewer_voted=row["id"] in voted,
+            reviewer=parties.get(row["reviewer_actor_id"]),
+            target=parties.get(row["target_actor_id"]),
         )
         for row in rows
     ]
