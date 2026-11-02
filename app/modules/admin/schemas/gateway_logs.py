@@ -20,6 +20,9 @@ class AdminGatewayLogItem(BaseModel):
     url: str | None = None
     response_status: int | None = None
     error: str | None = None
+    external_transaction_id: str | None = None
+    amount: float | None = None
+    currency: str | None = None
 
 
 class AdminGatewayLogDetail(AdminGatewayLogItem):
@@ -32,6 +35,12 @@ class AdminGatewayLogDetail(AdminGatewayLogItem):
     contract_id: int | None = None
     subscription_user_id: int | None = None
     plan: str | None = None
+    # Linked gateway transaction — for reconciliation with the bank
+    external_transaction_id: str | None = None
+    gateway_txn_status: str | None = None
+    amount: float | None = None
+    currency: str | None = None
+    paid_at: datetime | None = None
 
 
 class AdminGatewayLogListResponse(BaseModel):
@@ -40,3 +49,15 @@ class AdminGatewayLogListResponse(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class AdminGatewayLogExportItem(AdminGatewayLogDetail):
+    """Full log row for bank recon export (same fields as detail)."""
+
+
+class AdminGatewayLogExportResponse(BaseModel):
+    generated_at: datetime
+    filters: dict[str, Any]
+    total: int
+    items: list[AdminGatewayLogExportItem]
+

@@ -7,6 +7,7 @@ from app.modules.admin.api.common import AdminService, router
 from app.modules.admin.schemas import (
     AdminGatewayLogDetail,
     AdminGatewayLogDirection,
+    AdminGatewayLogExportResponse,
     AdminGatewayLogListResponse,
     AdminGatewayLogPeriod,
 )
@@ -36,6 +37,30 @@ async def admin_list_gateway_logs(
         query=query,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/gateway-logs/export",
+    response_model=AdminGatewayLogExportResponse,
+    dependencies=[Depends(admin_perm("admin_finance.view"))],
+)
+async def admin_export_gateway_logs(
+    order_id: Annotated[str | None, Query(max_length=64)] = None,
+    gateway: Annotated[str | None, Query(max_length=20)] = None,
+    operation: Annotated[str | None, Query(max_length=64)] = None,
+    direction: AdminGatewayLogDirection | None = None,
+    period: AdminGatewayLogPeriod = "7d",
+    query: Annotated[str | None, Query(max_length=255)] = None,
+):
+    """Full HTTP payloads for reconciliation with bank developers."""
+    return await AdminService().export_gateway_logs(
+        order_id=order_id,
+        gateway=gateway,
+        operation=operation,
+        direction=direction,
+        period=period,
+        query=query,
     )
 
 

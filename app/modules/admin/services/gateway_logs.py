@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.exceptions import NotFoundError
 from app.modules.admin.schemas.gateway_logs import AdminGatewayLogDetail, AdminGatewayLogItem
@@ -11,6 +11,18 @@ ITEM_COLUMNS = """
     gl.order_id, gl.method, gl.url, gl.response_status, gl.error
 """
 
+TXN_COLUMNS = """
+    pgt.external_transaction_id,
+    pgt.status AS gateway_txn_status,
+    pgt.amount,
+    pgt.currency,
+    pgt.paid_at,
+    pgt.milestone_id,
+    pgt.contract_id
+"""
+
+EXPORT_LIMIT = 500
+
 
 def _json_field(value):
     if value is None:
@@ -18,18 +30,25 @@ def _json_field(value):
     return parse_json(value)
 
 
+def _payment_kind(data: dict) -> str:
+    if data.get("milestone_id") is not None:
+        return "milestone"
+    if data.get("subscription_user_id") is not None:
+        return "subscription"
+    return "unknown"
+
+
 class AdminGatewayLogsMixin:
-    async def list_gateway_logs(
+    def _gateway_log_filters(
         self,
-        order_id: str | None = None,
-        gateway: str | None = None,
-        operation: str | None = None,
-        direction: str | None = None,
-        period: str = "7d",
-        query: str | None = None,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> dict:
+        *,
+        order_id: str | None,
+        gateway: str | None,
+        operation: str | None,
+        direction: str | None,
+        period: str,
+        query: str | None,
+    ) -> tuple[list, str]:
         params: list = []
         clauses: list[str] = []
         if period in PERIOD_INTERVALS:
@@ -57,9 +76,35 @@ class AdminGatewayLogsMixin:
                     gl.order_id ILIKE {placeholder}
                     OR gl.url ILIKE {placeholder}
                     OR gl.error ILIKE {placeholder}
+                    OR EXISTS (
+                        SELECT 1 FROM payment_gateway_transactions pgt_q
+                        WHERE pgt_q.order_id = gl.order_id
+                          AND pgt_q.external_transaction_id ILIKE {placeholder}
+                    )
                 )"""
             )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return params, where
+
+    async def list_gateway_logs(
+        self,
+        order_id: str | None = None,
+        gateway: str | None = None,
+        operation: str | None = None,
+        direction: str | None = None,
+        period: str = "7d",
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        params, where = self._gateway_log_filters(
+            order_id=order_id,
+            gateway=gateway,
+            operation=operation,
+            direction=direction,
+            period=period,
+            query=query,
+        )
 
         async with self.connection() as conn:
             total = int(
@@ -71,8 +116,13 @@ class AdminGatewayLogsMixin:
             list_params = [*params, page_size, (page - 1) * page_size]
             rows = await conn.fetch(
                 f"""
-                SELECT {ITEM_COLUMNS}
+                SELECT {ITEM_COLUMNS},
+                    pgt.external_transaction_id,
+                    pgt.amount,
+                    pgt.currency
                 FROM payment_gateway_http_logs gl
+                LEFT JOIN payment_gateway_transactions pgt
+                    ON gl.order_id IS NOT NULL AND pgt.order_id = gl.order_id
                 {where}
                 ORDER BY gl.created_at DESC, gl.id DESC
                 LIMIT ${len(list_params) - 1} OFFSET ${len(list_params)}
@@ -80,8 +130,15 @@ class AdminGatewayLogsMixin:
                 *list_params,
             )
 
+        items = []
+        for row in rows:
+            data = dict(row)
+            if data.get("amount") is not None:
+                data["amount"] = float(data["amount"])
+            items.append(AdminGatewayLogItem.model_validate(data))
+
         return {
-            "items": [AdminGatewayLogItem.model_validate(dict(row)) for row in rows],
+            "items": items,
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -94,11 +151,11 @@ class AdminGatewayLogsMixin:
                 f"""
                 SELECT {ITEM_COLUMNS},
                     gl.request_headers, gl.request_body, gl.response_body, gl.response_raw,
-                    pgt.milestone_id, pgt.contract_id,
+                    {TXN_COLUMNS},
                     spo.user_id AS subscription_user_id, spo.plan
                 FROM payment_gateway_http_logs gl
                 LEFT JOIN payment_gateway_transactions pgt
-                    ON gl.order_id LIKE 'MS%' AND pgt.order_id = gl.order_id
+                    ON gl.order_id IS NOT NULL AND pgt.order_id = gl.order_id
                 LEFT JOIN subscription_payment_orders spo
                     ON gl.order_id LIKE 'SUB%' AND spo.order_id = gl.order_id
                 WHERE gl.id = $1
@@ -108,12 +165,82 @@ class AdminGatewayLogsMixin:
         if not row:
             raise NotFoundError("Gateway log not found")
         data = dict(row)
-        if data["milestone_id"] is not None:
-            payment_kind = "milestone"
-        elif data["subscription_user_id"] is not None:
-            payment_kind = "subscription"
-        else:
-            payment_kind = "unknown"
         for key in ("request_headers", "request_body", "response_body"):
             data[key] = _json_field(data[key])
-        return AdminGatewayLogDetail.model_validate({**data, "payment_kind": payment_kind})
+        if data.get("amount") is not None:
+            data["amount"] = float(data["amount"])
+        return AdminGatewayLogDetail.model_validate(
+            {**data, "payment_kind": _payment_kind(data)}
+        )
+
+    async def export_gateway_logs(
+        self,
+        order_id: str | None = None,
+        gateway: str | None = None,
+        operation: str | None = None,
+        direction: str | None = None,
+        period: str = "7d",
+        query: str | None = None,
+    ) -> dict:
+        """Full HTTP payloads for sharing with bank developers (capped)."""
+        params, where = self._gateway_log_filters(
+            order_id=order_id,
+            gateway=gateway,
+            operation=operation,
+            direction=direction,
+            period=period,
+            query=query,
+        )
+        async with self.connection() as conn:
+            total = int(
+                await conn.fetchval(
+                    f"SELECT COUNT(*) FROM payment_gateway_http_logs gl {where}",
+                    *params,
+                )
+            )
+            list_params = [*params, EXPORT_LIMIT]
+            rows = await conn.fetch(
+                f"""
+                SELECT {ITEM_COLUMNS},
+                    gl.request_headers, gl.request_body, gl.response_body, gl.response_raw,
+                    {TXN_COLUMNS},
+                    spo.user_id AS subscription_user_id, spo.plan
+                FROM payment_gateway_http_logs gl
+                LEFT JOIN payment_gateway_transactions pgt
+                    ON gl.order_id IS NOT NULL AND pgt.order_id = gl.order_id
+                LEFT JOIN subscription_payment_orders spo
+                    ON gl.order_id LIKE 'SUB%' AND spo.order_id = gl.order_id
+                {where}
+                ORDER BY gl.created_at DESC, gl.id DESC
+                LIMIT ${len(list_params)}
+                """,
+                *list_params,
+            )
+
+        items = []
+        for row in rows:
+            data = dict(row)
+            for key in ("request_headers", "request_body", "response_body"):
+                data[key] = _json_field(data[key])
+            if data.get("amount") is not None:
+                data["amount"] = float(data["amount"])
+            items.append(
+                AdminGatewayLogDetail.model_validate(
+                    {**data, "payment_kind": _payment_kind(data)}
+                )
+            )
+
+        return {
+            "generated_at": datetime.now(timezone.utc),
+            "filters": {
+                "order_id": order_id,
+                "gateway": gateway,
+                "operation": operation,
+                "direction": direction,
+                "period": period,
+                "query": query,
+                "limit": EXPORT_LIMIT,
+            },
+            "total": total,
+            "items": items,
+        }
