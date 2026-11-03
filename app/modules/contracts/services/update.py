@@ -180,7 +180,7 @@ class ContractUpdateMixin:
             )
 
         # Release Alif Marketplace hold before marking milestones released locally.
-        await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
+        paid_out = await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
 
         async with self.connection() as conn:
             async with conn.transaction():
@@ -188,10 +188,26 @@ class ContractUpdateMixin:
                     "SELECT id FROM contracts WHERE id = $1 FOR UPDATE", contract_id
                 )
                 row = await load_contract_row(conn, contract_id)
-                # The bank has already paid the supplier: a dispute opened meanwhile
-                # must not keep the paid milestones "funded" in our books.
+                # Once the bank has paid the supplier, a dispute opened meanwhile must not
+                # keep the paid milestones "funded" in our books.
                 await self._ensure_submission_reviewable(
-                    conn, row, submission_id, buyer_id, after_payout=True
+                    conn,
+                    row,
+                    submission_id,
+                    buyer_id,
+                    require_funded=not paid_out,
+                    after_payout=paid_out,
+                )
+                disputed_meanwhile = paid_out and bool(
+                    await conn.fetchval(
+                        """
+                        SELECT 1 FROM disputes
+                        WHERE contract_id = $1
+                          AND status::text IN ('open', 'under_review', 'appealed')
+                        LIMIT 1
+                        """,
+                        contract_id,
+                    )
                 )
                 await conn.execute(
                     """
@@ -201,14 +217,15 @@ class ContractUpdateMixin:
                     """,
                     submission_id,
                 )
-                await conn.execute(
-                    "UPDATE contracts SET status = 'completed'::contract_status WHERE id = $1",
-                    contract_id,
-                )
-                await conn.execute(
-                    "UPDATE rfqs SET status = 'completed'::rfq_status WHERE id = $1",
-                    row["rfq_id"],
-                )
+                if not disputed_meanwhile:
+                    await conn.execute(
+                        "UPDATE contracts SET status = 'completed'::contract_status WHERE id = $1",
+                        contract_id,
+                    )
+                    await conn.execute(
+                        "UPDATE rfqs SET status = 'completed'::rfq_status WHERE id = $1",
+                        row["rfq_id"],
+                    )
                 released = await conn.fetch(
                     """
                     UPDATE payment_milestones
@@ -233,22 +250,27 @@ class ContractUpdateMixin:
                     "contract",
                     contract_id,
                     actor_id=buyer_id,
-                    details={"submission_id": submission_id},
-                )
-                await log_event(
-                    conn,
-                    "contract.complete",
-                    "contract",
-                    contract_id,
-                    actor_id=buyer_id,
                     details={
-                        "before": {"status": row["status"]},
-                        "after": {"status": "completed"},
-                        "released_milestone_ids": [item["id"] for item in released],
+                        "submission_id": submission_id,
+                        "disputed_meanwhile": disputed_meanwhile,
                     },
                 )
+                if not disputed_meanwhile:
+                    await log_event(
+                        conn,
+                        "contract.complete",
+                        "contract",
+                        contract_id,
+                        actor_id=buyer_id,
+                        details={
+                            "before": {"status": row["status"]},
+                            "after": {"status": "completed"},
+                            "released_milestone_ids": [item["id"] for item in released],
+                        },
+                    )
             result = await load_contract_schema(conn, contract_id)
-        await NotificationService().notify_contract_closed(row)
+        if not disputed_meanwhile:
+            await NotificationService().notify_contract_closed(row)
         return result
 
     async def reject_submission(self, contract_id: int, submission_id: int, buyer_id: int):

@@ -4,6 +4,7 @@ from typing import Iterable
 
 from app.core.exceptions import ValidationError
 from app.modules.finance.services.common import record_platform_payment
+from app.modules.payments.gateways.alif import MIN_MARKETPLACE_PART, marketplace_commission
 from app.modules.settings.service import SETTINGS_CURRENCY, PlatformSettings
 
 
@@ -12,11 +13,6 @@ class CommissionQuote:
     amount: float
     percent: float
     minimum: float
-
-
-# The bank splits a TJS payment into supplier + commission parts and rejects any part
-# below 1 TJS (same rule as payments.gateways.alif.marketplace_commission).
-MIN_PAYMENT_PART = 1.0
 
 
 def _money(value: float) -> float:
@@ -28,22 +24,21 @@ def is_settings_currency(currency) -> bool:
     return str(code or "").upper() == SETTINGS_CURRENCY
 
 
-def _bank_splittable(amount: float, commission: float) -> float:
-    if commission <= 0 or commission >= amount:
-        return commission
-    if amount < 2 * MIN_PAYMENT_PART:
-        return 0.0
-    return min(max(commission, MIN_PAYMENT_PART), amount - MIN_PAYMENT_PART)
+def calculate_commission(
+    amount: float, currency, settings: PlatformSettings, *, bank_split: bool = False
+) -> CommissionQuote:
+    """Commission of a contract.
 
-
-def calculate_commission(amount: float, currency, settings: PlatformSettings) -> CommissionQuote:
+    bank_split: the payment is split by the bank into supplier + commission parts
+    (Alif Marketplace), so each part must meet the bank minimum.
+    """
     percent = max(0.0, float(settings.commission_percent))
     minimum = float(settings.commission_min) if is_settings_currency(currency) else 0.0
     if amount <= 0:
         return CommissionQuote(amount=0.0, percent=percent, minimum=minimum)
     commission = min(max(minimum, amount * percent / 100), amount)
-    if is_settings_currency(currency):
-        commission = _bank_splittable(amount, commission)
+    if bank_split and is_settings_currency(currency):
+        commission = float(marketplace_commission(amount, commission))
     return CommissionQuote(
         amount=_money(commission),
         percent=percent,
@@ -61,7 +56,9 @@ def ensure_contract_amount_allowed(amount: float, currency, settings: PlatformSe
         )
 
 
-def split_commission(total: float, milestone_amounts: list[float]) -> list[float]:
+def split_commission(
+    total: float, milestone_amounts: list[float], *, bank_split: bool = False
+) -> list[float]:
     if not milestone_amounts:
         return []
     base = sum(milestone_amounts)
@@ -69,7 +66,30 @@ def split_commission(total: float, milestone_amounts: list[float]) -> list[float
         return [0.0 for _ in milestone_amounts]
     parts = [_money(total * amount / base) for amount in milestone_amounts[:-1]]
     parts.append(max(0.0, _money(total - sum(parts))))
-    return parts
+    if not bank_split:
+        return parts
+    return _merge_small_parts(parts)
+
+
+def _merge_small_parts(parts: list[float]) -> list[float]:
+    """Move commission parts below the bank minimum onto other milestones (total kept)."""
+    minimum = float(MIN_MARKETPLACE_PART)
+    merged: list[float] = []
+    carry = 0.0
+    for part in parts[:-1]:
+        part = _money(part + carry)
+        carry = 0.0
+        if 0 < part < minimum:
+            carry, part = part, 0.0
+        merged.append(part)
+    last = _money(parts[-1] + carry)
+    if 0 < last < minimum:
+        previous = next((i for i in range(len(merged) - 1, -1, -1) if merged[i] > 0), None)
+        if previous is not None:
+            merged[previous] = _money(merged[previous] + last)
+            last = 0.0
+    merged.append(last)
+    return merged
 
 
 def format_commission_terms(percent: float | None, minimum: float | None, currency: str) -> str:

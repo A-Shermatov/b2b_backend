@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.modules.admin.services.common import ESCROW_LOCKED_STATUSES
+from app.modules.settings.service import get_platform_settings
 
 
 class AdminDashboardMixin:
@@ -79,12 +80,9 @@ class AdminDashboardMixin:
                         month_start,
                     )
                 ),
-                "commission_percent": float(
-                    await conn.fetchval(
-                        "SELECT value FROM platform_settings WHERE key = 'commission_percent'"
-                    )
-                    or 0
-                ),
+                "commission_percent": (
+                    await get_platform_settings(conn, use_cache=False)
+                ).commission_percent,
                 "pending_verifications": int(
                     await conn.fetchval(
                         """

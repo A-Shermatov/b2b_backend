@@ -146,19 +146,21 @@ class PaymentUpdateMixin:
             row = await self._load_milestone_contract(conn, milestone_id)
             await self._ensure_milestone_approvable(conn, row, buyer_id)
 
-        await self.confirm_marketplace_delivery_for_milestone(milestone_id)
+        paid_out = await self.confirm_marketplace_delivery_for_milestone(milestone_id)
 
-        # The bank has released the money at this point, so only re-check what could
-        # make recording the release wrong; a dispute opened in the meantime must not
-        # leave the milestone "funded" while the supplier already got paid.
         async with self.connection() as conn:
             async with conn.transaction():
                 row = await self._load_milestone_contract(conn, milestone_id, for_update=True)
-                if row["buyer_actor_id"] != buyer_id:
+                if not paid_out:
+                    await self._ensure_milestone_approvable(conn, row, buyer_id)
+                # The bank has released the money, so only re-check what could make
+                # recording the release wrong: a dispute opened in the meantime must
+                # not leave the milestone "funded" while the supplier already got paid.
+                elif row["buyer_actor_id"] != buyer_id:
                     raise ForbiddenError("Access denied")
-                if row["status"] == "released":
+                elif row["status"] == "released":
                     return {"id": milestone_id, "status": "released"}
-                if row["status"] != "funded":
+                elif row["status"] != "funded":
                     logger.error(
                         "Milestone %s became %s while its payout was confirmed in the bank",
                         milestone_id,

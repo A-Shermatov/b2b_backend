@@ -13,9 +13,12 @@ import pytest
 
 from app.config import Settings
 from app.core.exceptions import ConflictError
+from app.modules.finance.services.commission import calculate_commission, split_commission
+from app.modules.payments.gateways.alif import AlifGatewayError
 from app.modules.payments.services import PaymentService
+from app.modules.settings.service import PlatformSettings
 from tests.admin.test_disputes import _create_contract, _open_dispute
-from tests.sql import execute, fetch, fetchval
+from tests.sql import execute, fetch, fetchval, insert_work_submission
 
 API = "/api/v1"
 SUPPLIER_TERMINAL = "610184"
@@ -37,6 +40,8 @@ def _marketplace_settings() -> Settings:
 class _FakeAlif:
     confirmed: list[str] = []
     canceled: list[str] = []
+    amounts: dict[str, Decimal] = {}
+    fail_cancel: set[str] = set()
     on_confirm = None
 
     def __init__(self, settings=None):
@@ -44,12 +49,16 @@ class _FakeAlif:
 
     async def confirm_delivery(self, *, transaction_id, amount, order_id=None):
         _FakeAlif.confirmed.append(transaction_id)
+        _FakeAlif.amounts[transaction_id] = amount
         if _FakeAlif.on_confirm:
             await _FakeAlif.on_confirm()
         return {}
 
     async def cancel_marketplace(self, *, transaction_id, amount, reason="", order_id=None):
+        if transaction_id in _FakeAlif.fail_cancel:
+            raise AlifGatewayError("boom")
         _FakeAlif.canceled.append(transaction_id)
+        _FakeAlif.amounts[transaction_id] = amount
         return {}
 
     async def check_transaction(self, order_id):
@@ -60,6 +69,8 @@ class _FakeAlif:
 def fake_alif(monkeypatch):
     _FakeAlif.confirmed = []
     _FakeAlif.canceled = []
+    _FakeAlif.amounts = {}
+    _FakeAlif.fail_cancel = set()
     _FakeAlif.on_confirm = None
     settings = _marketplace_settings()
     monkeypatch.setattr("app.modules.payments.services.gateway.get_settings", lambda: settings)
@@ -321,3 +332,195 @@ def test_marketplace_parts_meet_alif_minimum():
     amounts = [e["amount"] for e in entries]
     assert sum(amounts) == 10
     assert all(a >= 1 for a in amounts), f"parts {amounts} will be rejected by Alif"
+
+
+async def _tx_meta(order_id: str) -> dict:
+    meta = await fetchval(
+        "SELECT marketplace_meta FROM payment_gateway_transactions WHERE order_id = $1", order_id
+    )
+    return json.loads(meta) if isinstance(meta, str) else (meta or {})
+
+
+async def _open_dispute_row(contract_id: int) -> None:
+    await execute(
+        """
+        INSERT INTO disputes (contract_id, status, created_at, updated_at)
+        VALUES ($1, 'open', NOW(), NOW())
+        """,
+        contract_id,
+    )
+    await execute("UPDATE contracts SET status = 'disputed' WHERE id = $1", contract_id)
+
+
+@pytest.mark.asyncio
+async def test_dispute_blocks_release_when_bank_did_not_pay(
+    client, buyer_auth, supplier_auth, monkeypatch
+):
+    """Without a marketplace payout a dispute opened meanwhile still blocks the release."""
+    contract_id = await _create_contract(client, buyer_auth, supplier_auth, "QA mock race")
+    m1, _ = await _two_funded_milestones(contract_id)
+
+    async def no_payout(self, milestone_id):
+        await _open_dispute_row(contract_id)
+        return False
+
+    monkeypatch.setattr(PaymentService, "confirm_marketplace_delivery_for_milestone", no_payout)
+    res = await client.post(
+        f"{API}/buyer/payments/milestones/{m1['id']}/approve", headers=buyer_auth["headers"]
+    )
+    assert res.status_code == 409, res.text
+    assert await fetchval(
+        "SELECT status::text FROM payment_milestones WHERE id = $1", m1["id"]
+    ) == "funded"
+
+
+@pytest.mark.asyncio
+async def test_submission_paid_out_during_dispute_keeps_contract_disputed(
+    client, buyer_auth, supplier_auth, fake_alif
+):
+    contract_id = await _create_contract(client, buyer_auth, supplier_auth, "QA submit race")
+    m1, m2 = await _two_funded_milestones(contract_id)
+    await _held_tx(m1["id"], contract_id, m1["amount"])
+    await _held_tx(m2["id"], contract_id, m2["amount"])
+    await execute("UPDATE contracts SET status = 'delivered' WHERE id = $1", contract_id)
+    submission_id = await insert_work_submission(contract_id=contract_id, note="QA")
+
+    async def open_dispute_once():
+        fake_alif.on_confirm = None
+        await _open_dispute_row(contract_id)
+
+    fake_alif.on_confirm = open_dispute_once
+    res = await client.post(
+        f"{API}/buyer/contracts/{contract_id}/submissions/{submission_id}/approve",
+        headers=buyer_auth["headers"],
+    )
+    assert res.status_code == 200, res.text
+    assert [m["status"] for m in await _milestones(contract_id)] == ["released", "released"]
+    assert await fetchval(
+        "SELECT status::text FROM contracts WHERE id = $1", contract_id
+    ) == "disputed"
+
+
+@pytest.mark.asyncio
+async def test_failed_cancel_does_not_hide_a_later_bank_cancel(
+    client, admin_auth, buyer_auth, supplier_auth, fake_alif
+):
+    contract_id = await _create_contract(client, buyer_auth, supplier_auth, "QA failed cancel")
+    m1, _ = await _two_funded_milestones(contract_id)
+    order_id = await _held_tx(m1["id"], contract_id, m1["amount"])
+    await execute(
+        "UPDATE payment_milestones SET status = 'released' WHERE contract_id = $1 AND id <> $2",
+        contract_id,
+        m1["id"],
+    )
+    fake_alif.fail_cancel = {f"sub-{order_id}"}
+
+    res = await client.post(
+        f"{API}/admin/contracts/{contract_id}/action",
+        headers=admin_auth["headers"],
+        json={"action": "cancel", "reason": "QA"},
+    )
+    assert res.status_code == 409, res.text
+    assert "cancel_requested" not in await _tx_meta(order_id)
+
+    await PaymentService().apply_gateway_status(order_id, "canceled", "T-1", {"status": "canceled"})
+    assert await fetchval(
+        "SELECT status::text FROM payment_milestones WHERE id = $1", m1["id"]
+    ) == "awaiting_payment"
+
+
+@pytest.mark.asyncio
+async def test_payment_after_cancellation_is_refunded(
+    client, buyer_auth, supplier_auth, fake_alif
+):
+    contract_id = await _create_contract(client, buyer_auth, supplier_auth, "QA late payment")
+    m1, _ = await _two_funded_milestones(contract_id)
+    await execute("UPDATE payment_milestones SET status = 'awaiting_payment' WHERE id = $1", m1["id"])
+    order_id = await _held_tx(m1["id"], contract_id, m1["amount"], status="pending")
+    await execute(
+        "UPDATE payment_gateway_transactions SET marketplace_meta = '{}'::jsonb WHERE order_id = $1",
+        order_id,
+    )
+    service = PaymentService()
+
+    await service.cancel_marketplace_for_contract(contract_id)
+    assert await _tx_status(order_id) == "canceled"
+
+    late_subs = [{"transaction_id": "late-1", "terminal_id": SUPPLIER_TERMINAL}]
+    await service.apply_gateway_status(
+        order_id, "to_approve", "T-9", {"status": "to_approve", "sub_transactions": late_subs}
+    )
+    assert fake_alif.canceled == ["late-1"]
+    assert await _tx_status(order_id) == "canceled"
+    assert await fetchval(
+        "SELECT status::text FROM payment_milestones WHERE id = $1", m1["id"]
+    ) == "awaiting_payment"
+
+
+@pytest.mark.asyncio
+async def test_bank_cancel_reverts_contract_activation(
+    client, buyer_auth, supplier_auth, fake_alif
+):
+    contract_id = await _create_contract(client, buyer_auth, supplier_auth, "QA deactivate")
+    milestone_id = await fetchval(
+        "SELECT id FROM payment_milestones WHERE contract_id = $1", contract_id
+    )
+    await execute(
+        "UPDATE payment_milestones SET status = 'awaiting_payment' WHERE id = $1", milestone_id
+    )
+    await execute("UPDATE contracts SET status = 'pending_payment' WHERE id = $1", contract_id)
+    amount = await fetchval("SELECT amount FROM payment_milestones WHERE id = $1", milestone_id)
+    order_id = await _held_tx(milestone_id, contract_id, amount, status="pending")
+    service = PaymentService()
+
+    await service.apply_gateway_status(order_id, "to_approve", "T-1", {"status": "to_approve"})
+    assert await fetchval("SELECT status::text FROM contracts WHERE id = $1", contract_id) == "active"
+    await service.apply_gateway_status(order_id, "canceled", "T-1", {"status": "canceled"})
+    assert await fetchval(
+        "SELECT status::text FROM contracts WHERE id = $1", contract_id
+    ) == "pending_payment"
+
+
+@pytest.mark.asyncio
+async def test_legacy_order_without_split_confirms_rebuilt_amounts(
+    client, buyer_auth, supplier_auth, fake_alif
+):
+    contract_id = await _create_contract(client, buyer_auth, supplier_auth, "QA legacy split")
+    m1, _ = await _two_funded_milestones(contract_id)
+    await execute("UPDATE payment_milestones SET commission_amount = 500 WHERE id = $1", m1["id"])
+    order_id = await _held_tx(m1["id"], contract_id, m1["amount"])
+    legacy = {
+        "sub_transactions": [
+            {"transaction_id": "leg-s", "terminal_id": SUPPLIER_TERMINAL},
+            {"transaction_id": "leg-p", "terminal_id": PLATFORM_TERMINAL},
+        ]
+    }
+    await execute(
+        "UPDATE payment_gateway_transactions SET marketplace_meta = $2::jsonb WHERE order_id = $1",
+        order_id,
+        json.dumps(legacy),
+    )
+
+    await PaymentService().confirm_marketplace_delivery_for_milestone(m1["id"])
+    assert fake_alif.amounts == {"leg-s": Decimal("9500.00"), "leg-p": Decimal("500.00")}
+
+
+def test_bank_minimum_applies_only_to_bank_split():
+    settings = PlatformSettings(commission_percent=5, commission_min=0)
+    assert calculate_commission(10, "TJS", settings).amount == 0.5
+    assert calculate_commission(10, "TJS", settings, bank_split=True).amount == 1.0
+
+
+@pytest.mark.parametrize(
+    ("total", "amounts", "expected"),
+    [
+        (1.5, [5, 5, 5], [0.0, 1.5, 0.0]),
+        (2.4, [16, 8], [2.4, 0.0]),
+        (3.0, [50, 50], [1.5, 1.5]),
+    ],
+)
+def test_split_commission_keeps_parts_payable(total, amounts, expected):
+    parts = split_commission(total, amounts, bank_split=True)
+    assert parts == expected
+    assert round(sum(parts), 2) == total
+    assert all(part == 0 or part >= 1 for part in parts)
