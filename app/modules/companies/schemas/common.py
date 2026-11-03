@@ -275,6 +275,7 @@ class PublicSupplier(BaseModel):
     country: str | None = None
     description: str | None = None
     website: str | None = None
+    logo: str | None = None
     rating: float = 0.0
     verification_status: str = "pending"
     reviews_count: int = 0
@@ -288,6 +289,12 @@ class PublicSupplier(BaseModel):
     success_rate: float | None = None
     vip: bool = False
     promoted: bool = False
+
+    @field_serializer("logo")
+    def serialize_logo(self, value: str | None) -> str | None:
+        if not value:
+            return value
+        return public_file_url(value)
 
 
 class PublicBuyer(BaseModel):

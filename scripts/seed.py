@@ -30,6 +30,7 @@ CATEGORIES = [
     ("FTL перевозки", "ftl", "logistics"),
     ("Строительство и ремонт", "construction", None),
     ("Ремонт помещений", "renovation", "construction"),
+    ("Деловые услуги", "business", None),
 ]
 
 
@@ -174,11 +175,13 @@ async def insert_company_extras(
 
 
 async def seed_categories(conn) -> None:
-    existing = await conn.fetchval("SELECT id FROM categories LIMIT 1")
-    if existing:
-        return
-    slug_to_id: dict[str, int] = {}
+    slug_to_id = {
+        row["slug"]: row["id"]
+        for row in await conn.fetch("SELECT id, slug FROM categories")
+    }
     for name, slug, parent_slug in CATEGORIES:
+        if slug in slug_to_id:
+            continue
         parent_id = slug_to_id.get(parent_slug) if parent_slug else None
         row = await conn.fetchrow(
             """
@@ -191,7 +194,7 @@ async def seed_categories(conn) -> None:
             slug,
         )
         slug_to_id[slug] = row["id"]
-    print(f"Seeded {len(CATEGORIES)} categories")
+    print(f"Categories ready: {len(slug_to_id)}")
 
 
 async def seed() -> None:
@@ -333,6 +336,9 @@ async def seed() -> None:
         print(f"Seeded both: {DEMO_BOTH_EMAIL} / Both123!")
 
     await backfill_actors_if_needed()
+    from scripts.seed_presentation import seed_presentation
+
+    await seed_presentation()
     print("Seed complete.")
     await pool.close()
 

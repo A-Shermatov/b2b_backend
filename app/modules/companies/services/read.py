@@ -30,6 +30,7 @@ SUPPLIER_SELECT = f"""
         c.country,
         c.description,
         c.website,
+        c.logo,
         c.rating,
         {ACTOR_VERIFICATION_SQL} AS verification_status,
         (

@@ -258,6 +258,7 @@ def row_to_public_supplier(row) -> PublicSupplier:
             country=row["country"],
             description=row["description"],
             website=row["website"],
+            logo=row["logo"],
             rating=rating,
             verification_status=verification,
             reviews_count=int(row["reviews_count"] or 0),
