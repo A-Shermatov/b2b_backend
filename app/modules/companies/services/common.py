@@ -238,7 +238,7 @@ def row_to_public_supplier(row) -> PublicSupplier:
     success_rate = compute_success_rate(completed, disputed)
     rating = _public_supplier_rating(row)
     vip = bool(row.get("vip")) if "vip" in row.keys() else False
-    promoted = bool(row.get("promoted")) if "promoted" in row.keys() else False
+    plan = row.get("subscription_plan") if "subscription_plan" in row.keys() else None
     verification = row["verification_status"] or (
         "pending" if row["kind"] == "company" and row["company_id"] else "unverified"
     )
@@ -271,7 +271,8 @@ def row_to_public_supplier(row) -> PublicSupplier:
             disputed_contracts=disputed,
             success_rate=success_rate,
             vip=vip,
-            promoted=promoted,
+            promoted=plan is not None,
+            subscription_plan=plan,
         )
     display = row["display_name"]
     if not display:
@@ -297,7 +298,8 @@ def row_to_public_supplier(row) -> PublicSupplier:
         active_contracts=active,
         disputed_contracts=disputed,
         vip=vip,
-        promoted=promoted,
+        promoted=plan is not None,
+        subscription_plan=plan,
         success_rate=success_rate,
     )
 

@@ -94,6 +94,7 @@ class CatalogActorBrief(BaseModel):
     photo: str | None = None
     vip: bool = False
     promoted: bool = False
+    subscription_plan: str | None = None
 
 
 class CatalogItemWithRelations(CatalogItemSchema):

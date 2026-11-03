@@ -14,6 +14,7 @@ from app.modules.catalog.schemas.common import (
     ItemStatsSchema,
 )
 from app.modules.catalog.services.quality import catalog_item_completeness_percent
+from app.modules.subscription.services.common import active_plan_sql
 from app.modules.verification.common import actor_verification_sql
 from app.utils.audit import log_event
 from app.utils.storage import public_file_url
@@ -419,7 +420,7 @@ class CatalogItemMixin:
                      AND (c.vip_until IS NULL OR c.vip_until > NOW()) THEN 2
                 WHEN EXISTS (
                     SELECT 1 FROM supplier_subscriptions ss
-                    WHERE ss.user_id = c.owner_id
+                    WHERE ss.user_id = COALESCE(c.owner_id, a.user_id)
                       AND ss.plan::text IN ('pro', 'business')
                       AND ss.active_until IS NOT NULL
                       AND ss.active_until > NOW()
@@ -465,7 +466,7 @@ class CatalogItemMixin:
             if schema.status != "active":
                 raise NotFoundError("Catalog item not found")
             actor_row = await conn.fetchrow(
-                """
+                f"""
                 SELECT
                     a.id,
                     COALESCE(
@@ -479,13 +480,7 @@ class CatalogItemMixin:
                         COALESCE(c.vip, FALSE)
                         AND (c.vip_until IS NULL OR c.vip_until > NOW())
                     ) AS vip,
-                    EXISTS (
-                        SELECT 1 FROM supplier_subscriptions ss
-                        WHERE ss.user_id = c.owner_id
-                          AND ss.plan::text IN ('pro', 'business', 'start')
-                          AND ss.active_until IS NOT NULL
-                          AND ss.active_until > NOW()
-                    ) AS promoted,
+                    {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS subscription_plan,
                     COALESCE(ou.status::text, au.status::text) AS owner_status,
                     COALESCE(c.operational_status::text, 'active') AS operational_status,
                     a.is_active
@@ -511,7 +506,8 @@ class CatalogItemMixin:
             rating=float(actor_row["rating"] or 0),
             photo=public_file_url(photo_raw) if photo_raw else None,
             vip=bool(actor_row["vip"]),
-            promoted=bool(actor_row["promoted"]),
+            promoted=actor_row["subscription_plan"] is not None,
+            subscription_plan=actor_row["subscription_plan"],
         )
         return schema.model_copy(update={"actor": actor})
 
