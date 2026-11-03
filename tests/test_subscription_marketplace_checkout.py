@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from app.modules.payments.gateways.alif import build_mp_terminal_info
-from tests.sql import fetchrow
+from tests.sql import execute, fetchrow
 from tests.test_alif_gateway import _settings
 
 
@@ -27,6 +27,11 @@ async def test_subscription_checkout_uses_marketplace_when_enabled(client, suppl
         alif_test_merchant_2="m2",
     )
     assert settings.alif_marketplace_enabled
+    # Checkout reuses a recent pending order; one left by a previous run would skip
+    # the gateway call this test inspects.
+    await execute(
+        "UPDATE subscription_payment_orders SET status = 'failed' WHERE status = 'pending'"
+    )
 
     captured = {}
 

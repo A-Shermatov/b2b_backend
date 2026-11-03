@@ -3,8 +3,11 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import asyncpg
 
@@ -122,6 +125,17 @@ app.add_middleware(
     expose_headers=["Authorization", "X-Access-Token"],
 )
 app.add_middleware(CollapseDuplicateSlashesMiddleware)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(_request: Request, exc: RequestValidationError):
+    # FastAPI's default handler fails with 500 when the rejected body is not UTF-8.
+    errors = jsonable_encoder(
+        exc.errors(),
+        custom_encoder={bytes: lambda value: value.decode("utf-8", errors="replace")},
+    )
+    return JSONResponse(status_code=422, content={"detail": errors})
+
 
 upload_dir = Path(settings.local_upload_dir)
 upload_dir.mkdir(parents=True, exist_ok=True)

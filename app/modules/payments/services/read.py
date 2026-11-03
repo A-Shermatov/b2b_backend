@@ -31,7 +31,8 @@ class PaymentReadMixin:
             milestones = await conn.fetch(
                 """
                 SELECT id, contract_id, title, percentage, amount, trigger,
-                       status::text AS status
+                       status::text AS status,
+                       COALESCE(commission_amount, 0) AS commission_amount
                 FROM payment_milestones
                 WHERE payment_plan_id = $1
                 ORDER BY id

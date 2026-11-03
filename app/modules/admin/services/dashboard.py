@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.modules.admin.services.common import ESCROW_LOCKED_STATUSES
+from app.modules.settings.service import get_platform_settings
 
 
 class AdminDashboardMixin:
@@ -67,6 +68,21 @@ class AdminDashboardMixin:
                         month_start,
                     )
                 ),
+                "monthly_commission": float(
+                    await conn.fetchval(
+                        """
+                        SELECT COALESCE(SUM(amount), 0.0)
+                        FROM platform_payments
+                        WHERE type::text = 'commission'
+                          AND status::text = 'paid'
+                          AND paid_at >= $1
+                        """,
+                        month_start,
+                    )
+                ),
+                "commission_percent": (
+                    await get_platform_settings(conn, use_cache=False)
+                ).commission_percent,
                 "pending_verifications": int(
                     await conn.fetchval(
                         """

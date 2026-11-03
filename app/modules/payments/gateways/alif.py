@@ -18,6 +18,8 @@ from app.modules.payments.gateways.http_log import (
 logger = logging.getLogger(__name__)
 
 TWO_PLACES = Decimal("0.01")
+# Alif Marketplace rejects any mpTerminalInfo part below 1 TJS ("Сумма должна быть от 1 смн").
+MIN_MARKETPLACE_PART = Decimal("1.00")
 
 _PATH_OPERATIONS = {
     "/v2/": "create_payment",
@@ -41,6 +43,23 @@ def hmac_sha256_hex(key: str, message: str) -> str:
     return hmac.new(key.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
+def marketplace_commission(total: Decimal | float, commission: Decimal | float) -> Decimal:
+    """Commission that keeps both marketplace parts at or above MIN_MARKETPLACE_PART.
+
+    A commission below the minimum is raised to it; when the total is too small to
+    split, the whole amount goes to the supplier and the commission is dropped.
+    A single-part payment (no commission, or commission equal to the total) is kept.
+    """
+    total = Decimal(format_amount(total))
+    commission = min(Decimal(format_amount(max(Decimal("0"), Decimal(str(commission))))), total)
+    if commission <= 0 or commission == total:
+        return commission
+    if total < 2 * MIN_MARKETPLACE_PART:
+        return Decimal("0.00")
+    commission = max(commission, MIN_MARKETPLACE_PART)
+    return min(commission, total - MIN_MARKETPLACE_PART)
+
+
 def build_mp_terminal_info(
     *,
     total: Decimal,
@@ -51,9 +70,7 @@ def build_mp_terminal_info(
 ) -> list[dict[str, Any]]:
     """Split total into supplier + platform commission for Alif Marketplace mpTerminalInfo."""
     total = Decimal(format_amount(total))
-    commission = Decimal(format_amount(max(Decimal("0"), commission)))
-    if commission >= total:
-        commission = total
+    commission = marketplace_commission(total, commission)
     supplier_amount = total - commission
     entries: list[dict[str, Any]] = []
     if supplier_amount > 0:
@@ -153,6 +170,7 @@ class AlifClient:
         headers: dict[str, str] | None = None,
         *,
         operation: str | None = None,
+        order_id: str | None = None,
     ):
         url = f"{self.base_url}{path}"
         op = operation or _PATH_OPERATIONS.get(path, path.strip("/") or "request")
@@ -165,7 +183,7 @@ class AlifClient:
             url=url,
             request_headers=request_headers,
             request_body=body,
-            order_id=extract_order_id(body),
+            order_id=order_id or extract_order_id(body),
         )
         try:
             async with httpx.AsyncClient(timeout=self.settings.alif_timeout_seconds) as client:
@@ -258,7 +276,9 @@ class AlifClient:
             raise AlifGatewayError(f"Alif: {message or 'не удалось создать платёж'}")
         return url
 
-    async def confirm_delivery(self, *, transaction_id: str, amount: Decimal) -> dict[str, Any]:
+    async def confirm_delivery(
+        self, *, transaction_id: str, amount: Decimal, order_id: str | None = None
+    ) -> dict[str, Any]:
         amount_str = format_amount(amount)
         body = {
             "key": self.key,
@@ -266,7 +286,7 @@ class AlifClient:
             "amount": float(Decimal(amount_str)),
             "token": self.sign(f"{self.key}{transaction_id}{amount_str}"),
         }
-        http_status, data = await self._post("/confirm-delivery", body)
+        http_status, data = await self._post("/confirm-delivery", body, order_id=order_id)
         if http_status != 200 or (isinstance(data, dict) and data.get("code") not in (None, 200, "200")):
             message = data.get("message") if isinstance(data, dict) else None
             logger.warning(
@@ -279,7 +299,12 @@ class AlifClient:
         return data if isinstance(data, dict) else {"raw": data}
 
     async def cancel_marketplace(
-        self, *, transaction_id: str, amount: Decimal, reason: str = "Отмена сделки"
+        self,
+        *,
+        transaction_id: str,
+        amount: Decimal,
+        reason: str = "Отмена сделки",
+        order_id: str | None = None,
     ) -> dict[str, Any]:
         amount_str = format_amount(amount)
         body = {
@@ -289,7 +314,7 @@ class AlifClient:
             "reason": reason[:255],
             "token": self.sign(f"{self.key}{transaction_id}{amount_str}"),
         }
-        http_status, data = await self._post("/cancel/marketplace", body)
+        http_status, data = await self._post("/cancel/marketplace", body, order_id=order_id)
         if http_status != 200 or (isinstance(data, dict) and data.get("code") not in (None, 200, "200")):
             message = data.get("message") if isinstance(data, dict) else None
             logger.warning(

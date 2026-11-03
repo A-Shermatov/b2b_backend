@@ -14,6 +14,8 @@ class PublicPlatformSettings(BaseModel):
     commission_min: float
     max_contract_amount: float | None
     currency: str
+    # Smallest commission part the bank accepts when it splits a payment (0 = no split).
+    min_payment_part: float = 0.0
 
 
 class AdminPlatformSettings(PublicPlatformSettings):

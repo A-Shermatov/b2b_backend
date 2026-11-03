@@ -726,6 +726,8 @@ class AdminDashboardMetrics(BaseModel):
     escrow_balance: float
     open_disputes: int
     monthly_revenue: float
+    monthly_commission: float = 0.0
+    commission_percent: float = 0.0
     pending_verifications: int
     pending_catalog: int = 0
     open_reports: int = 0

@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 
+from app.config import get_settings
 from app.core.exceptions import ConflictError, ForbiddenError
 from app.modules.contracts.schemas import (
     DisputeRequest,
@@ -51,7 +52,11 @@ class ContractCreateMixin:
         )
         async with self.connection() as conn:
             settings = await get_platform_settings(conn, use_cache=False)
-            quote = calculate_commission(float(data["price"]), data["currency"], settings)
+            # Alif Marketplace splits each payment into supplier + commission parts.
+            bank_split = get_settings().alif_marketplace_enabled
+            quote = calculate_commission(
+                float(data["price"]), data["currency"], settings, bank_split=bank_split
+            )
             contract = await conn.fetchrow(
                 """
                 INSERT INTO contracts (
@@ -99,6 +104,7 @@ class ContractCreateMixin:
             commission_parts = split_commission(
                 quote.amount,
                 [float(item["amount"]) for item in plan_milestones],
+                bank_split=bank_split,
             )
             for item, commission_part in zip(plan_milestones, commission_parts):
                 await conn.execute(

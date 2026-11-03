@@ -3,8 +3,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.config import get_settings
 from app.core.permissions import ensure_permission, has_permission
 from app.database import pool
+from app.modules.payments.gateways.alif import MIN_MARKETPLACE_PART
 from app.deps import CurrentUser, require_admin
 from app.modules.settings.schemas import (
     AdminPlatformSettings,
@@ -53,4 +55,5 @@ async def admin_update_settings(
 
 @public_router.get("/platform-settings", response_model=PublicPlatformSettings)
 async def public_platform_settings():
-    return asdict(await get_platform_settings())
+    min_part = MIN_MARKETPLACE_PART if get_settings().alif_marketplace_enabled else 0
+    return {**asdict(await get_platform_settings()), "min_payment_part": float(min_part)}

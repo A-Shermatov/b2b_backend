@@ -81,6 +81,8 @@ def pytest_sessionstart(session):
 
 _SETTINGS_CONSUMERS = (
     "app.modules.payments.api.read",
+    "app.modules.contracts.services.create",
+    "app.modules.settings.api",
     "app.modules.payments.api.callbacks",
     "app.modules.payments.gateways.alif",
     "app.modules.payments.services.update",
