@@ -202,3 +202,31 @@ async def test_supplier_rfqs_list(client, supplier_auth):
     body = res.json()
     assert isinstance(body["items"], list)
     assert "total" in body and "total_pages" in body
+
+
+@pytest.mark.asyncio
+async def test_public_supplier_shows_active_plan(client, supplier_auth, supplier_business_plan):
+    actor_id = supplier_auth["actor_id"]
+    if not actor_id:
+        pytest.skip("No supplier actor")
+    res = await client.get(f"{API}/public/suppliers/{actor_id}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["subscription_plan"] == "business"
+    assert body["promoted"] is True
+    assert body["reputation_tier"] in {"none", "silver", "gold", "diamond"}
+
+
+@pytest.mark.asyncio
+async def test_public_supplier_hides_expired_plan(client, supplier_auth, supplier_business_plan):
+    actor_id = supplier_auth["actor_id"]
+    if not actor_id:
+        pytest.skip("No supplier actor")
+    await execute(
+        "UPDATE supplier_subscriptions SET active_until = NOW() - INTERVAL '1 day' WHERE user_id = $1",
+        supplier_auth["me"]["user"]["id"],
+    )
+    res = await client.get(f"{API}/public/suppliers/{actor_id}")
+    assert res.status_code == 200, res.text
+    assert res.json()["subscription_plan"] is None
+    assert res.json()["promoted"] is False

@@ -289,6 +289,8 @@ class PublicSupplier(BaseModel):
     success_rate: float | None = None
     vip: bool = False
     promoted: bool = False
+    # Active paid plan (start / pro / business) shown as a mark next to the name.
+    subscription_plan: str | None = None
 
     @field_serializer("logo")
     def serialize_logo(self, value: str | None) -> str | None:

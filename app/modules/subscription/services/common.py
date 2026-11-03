@@ -17,6 +17,21 @@ CATALOG_LIMITS: dict[str, int | None] = {
 }
 
 
+PAID_PLANS = ("start", "pro", "business")
+
+
+def active_plan_sql(owner_column: str) -> str:
+    """Active paid plan of the user in `owner_column`, or NULL (one row per user)."""
+    plans = ", ".join(f"'{plan}'" for plan in PAID_PLANS)
+    return f"""(
+        SELECT ss.plan::text FROM supplier_subscriptions ss
+        WHERE ss.user_id = {owner_column}
+          AND ss.plan::text IN ({plans})
+          AND ss.active_until IS NOT NULL
+          AND ss.active_until > NOW()
+    )"""
+
+
 def is_active_plan(plan: str, active_until) -> bool:
     if plan == "none" or active_until is None:
         return False
