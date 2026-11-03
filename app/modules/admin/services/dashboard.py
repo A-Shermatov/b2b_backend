@@ -67,6 +67,24 @@ class AdminDashboardMixin:
                         month_start,
                     )
                 ),
+                "monthly_commission": float(
+                    await conn.fetchval(
+                        """
+                        SELECT COALESCE(SUM(amount), 0.0)
+                        FROM platform_payments
+                        WHERE type::text = 'commission'
+                          AND status::text = 'paid'
+                          AND paid_at >= $1
+                        """,
+                        month_start,
+                    )
+                ),
+                "commission_percent": float(
+                    await conn.fetchval(
+                        "SELECT value FROM platform_settings WHERE key = 'commission_percent'"
+                    )
+                    or 0
+                ),
                 "pending_verifications": int(
                     await conn.fetchval(
                         """

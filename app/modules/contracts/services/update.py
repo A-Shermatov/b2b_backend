@@ -138,11 +138,14 @@ class ContractUpdateMixin:
         buyer_id: int,
         *,
         require_funded: bool = False,
+        after_payout: bool = False,
     ) -> None:
         if row["buyer_actor_id"] != buyer_id:
             raise ForbiddenError("Access denied")
-        await ensure_not_under_dispute(conn, row)
-        if row["status"] not in ("active", "delivered"):
+        if not after_payout:
+            await ensure_not_under_dispute(conn, row)
+        allowed = ("active", "delivered", "disputed") if after_payout else ("active", "delivered")
+        if row["status"] not in allowed:
             raise ConflictError("Contract is not active")
         sub = await conn.fetchrow(
             "SELECT id, status::text AS status FROM work_submissions WHERE id = $1 AND contract_id = $2",
@@ -153,15 +156,19 @@ class ContractUpdateMixin:
             raise NotFoundError("Submission not found")
         if sub["status"] != "pending":
             raise ConflictError("Submission already reviewed")
+        # Escrow: the buyer pays into the bank hold first and accepting the work releases
+        # it. Accepting unpaid work would close the contract with nothing to release.
         if require_funded and await conn.fetchval(
             """
             SELECT 1 FROM payment_milestones
-            WHERE contract_id = $1 AND status::text = 'awaiting_payment'
+            WHERE contract_id = $1 AND status::text IN ('pending', 'awaiting_payment')
             LIMIT 1
             """,
             row["id"],
         ):
-            raise ConflictError("Сначала оплатите все этапы")
+            raise ConflictError(
+                "Сначала оплатите работу: деньги будут удерживаться банком до вашей приёмки"
+            )
 
     async def approve_submission(self, contract_id: int, submission_id: int, buyer_id: int):
         from app.modules.payments.services import PaymentService
@@ -181,8 +188,10 @@ class ContractUpdateMixin:
                     "SELECT id FROM contracts WHERE id = $1 FOR UPDATE", contract_id
                 )
                 row = await load_contract_row(conn, contract_id)
+                # The bank has already paid the supplier: a dispute opened meanwhile
+                # must not keep the paid milestones "funded" in our books.
                 await self._ensure_submission_reviewable(
-                    conn, row, submission_id, buyer_id, require_funded=True
+                    conn, row, submission_id, buyer_id, after_payout=True
                 )
                 await conn.execute(
                     """

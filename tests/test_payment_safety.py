@@ -85,7 +85,21 @@ async def test_mock_fund_allowed_when_enabled(db_conn, monkeypatch):  # noqa: F8
     assert result["milestone_status"] == "funded"
 
 
-@pytest.mark.parametrize("contract_status", ["cancelled", "completed", "disputed"])
+async def test_accepted_unpaid_work_can_still_be_paid_and_released(db_conn, monkeypatch):  # noqa: F811
+    settings = _mock_settings(allow_mock_payments=True)
+    monkeypatch.setattr("app.modules.payments.services.update.get_settings", lambda: settings)
+    milestone = await _create_awaiting_milestone(db_conn)
+    await db_conn.execute(
+        "UPDATE contracts SET status = 'completed' WHERE id = $1", milestone["contract_id"]
+    )
+    service = PaymentService(db_conn)
+    funded = await service.fund_milestone(milestone["id"], milestone["buyer_actor_id"])
+    assert funded["status"] == "funded"
+    released = await service.approve_milestone(milestone["id"], milestone["buyer_actor_id"])
+    assert released["status"] == "released"
+
+
+@pytest.mark.parametrize("contract_status", ["cancelled", "disputed"])
 async def test_fund_rejected_for_closed_contract(db_conn, monkeypatch, contract_status):  # noqa: F811
     settings = _mock_settings(allow_mock_payments=True)
     monkeypatch.setattr("app.modules.payments.services.update.get_settings", lambda: settings)
@@ -200,11 +214,11 @@ class _FakeAlif:
     def __init__(self, settings=None):
         pass
 
-    async def confirm_delivery(self, *, transaction_id, amount):
+    async def confirm_delivery(self, *, transaction_id, amount, order_id=None):
         _FakeAlif.confirmed.append(transaction_id)
         return {}
 
-    async def cancel_marketplace(self, *, transaction_id, amount, reason=""):
+    async def cancel_marketplace(self, *, transaction_id, amount, reason="", order_id=None):
         if transaction_id in _FakeAlif.fail_cancel:
             raise AlifGatewayError("boom")
         _FakeAlif.canceled.append(transaction_id)

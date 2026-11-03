@@ -14,6 +14,11 @@ class CommissionQuote:
     minimum: float
 
 
+# The bank splits a TJS payment into supplier + commission parts and rejects any part
+# below 1 TJS (same rule as payments.gateways.alif.marketplace_commission).
+MIN_PAYMENT_PART = 1.0
+
+
 def _money(value: float) -> float:
     return round(float(value), 2)
 
@@ -23,14 +28,24 @@ def is_settings_currency(currency) -> bool:
     return str(code or "").upper() == SETTINGS_CURRENCY
 
 
+def _bank_splittable(amount: float, commission: float) -> float:
+    if commission <= 0 or commission >= amount:
+        return commission
+    if amount < 2 * MIN_PAYMENT_PART:
+        return 0.0
+    return min(max(commission, MIN_PAYMENT_PART), amount - MIN_PAYMENT_PART)
+
+
 def calculate_commission(amount: float, currency, settings: PlatformSettings) -> CommissionQuote:
     percent = max(0.0, float(settings.commission_percent))
     minimum = float(settings.commission_min) if is_settings_currency(currency) else 0.0
     if amount <= 0:
         return CommissionQuote(amount=0.0, percent=percent, minimum=minimum)
-    commission = max(minimum, amount * percent / 100)
+    commission = min(max(minimum, amount * percent / 100), amount)
+    if is_settings_currency(currency):
+        commission = _bank_splittable(amount, commission)
     return CommissionQuote(
-        amount=_money(min(commission, amount)),
+        amount=_money(commission),
         percent=percent,
         minimum=minimum,
     )
@@ -89,6 +104,15 @@ async def record_milestone_release(conn, milestone_id: int) -> None:
     paid_at = datetime.now(timezone.utc)
     amount = float(row["amount"])
     commission = _money(row["commission_amount"] or 0)
+    paid_via_alif = await conn.fetchval(
+        """
+        SELECT 1 FROM payment_gateway_transactions
+        WHERE milestone_id = $1 AND gateway = 'alif' AND status IN ('to_approve', 'ok')
+        LIMIT 1
+        """,
+        row["id"],
+    )
+    gateway = "alif" if paid_via_alif else "mock"
     invoice_id = await conn.fetchval(
         """
         INSERT INTO supplier_invoices (
@@ -115,7 +139,7 @@ async def record_milestone_release(conn, milestone_id: int) -> None:
         title=row["title"],
         description=f"Счёт {number}",
         status="paid",
-        gateway="mock",
+        gateway=gateway,
         actor_id=row["supplier_actor_id"],
         invoice_id=invoice_id,
         contract_id=row["contract_id"],
@@ -133,7 +157,7 @@ async def record_milestone_release(conn, milestone_id: int) -> None:
             title=f"Комиссия · {number}",
             description=f"Комиссия платформы ({terms}) по счёту {number}",
             status="paid",
-            gateway="mock",
+            gateway=gateway,
             actor_id=row["supplier_actor_id"],
             invoice_id=invoice_id,
             contract_id=row["contract_id"],

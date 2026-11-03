@@ -224,6 +224,26 @@ async def _cancel_marketplace_or_conflict(contract_id: int, reason: str) -> None
         ) from exc
 
 
+async def _settle_partial_refund_in_bank(
+    milestones: list[dict], before: dict[int, str], reason: str
+) -> None:
+    """Cancel refunded milestones and confirm released ones in Alif Marketplace."""
+    from app.modules.payments.gateways.alif import AlifGatewayError
+    from app.modules.payments.services import PaymentService
+
+    changed = [m for m in milestones if m["status"] != before.get(m["id"])]
+    refunded = [m["id"] for m in changed if m["status"] == "refunded"]
+    released = [m["id"] for m in changed if m["status"] == "released"]
+    service = PaymentService()
+    try:
+        await service.cancel_marketplace_for_milestones(refunded, reason or "Возврат покупателю")
+        await service.confirm_marketplace_deliveries_for_milestones(released)
+    except AlifGatewayError as exc:
+        raise ConflictError(
+            f"Не удалось провести решение по спору в Alif, изменения не сохранены: {exc.detail}"
+        ) from exc
+
+
 async def _refund_escrow_to_buyer(
     conn,
     *,
@@ -534,6 +554,7 @@ class AdminContractsMixin:
                 if contract["status"] == "completed":
                     raise ConflictError("Contract is already completed")
                 status = "completed"
+                # Frozen (disputed) milestones are paid out by the bank as well.
                 async with conn.transaction():
                     released = await conn.fetch(
                         """
@@ -542,10 +563,11 @@ class AdminContractsMixin:
                         FROM payment_plans p
                         WHERE m.payment_plan_id = p.id
                           AND p.contract_id = $1
-                          AND m.status::text = 'funded'
+                          AND m.status::text = ANY($2::text[])
                         RETURNING m.id
                         """,
                         contract_id,
+                        list(ESCROW_LOCKED_STATUSES),
                     )
                     await record_milestone_releases(conn, [item["id"] for item in released])
             elif action == "open_investigation":
@@ -912,6 +934,25 @@ class AdminContractsMixin:
             await _cancel_marketplace_or_conflict(
                 pre["contract_id"], reason.strip() or "Возврат покупателю"
             )
+        elif action == "partial_refund" and partial_buyer_amount and partial_buyer_amount > 0:
+            async with self.connection() as conn:
+                pre = await conn.fetchrow(
+                    "SELECT status::text AS status, contract_id FROM disputes WHERE id = $1",
+                    dispute_id,
+                )
+                if not pre:
+                    raise NotFoundError("Dispute not found")
+                if pre["status"] == "resolved":
+                    raise ConflictError("Dispute is already resolved")
+                planned = await _load_milestones(conn, pre["contract_id"])
+            before = {m["id"]: m["status"] for m in planned}
+            # Invalid amounts are rejected below with a detailed message, before any
+            # local change; only a valid split is sent to the bank.
+            if (
+                partial_buyer_amount <= escrow_pool(planned, movable) + 1e-6
+                and apply_partial_refund(planned, movable, partial_buyer_amount) > 1e-9
+            ):
+                await _settle_partial_refund_in_bank(planned, before, reason.strip())
 
         async with self.connection() as conn:
             dispute = await conn.fetchrow(

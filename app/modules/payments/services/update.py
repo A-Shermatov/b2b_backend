@@ -1,7 +1,11 @@
+import logging
+
 from app.config import get_settings
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.modules.payments.gateways.alif import AlifGatewayError
 from app.utils.audit import log_event
+
+logger = logging.getLogger(__name__)
 
 FUNDABLE_MILESTONE_STATUSES = ("pending", "awaiting_payment")
 CLOSED_CONTRACT_STATUSES = ("cancelled", "completed", "disputed")
@@ -25,6 +29,10 @@ def ensure_mock_payments_allowed() -> None:
 
 
 def ensure_contract_fundable(row) -> None:
+    # Work accepted before it was paid (older postpayment deals) must still be payable
+    # and releasable, otherwise the supplier is never paid.
+    if row["contract_status"] == "completed" and row["status"] in ("awaiting_payment", "funded"):
+        return
     if row["contract_status"] in CLOSED_CONTRACT_STATUSES:
         raise ConflictError("Contract does not accept payments in its current status")
 
@@ -140,10 +148,23 @@ class PaymentUpdateMixin:
 
         await self.confirm_marketplace_delivery_for_milestone(milestone_id)
 
+        # The bank has released the money at this point, so only re-check what could
+        # make recording the release wrong; a dispute opened in the meantime must not
+        # leave the milestone "funded" while the supplier already got paid.
         async with self.connection() as conn:
             async with conn.transaction():
                 row = await self._load_milestone_contract(conn, milestone_id, for_update=True)
-                await self._ensure_milestone_approvable(conn, row, buyer_id)
+                if row["buyer_actor_id"] != buyer_id:
+                    raise ForbiddenError("Access denied")
+                if row["status"] == "released":
+                    return {"id": milestone_id, "status": "released"}
+                if row["status"] != "funded":
+                    logger.error(
+                        "Milestone %s became %s while its payout was confirmed in the bank",
+                        milestone_id,
+                        row["status"],
+                    )
+                    raise ConflictError("Milestone must be funded first")
                 await conn.execute(
                     "UPDATE payment_milestones SET status = 'released'::milestone_status WHERE id = $1",
                     milestone_id,
