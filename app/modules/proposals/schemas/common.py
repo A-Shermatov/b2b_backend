@@ -105,7 +105,7 @@ class ProposalMessageThread(BaseModel):
 
 class ProposalAcceptRequest(BaseModel):
     payment_type: PaymentType
-    milestones: list[MilestoneInput] | None = None
+    milestones: list[MilestoneInput] | None = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def _validate_milestones(self) -> "ProposalAcceptRequest":

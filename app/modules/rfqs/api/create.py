@@ -35,6 +35,8 @@ async def upload_attachment(
     ctx: Annotated[BuyerContext, Depends(buyer_perm("rfqs.update"))],
     file: UploadFile = File(...),
 ):
+    # Only the owner of the request may store files under it.
+    await RfqService().get(rfq_id, actor_id=ctx.actor.id)
     key, _ = await storage_service.upload(file, f"rfqs/{rfq_id}")
     return await RfqService().add_attachment(
         rfq_id,

@@ -1,5 +1,7 @@
 import pytest
 
+from tests.sql import execute
+
 API = "/api/v1"
 
 
@@ -7,6 +9,14 @@ API = "/api/v1"
 async def test_buyer_support_ticket_flow(client, buyer_auth, admin_auth):
     if not buyer_auth["actor_id"]:
         pytest.skip("No buyer actor")
+    # The test database is shared between runs: start without an open ticket.
+    await execute(
+        """
+        UPDATE support_tickets SET status = 'closed'
+        WHERE user_id = (SELECT id FROM users WHERE email = 'buyer@example.com')
+          AND side::text = 'buyer' AND status = 'open'
+        """
+    )
 
     empty = await client.get(
         f"{API}/buyer/support/ticket",

@@ -19,7 +19,6 @@ from app.modules.companies.schemas import (
     CompanyCertificateUploadResponse,
     CompanyLogoUploadResponse,
 )
-from app.modules.subscription.services import SubscriptionService
 from app.utils.storage import storage_service
 
 
@@ -36,7 +35,7 @@ async def supplier_create_company(
     data: CompanyWizardInput,
     ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
 ):
-    await SubscriptionService().check_company_limit(ctx.user)
+    # The plan limit is checked inside create_from_wizard for every route.
     return await CompanyService().create_from_wizard(ctx.user, data, "supplier")
 
 

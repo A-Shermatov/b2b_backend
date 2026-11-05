@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.permissions import (
     STAFF_PLATFORM_ROLES,
+    ensure_company_role_permission,
     ensure_permission,
     fetch_permission_names,
     has_permission,
@@ -223,21 +224,32 @@ async def require_actor(
     return ctx
 
 
-def buyer_perm(code: str):
+def buyer_perm(code: str, *, full_role: bool = False):
+    """Platform permission + the member's company role (see COMPANY_ROLE_PERMISSIONS).
+
+    full_role=True reserves the action for company director/admin.
+    """
+
     async def _check(
         ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
     ) -> BuyerContext:
         ensure_permission(ctx.user, code)
+        ensure_company_role_permission(
+            ctx.actor.kind, ctx.company_role, code, full_role=full_role
+        )
         return ctx
 
     return _check
 
 
-def supplier_perm(code: str):
+def supplier_perm(code: str, *, full_role: bool = False):
     async def _check(
         ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
     ) -> SupplierContext:
         ensure_permission(ctx.user, code)
+        ensure_company_role_permission(
+            ctx.actor.kind, ctx.company_role, code, full_role=full_role
+        )
         return ctx
 
     return _check
@@ -364,17 +376,10 @@ async def require_supplier_ctx(
 
 
 async def get_client_ip(request: Request) -> str:
-    from app.config import get_settings
+    from app.utils.request_meta import client_ip
 
-    settings = get_settings()
-    if settings.trust_proxy_headers:
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip.strip()
-    return request.client.host if request.client else "unknown"
+    ip = client_ip(request)
+    return "unknown" if ip == "-" else ip
 
 
 __all__ = [

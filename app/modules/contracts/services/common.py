@@ -1,5 +1,6 @@
 import json
 import re
+from decimal import ROUND_HALF_UP, Decimal
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -23,10 +24,30 @@ def enum_value(value) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
-def _agreed_amount(contract) -> float:
+_CENT = Decimal("0.01")
+
+
+def _agreed_amount(contract) -> Decimal:
     if hasattr(contract, "agreed_amount") and not hasattr(contract, "keys"):
-        return float(contract.agreed_amount)
-    return float(contract["agreed_amount"])
+        value = contract.agreed_amount
+    else:
+        value = contract["agreed_amount"]
+    return Decimal(str(value)).quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def _split_amounts(total: Decimal, percentages: list[float]) -> list[float]:
+    """Split by percentages in exact cents; the last part takes the remainder.
+
+    The parts always add up to the contract amount (float rounding used to give
+    e.g. 999.99 -> 500.00 + 500.00).
+    """
+    parts: list[Decimal] = []
+    for pct in percentages[:-1]:
+        parts.append(
+            (total * Decimal(str(pct)) / Decimal(100)).quantize(_CENT, rounding=ROUND_HALF_UP)
+        )
+    parts.append(total - sum(parts, Decimal("0")))
+    return [float(part) for part in parts]
 
 
 def _default_milestones(contract, payment_type) -> list[dict]:
@@ -37,7 +58,7 @@ def _default_milestones(contract, payment_type) -> list[dict]:
             {
                 "title": "Полная предоплата",
                 "percentage": 100,
-                "amount": amount,
+                "amount": float(amount),
                 "trigger": PaymentMilestoneTrigger.contract_signed.value,
                 "status": PaymentMilestoneStatus.awaiting_payment,
             }
@@ -47,47 +68,49 @@ def _default_milestones(contract, payment_type) -> list[dict]:
             {
                 "title": "Оплата после приёмки",
                 "percentage": 100,
-                "amount": amount,
+                "amount": float(amount),
                 "trigger": PaymentMilestoneTrigger.delivery_accepted.value,
                 "status": PaymentMilestoneStatus.pending,
             }
         ]
     if ptype == PaymentType.split_payment.value:
+        first, second = _split_amounts(amount, [50, 50])
         return [
             {
                 "title": "Предоплата 50%",
                 "percentage": 50,
-                "amount": round(amount * 0.5, 2),
+                "amount": first,
                 "trigger": PaymentMilestoneTrigger.contract_signed.value,
                 "status": PaymentMilestoneStatus.awaiting_payment,
             },
             {
                 "title": "Оплата 50% после приёмки",
                 "percentage": 50,
-                "amount": round(amount * 0.5, 2),
+                "amount": second,
                 "trigger": PaymentMilestoneTrigger.delivery_accepted.value,
                 "status": PaymentMilestoneStatus.pending,
             },
         ]
+    one, two, three = _split_amounts(amount, [30, 40, 30])
     return [
         {
             "title": "Этап 1 — подписание",
             "percentage": 30,
-            "amount": round(amount * 0.3, 2),
+            "amount": one,
             "trigger": PaymentMilestoneTrigger.contract_signed.value,
             "status": PaymentMilestoneStatus.awaiting_payment,
         },
         {
             "title": "Этап 2 — промежуточная сдача",
             "percentage": 40,
-            "amount": round(amount * 0.4, 2),
+            "amount": two,
             "trigger": PaymentMilestoneTrigger.delivery_accepted.value,
             "status": PaymentMilestoneStatus.pending,
         },
         {
             "title": "Этап 3 — финальная приёмка",
             "percentage": 30,
-            "amount": round(amount * 0.3, 2),
+            "amount": three,
             "trigger": PaymentMilestoneTrigger.delivery_accepted.value,
             "status": PaymentMilestoneStatus.pending,
         },
@@ -96,16 +119,10 @@ def _default_milestones(contract, payment_type) -> list[dict]:
 
 def _custom_milestones(contract, milestones: list[dict]) -> list[dict]:
     amount = _agreed_amount(contract)
+    amounts = _split_amounts(amount, [float(item["percentage"]) for item in milestones])
     result: list[dict] = []
-    allocated = 0.0
-    last_index = len(milestones) - 1
-    for index, item in enumerate(milestones):
+    for item, stage_amount in zip(milestones, amounts):
         trigger_value = enum_value(item["trigger"])
-        if index == last_index:
-            stage_amount = round(amount - allocated, 2)
-        else:
-            stage_amount = round(item["percentage"] / 100 * amount, 2)
-            allocated += stage_amount
         status = (
             PaymentMilestoneStatus.awaiting_payment
             if trigger_value == PaymentMilestoneTrigger.contract_signed.value

@@ -18,6 +18,10 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         if request.method.upper() not in MUTATING:
             return response
+        # Only a successful authenticated action slides the session; errors (incl. 404
+        # on any path) must not keep a stolen token alive forever.
+        if not 200 <= int(response.status_code) < 300:
+            return response
         if request.url.path in SKIP_TOKEN_REFRESH_PATHS:
             return response
         if not pool.ready:

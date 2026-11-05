@@ -27,6 +27,7 @@ from app.modules.contracts.services.common import (
 from app.modules.finance.services.commission import calculate_commission, split_commission
 from app.modules.settings.service import get_platform_settings
 from app.utils.audit import AuditLogger, log_event
+from app.utils.locks import ensure_contract_not_busy
 from app.utils.storage import storage_key_from_url
 from app.enums import PaymentType
 from app.modules.notifications.services import NotificationService
@@ -280,6 +281,12 @@ class ContractCreateMixin:
             )
             return await load_contract_schema(conn, contract_id)
 
+    async def ensure_participant(self, contract_id: int, actor_id: int) -> None:
+        """Cheap access check to run before a file is written to storage."""
+        async with self.connection() as conn:
+            row = await load_contract_row(conn, contract_id)
+            await ensure_party(row, actor_id)
+
     async def add_file(
         self,
         contract_id: int,
@@ -430,6 +437,12 @@ class ContractCreateMixin:
             async with conn.transaction():
                 row = await load_contract_row(conn, contract_id)
                 await ensure_party(row, actor_id)
+                # Not while acceptance / payout / an admin decision runs on this deal.
+                await ensure_contract_not_busy(conn, contract_id)
+                await conn.fetchval(
+                    "SELECT id FROM contracts WHERE id = $1 FOR UPDATE", contract_id
+                )
+                row = await load_contract_row(conn, contract_id)
                 if await conn.fetchval(
                     """
                     SELECT 1 FROM disputes

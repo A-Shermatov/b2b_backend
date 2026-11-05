@@ -33,7 +33,8 @@ async def reject_proposal(
 @buyer_router.post("/proposals/{proposal_id}/accept")
 async def accept_proposal(
     proposal_id: int,
-    ctx: Annotated[BuyerContext, Depends(buyer_perm("proposals.accept"))],
+    # Accepting an offer commits the company to a deal: director/admin only.
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("proposals.accept", full_role=True))],
     data: ProposalAcceptRequest | None = None,
 ):
     payment_type = data.payment_type if data else None

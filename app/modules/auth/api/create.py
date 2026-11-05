@@ -44,6 +44,14 @@ async def login(data: LoginRequest, request: Request):
     )
     if not allowed:
         raise RateLimitError("Too many login attempts. Try again later.")
+    # Per account as well: password guessing from many IPs is limited too.
+    account_allowed = await check_rate_limit(
+        f"login_account:{data.email.lower()}",
+        settings.rate_limit_login_per_account,
+        settings.rate_limit_login_account_window_seconds,
+    )
+    if not account_allowed:
+        raise RateLimitError("Too many login attempts. Try again later.")
     return await AuthService().login(data, ip)
 
 

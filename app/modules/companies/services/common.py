@@ -1,7 +1,11 @@
 import json
 
 from app.core.exceptions import ForbiddenError, NotFoundError
-from app.core.permissions import ensure_permission, fetch_permission_names
+from app.core.permissions import (
+    ensure_company_role_permission,
+    ensure_permission,
+    fetch_permission_names,
+)
 from app.modules.companies.schemas import (
     CompanyCategorySchema,
     CompanyCertificateSchema,
@@ -68,6 +72,13 @@ async def ensure_can_manage(
     permission: str = "company_profile.update",
 ) -> None:
     await ensure_company_member(conn, company_id, user_id)
+    # Team, profile and certificates are managed by the company director/admin only.
+    company_role = await conn.fetchval(
+        "SELECT role::text FROM company_users WHERE company_id = $1 AND user_id = $2",
+        company_id,
+        user_id,
+    )
+    ensure_company_role_permission("company", company_role, permission, full_role=True)
     user = await conn.fetchrow(
         "SELECT role::text AS role, role_id FROM users WHERE id = $1",
         user_id,
@@ -196,6 +207,14 @@ def to_public_company_detail(company: CompanyWithRelations) -> PublicCompanyDeta
     )
 
 
+def _clean_completed(row, completed: int) -> int:
+    try:
+        value = row["clean_completed_contracts"]
+    except (KeyError, IndexError):
+        return completed
+    return int(value or 0)
+
+
 def compute_success_rate(completed: int, disputed: int) -> float | None:
     total = completed + disputed
     if total <= 0:
@@ -235,7 +254,9 @@ def row_to_public_supplier(row) -> PublicSupplier:
     completed = int(row["completed_contracts"] or 0)
     active = int(row["active_contracts"] or 0)
     disputed = int(row["disputed_contracts"] or 0)
-    success_rate = compute_success_rate(completed, disputed)
+    # Deals with a dispute (open, or resolved by refunding the buyer) are not a
+    # success even after the dispute is closed and the contract becomes completed.
+    success_rate = compute_success_rate(_clean_completed(row, completed), disputed)
     rating = _public_supplier_rating(row)
     vip = bool(row.get("vip")) if "vip" in row.keys() else False
     plan = row.get("subscription_plan") if "subscription_plan" in row.keys() else None
@@ -308,7 +329,9 @@ def row_to_public_buyer(row) -> PublicBuyer:
     completed = int(row["completed_contracts"] or 0)
     active = int(row["active_contracts"] or 0)
     disputed = int(row["disputed_contracts"] or 0)
-    success_rate = compute_success_rate(completed, disputed)
+    # Deals with a dispute (open, or resolved by refunding the buyer) are not a
+    # success even after the dispute is closed and the contract becomes completed.
+    success_rate = compute_success_rate(_clean_completed(row, completed), disputed)
     rating = _public_supplier_rating(row)
     verification = row["verification_status"] or (
         "pending" if row["kind"] == "company" and row["company_id"] else "unverified"

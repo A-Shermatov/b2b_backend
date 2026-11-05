@@ -50,12 +50,22 @@ async def test_buyer_create_and_get_company(client, buyer_auth):
     assert get_res.status_code == 200, get_res.text
     assert get_res.json()["id"] == company["id"]
 
-    me_res = await client.get(
-        f"{API}/buyer/companies/me",
-        headers=buyer_auth["headers"],
-    )
-    assert me_res.status_code == 200
-    assert any(item["id"] == company["id"] for item in me_res.json()["items"])
+    # The shared demo buyer accumulates companies across runs: look through all pages.
+    found = False
+    page = 1
+    while not found:
+        me_res = await client.get(
+            f"{API}/buyer/companies/me",
+            params={"page": page, "page_size": 100},
+            headers=buyer_auth["headers"],
+        )
+        assert me_res.status_code == 200
+        data = me_res.json()
+        found = any(item["id"] == company["id"] for item in data["items"])
+        if page >= data.get("total_pages", 1):
+            break
+        page += 1
+    assert found
 
 
 @pytest.mark.asyncio

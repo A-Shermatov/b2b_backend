@@ -8,7 +8,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 import asyncpg
 
 from app.config import get_settings
@@ -20,6 +19,7 @@ from app.core.middleware import (
     RequestPublicOriginMiddleware,
     TokenRefreshMiddleware,
 )
+from app.core.middleware.security_headers import SafeStaticFiles, SecurityHeadersMiddleware
 from app.database import pool
 from app.modules.admin.router import register as register_admin
 from app.modules.approvals.router import register as register_approvals
@@ -103,15 +103,19 @@ async def lifespan(_app: FastAPI):
         await pool.close()
 
 
+# Interactive docs and the OpenAPI schema only in dev environments.
+_docs_enabled = settings.is_dev_env
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 app.add_middleware(HttpAuditMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TokenRefreshMiddleware)
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestPublicOriginMiddleware)
@@ -139,7 +143,7 @@ async def request_validation_handler(_request: Request, exc: RequestValidationEr
 
 upload_dir = Path(settings.local_upload_dir)
 upload_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(upload_dir)), name="uploads")
+app.mount("/uploads", SafeStaticFiles(directory=str(upload_dir)), name="uploads")
 
 register_auth(app, prefix=settings.api_v1_prefix)
 register_companies(app, prefix=settings.api_v1_prefix)

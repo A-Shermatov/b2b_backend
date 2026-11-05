@@ -140,6 +140,17 @@ class PaymentUpdateMixin:
         await ensure_no_active_dispute(conn, row["contract_id"])
 
     async def approve_milestone(self, milestone_id: int, buyer_id: int):
+        from app.utils.locks import contract_lock
+
+        async with self.connection() as conn:
+            row = await self._load_milestone_contract(conn, milestone_id)
+            if row["buyer_actor_id"] != buyer_id:
+                raise ForbiddenError("Access denied")
+        # Bank payout happens between two DB checks: lock the deal for the whole call.
+        async with contract_lock(row["contract_id"]):
+            return await self._approve_milestone_locked(milestone_id, buyer_id)
+
+    async def _approve_milestone_locked(self, milestone_id: int, buyer_id: int):
         from app.modules.finance.services.commission import record_milestone_release
 
         async with self.connection() as conn:

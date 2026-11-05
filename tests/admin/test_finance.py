@@ -94,8 +94,12 @@ async def test_admin_finance_actions(client, admin_auth, buyer_auth):
         json={"action": "retry", "reason": "Повтор после сбоя шлюза"},
         headers=admin_auth["headers"],
     )
-    assert retry_res.status_code == 200, retry_res.text
-    assert retry_res.json()["status"] == "paid"
+    # "Retry" used to mark a failed payment paid without any bank call: now refused.
+    assert retry_res.status_code == 422, retry_res.text
+    still_failed = await fetchrow(
+        "SELECT status::text AS status FROM platform_payments WHERE id = $1", retry_id
+    )
+    assert still_failed["status"] == "failed"
 
     refund_res = await client.post(
         f"{API}/admin/finance/{refund_id}/action",

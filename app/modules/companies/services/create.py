@@ -61,6 +61,10 @@ class CompanyCreateMixin:
         actor_types = parse_actor_types(data, extra)
         async with self.connection() as conn:
             async with conn.transaction():
+                if "supplier" in actor_types:
+                    from app.modules.subscription.services import SubscriptionService
+
+                    await SubscriptionService(conn).check_company_limit(user_dict["id"])
                 user_dict = await self._ensure_roles_and_actors(conn, user_dict, actor_types)
                 primary = actor_types[0]
                 company = await conn.fetchrow(

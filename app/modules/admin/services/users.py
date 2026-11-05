@@ -592,6 +592,10 @@ class AdminUsersMixin:
                 raise NotFoundError("User not found")
             if user["id"] == actor_id_of(current_user):
                 raise ForbiddenError("You cannot revoke your own sessions here")
+            current_rank = STAFF_RANK.get(actor_role_of(current_user), 0)
+            target_rank = STAFF_RANK.get(user["role"], 0)
+            if target_rank and target_rank >= current_rank:
+                raise ForbiddenError("You cannot revoke sessions of this staff account")
             updated = await conn.fetchrow(
                 f"""
                 UPDATE users

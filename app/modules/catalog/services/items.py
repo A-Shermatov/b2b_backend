@@ -18,6 +18,7 @@ from app.modules.subscription.services.common import active_plan_sql
 from app.modules.verification.common import actor_verification_sql
 from app.utils.audit import log_event
 from app.utils.storage import public_file_url
+from app.db.sql import like_contains
 
 SUPPLIER_WRITABLE_STATUSES = {
     "draft",
@@ -387,7 +388,7 @@ class CatalogItemMixin:
         ]
         params: list = []
         if query:
-            params.append(f"%{query}%")
+            params.append(like_contains(query))
             clauses.append(f"(ci.title ILIKE ${len(params)} OR ci.description ILIKE ${len(params)})")
         if category_slug:
             params.append(category_slug)

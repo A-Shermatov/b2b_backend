@@ -86,3 +86,28 @@ async def is_refresh_token_blacklisted(jti_hash: str) -> bool:
         except Exception as exc:
             await _discard_redis(redis, exc)
     return f"bl:{jti_hash}" in _memory_rate_limit
+
+
+async def mark_refresh_rotated(jti_hash: str, grace_seconds: int) -> None:
+    """Remember that a refresh token was just rotated (parallel tabs may reuse it briefly)."""
+    redis = await get_redis()
+    if redis:
+        try:
+            await redis.setex(f"refresh_grace:{jti_hash}", grace_seconds, "1")
+            return
+        except Exception as exc:
+            await _discard_redis(redis, exc)
+    _memory_rate_limit[f"grace:{jti_hash}"] = [
+        datetime.now(timezone.utc).timestamp() + grace_seconds
+    ]
+
+
+async def refresh_rotation_in_grace(jti_hash: str) -> bool:
+    redis = await get_redis()
+    if redis:
+        try:
+            return await redis.exists(f"refresh_grace:{jti_hash}") > 0
+        except Exception as exc:
+            await _discard_redis(redis, exc)
+    until = _memory_rate_limit.get(f"grace:{jti_hash}")
+    return bool(until) and until[0] > datetime.now(timezone.utc).timestamp()

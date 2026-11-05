@@ -15,6 +15,7 @@ from app.modules.companies.services.common import (
 )
 from app.modules.subscription.services.common import active_plan_sql
 from app.modules.verification.common import actor_verification_sql
+from app.db.sql import like_contains
 
 ACTOR_VERIFICATION_SQL = actor_verification_sql("a", "c")
 
@@ -64,8 +65,24 @@ SUPPLIER_SELECT = f"""
         ) AS active_contracts,
         (
             SELECT COUNT(*) FROM contracts ct
-            WHERE ct.supplier_actor_id = a.id AND ct.status::text = 'disputed'
-        ) AS disputed_contracts
+            WHERE ct.supplier_actor_id = a.id
+              AND (ct.status::text = 'disputed' OR EXISTS (
+                SELECT 1 FROM disputes d
+                WHERE d.contract_id = ct.id
+                  AND (d.status::text IN ('open', 'under_review', 'appealed')
+                       OR d.resolution::text IN ('refund_buyer', 'partial_refund'))
+              ))
+        ) AS disputed_contracts,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.supplier_actor_id = a.id AND ct.status::text = 'completed'
+              AND NOT EXISTS (
+                SELECT 1 FROM disputes d
+                WHERE d.contract_id = ct.id
+                  AND (d.status::text IN ('open', 'under_review', 'appealed')
+                       OR d.resolution::text IN ('refund_buyer', 'partial_refund'))
+              )
+        ) AS clean_completed_contracts
     FROM actors a
     LEFT JOIN companies c ON c.id = a.company_id
     LEFT JOIN company_stats cs ON cs.company_id = c.id
@@ -116,8 +133,15 @@ BUYER_SELECT = f"""
         ) AS active_contracts,
         (
             SELECT COUNT(*) FROM contracts ct
-            WHERE ct.buyer_actor_id = a.id AND ct.status::text = 'disputed'
-        ) AS disputed_contracts
+            WHERE ct.buyer_actor_id = a.id
+              AND (ct.status::text = 'disputed'
+                   OR EXISTS (SELECT 1 FROM disputes d WHERE d.contract_id = ct.id))
+        ) AS disputed_contracts,
+        (
+            SELECT COUNT(*) FROM contracts ct
+            WHERE ct.buyer_actor_id = a.id AND ct.status::text = 'completed'
+              AND NOT EXISTS (SELECT 1 FROM disputes d WHERE d.contract_id = ct.id)
+        ) AS clean_completed_contracts
     FROM actors a
     LEFT JOIN companies c ON c.id = a.company_id
     LEFT JOIN company_stats cs ON cs.company_id = c.id
@@ -179,7 +203,7 @@ class CompanyReadMixin:
         filters = []
         params: list = []
         if query:
-            params.append(f"%{query}%")
+            params.append(like_contains(query))
             filters.append(
                 f"""
                 (

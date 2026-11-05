@@ -168,22 +168,49 @@ class StorageService:
             _using_local = True
             return None
 
-    async def validate_upload(self, file: UploadFile) -> None:
-        if not file.content_type or file.content_type not in settings.allowed_mime_types_list:
-            raise ValidationError("Файл не поддерживается")
-        content = await file.read()
+    async def _read_limited(self, file: UploadFile) -> bytes:
+        """Read the upload in chunks; never keep more than the size limit in memory."""
+        limit = settings.max_upload_bytes
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise ValidationError(f"Файл больше {settings.max_upload_size_mb} МБ")
+            chunks.append(chunk)
         await file.seek(0)
-        if len(content) > settings.max_upload_bytes:
-            raise ValidationError(
-                f"Файл больше {settings.max_upload_size_mb} МБ"
-            )
+        return b"".join(chunks)
+
+    async def validate_upload(self, file: UploadFile) -> tuple[bytes, str, str]:
+        """Check size and the real file type; return (content, mime, extension).
+
+        The type comes from the file signature, not from the client's Content-Type
+        or file name: an HTML/SVG page sent as "image/png" or "logo.html" is refused,
+        and the stored extension always matches the real content.
+        """
+        content = await self._read_limited(file)
+        if not content:
+            raise ValidationError("Файл пустой")
+        declared = (file.content_type or "").split(";", 1)[0].strip().lower()
+        detected = sniff_file_type(content, declared)
+        if detected is None:
+            raise ValidationError(UNSUPPORTED_FILE_MESSAGE)
+        mime, ext = detected
+        allowed = {m.lower() for m in settings.allowed_mime_types_list}
+        if mime not in allowed and not (MIME_ALIASES.get(mime, set()) & allowed):
+            raise ValidationError(UNSUPPORTED_FILE_MESSAGE)
+        if declared and declared != "application/octet-stream" and declared != mime and (
+            declared not in MIME_ALIASES.get(mime, set())
+        ):
+            raise ValidationError("Тип файла не совпадает с его содержимым")
+        return content, mime, ext
 
     async def upload(self, file: UploadFile, prefix: str = "uploads") -> tuple[str, str]:
-        await self.validate_upload(file)
-        ext = Path(file.filename or "file").suffix
+        content, content_type, ext = await self.validate_upload(file)
         key = f"{prefix}/{uuid.uuid4().hex}{ext}"
-        content = await file.read()
-        content_type = file.content_type or "application/octet-stream"
 
         s3 = self._get_s3()
         if s3:
@@ -192,6 +219,7 @@ class StorageService:
                 Key=key,
                 Body=content,
                 ContentType=content_type,
+                ContentDisposition="inline" if is_inline_type(content_type) else "attachment",
             )
             return key, public_file_url(key)
 
@@ -199,6 +227,56 @@ class StorageService:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(content)
         return key, public_file_url(key)
+
+
+UNSUPPORTED_FILE_MESSAGE = (
+    "Формат файла не поддерживается: загрузите PDF, изображение (JPG, PNG, WEBP, GIF), "
+    "документ Word/Excel, видео MP4/WEBM или ZIP"
+)
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MIME_ALIASES: dict[str, set[str]] = {
+    "image/jpeg": {"image/jpg", "image/pjpeg"},
+    "application/zip": {"application/x-zip-compressed", "application/x-zip"},
+}
+INLINE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".webm"})
+_MP4_BRANDS = (b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"dash", b"qt  ")
+
+
+def is_inline_type(mime: str) -> bool:
+    return mime.startswith(("image/", "video/")) or mime == "application/pdf"
+
+
+def sniff_file_type(content: bytes, declared: str = "") -> tuple[str, str] | None:
+    """(mime, extension) from the file signature, or None for anything else."""
+    head = content[:16]
+    if head.startswith(b"%PDF-"):
+        return "application/pdf", ".pdf"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", ".png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", ".jpg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    if head[4:8] == b"ftyp" and head[8:12] in _MP4_BRANDS:
+        return "video/mp4", ".mp4"
+    if head.startswith(b"\x1aE\xdf\xa3"):
+        return "video/webm", ".webm"
+    if head.startswith(b"PK\x03\x04"):
+        if declared == DOCX_MIME:
+            return DOCX_MIME, ".docx"
+        if declared == XLSX_MIME:
+            return XLSX_MIME, ".xlsx"
+        return "application/zip", ".zip"
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        if declared == "application/msword":
+            return "application/msword", ".doc"
+        if declared == "application/vnd.ms-excel":
+            return "application/vnd.ms-excel", ".xls"
+        return None
+    return None
 
 
 storage_service = StorageService()

@@ -64,6 +64,77 @@ STAFF_RESOURCE_PREFIX = "admin_"
 STAFF_EXTRA_RESOURCES = frozenset({"platform_settings", "roles", "audit_logs"})
 
 
+# Company roles (company_users.role) narrow what a member may do on behalf of the
+# company actor; the platform role permissions above are checked as well.
+COMPANY_FULL_ROLES = frozenset({"director", "admin"})
+_COMPANY_VIEW = frozenset(
+    {
+        "rfqs.view",
+        "proposals.view",
+        "contracts.view",
+        "payments.view",
+        "catalog.view",
+        "finance.view",
+        "subscription.view",
+        "reviews.view",
+        "company_profile.view",
+        "company_team.view",
+        "company_certificates.view",
+    }
+)
+COMPANY_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    # Procurement / sales manager: requests, offers, catalog, deal chat and delivery.
+    "moderator": _COMPANY_VIEW
+    | {
+        "rfqs.create",
+        "rfqs.update",
+        "rfqs.publish",
+        "rfqs.close",
+        "rfqs.invite",
+        "proposals.create",
+        "proposals.update",
+        "proposals.accept",
+        "catalog.create",
+        "catalog.update",
+        "catalog.publish",
+        "catalog.delete",
+        "contracts.update",
+        "reviews.create",
+    },
+    # Accountant: pays into escrow, withdrawals, subscription, deal chat.
+    "accountant": _COMPANY_VIEW
+    | {
+        "payments.fund",
+        "finance.create",
+        "finance.update",
+        "subscription.update",
+        "contracts.update",
+    },
+}
+COMPANY_FORBIDDEN_MESSAGE = "Недостаточно прав в компании для этого действия"
+
+
+def ensure_company_role_permission(
+    actor_kind: str | None,
+    company_role: str | None,
+    permission: str,
+    *,
+    full_role: bool = False,
+) -> None:
+    """Check the member's company role for an action made as a company actor.
+
+    full_role: the action commits the company (accepting an offer, releasing money,
+    managing the team) and is reserved for director/admin.
+    """
+    if actor_kind != "company":
+        return
+    role = (company_role or "").lower()
+    if role in COMPANY_FULL_ROLES:
+        return
+    if full_role or permission not in COMPANY_ROLE_PERMISSIONS.get(role, frozenset()):
+        raise ForbiddenError(COMPANY_FORBIDDEN_MESSAGE, code="company_role_forbidden")
+
+
 def is_staff_resource(resource: str) -> bool:
     name = resource or ""
     return name.startswith(STAFF_RESOURCE_PREFIX) or name in STAFF_EXTRA_RESOURCES

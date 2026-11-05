@@ -29,8 +29,22 @@ async def _user_id_from_token(token: str) -> int | None:
     if not pool.ready:
         await pool.init()
     async with pool.connection() as conn:
-        row = await conn.fetchrow("SELECT id FROM users WHERE id = $1", user_id)
-    return row["id"] if row else None
+        row = await conn.fetchrow(
+            """
+            SELECT id, status::text AS status, COALESCE(token_version, 0) AS token_version
+            FROM users WHERE id = $1
+            """,
+            user_id,
+        )
+    if not row:
+        return None
+    # Logged-out / password-changed sessions (token_version) and blocked users
+    # must not keep receiving deal events.
+    if row["status"] == "blocked":
+        return None
+    if int(payload.get("tv") or 0) != int(row["token_version"]):
+        return None
+    return row["id"]
 
 
 @ws_router.websocket("/notifications")

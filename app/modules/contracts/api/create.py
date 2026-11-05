@@ -45,6 +45,8 @@ async def buyer_upload_file(
     ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
     file: UploadFile = File(...),
 ):
+    # Check participation before anything is written to storage.
+    await ContractService().ensure_participant(contract_id, ctx.actor.id)
     key, _ = await storage_service.upload(file, f"contracts/{contract_id}")
     return await ContractService().add_file(
         contract_id,
@@ -62,6 +64,8 @@ async def supplier_upload_file(
     ctx: Annotated[SupplierContext, Depends(supplier_perm("contracts.update"))],
     file: UploadFile = File(...),
 ):
+    # Check participation before anything is written to storage.
+    await ContractService().ensure_participant(contract_id, ctx.actor.id)
     key, _ = await storage_service.upload(file, f"contracts/{contract_id}")
     return await ContractService().add_file(
         contract_id,

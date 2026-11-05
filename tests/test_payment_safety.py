@@ -25,8 +25,12 @@ MARKETPLACE_META = {
 }
 
 
+TEST_SECRET = "audit-test-secret-key-0123456789abcdef"
+
+
 def _mock_settings(**overrides) -> Settings:
-    values = {"payment_provider": "mock", **overrides}
+    # Non-dev environments require a strong SECRET_KEY.
+    values = {"payment_provider": "mock", "secret_key": TEST_SECRET, **overrides}
     return _settings(alif_terminal_key=None, alif_terminal_password=None, **values)
 
 
@@ -46,7 +50,10 @@ def test_allow_mock_payments_is_overridable(monkeypatch):
     assert not _mock_settings(app_env="development", allow_mock_payments=False).allow_mock_payments
     monkeypatch.setenv("ALLOW_MOCK_PAYMENTS", "true")
     assert Settings(
-        _env_file=None, database_url="postgresql://unused", app_env="production"
+        _env_file=None,
+        database_url="postgresql://unused",
+        app_env="production",
+        secret_key=TEST_SECRET,
     ).allow_mock_payments
 
 
@@ -240,9 +247,18 @@ def fake_alif(monkeypatch):
     return _FakeAlif
 
 
+async def _funded_milestone(conn):
+    """Bank holds are released only for funded milestones (as after a real payment)."""
+    milestone = await _create_awaiting_milestone(conn)
+    await conn.execute(
+        "UPDATE payment_milestones SET status = 'funded' WHERE id = $1", milestone["id"]
+    )
+    return milestone
+
+
 async def test_confirm_delivery_is_per_milestone_and_idempotent(db_conn, fake_alif):  # noqa: F811
-    first = await _create_awaiting_milestone(db_conn)
-    second = await _create_awaiting_milestone(db_conn)
+    first = await _funded_milestone(db_conn)
+    second = await _funded_milestone(db_conn)
     held = await _insert_held_transaction(db_conn, first, status="to_approve")
     other = await _insert_held_transaction(db_conn, second, status="to_approve")
     done = await _insert_held_transaction(
@@ -264,7 +280,7 @@ async def test_confirm_delivery_is_per_milestone_and_idempotent(db_conn, fake_al
 
 
 async def test_confirm_for_contract_skips_confirmed_transactions(db_conn, fake_alif):  # noqa: F811
-    milestone = await _create_awaiting_milestone(db_conn)
+    milestone = await _funded_milestone(db_conn)
     held = await _insert_held_transaction(db_conn, milestone, status="to_approve")
     confirmed = await _insert_held_transaction(db_conn, milestone, status="ok")
     service = PaymentService(db_conn)
@@ -278,7 +294,7 @@ async def test_confirm_for_contract_skips_confirmed_transactions(db_conn, fake_a
 
 
 async def test_confirm_refreshes_empty_sub_transactions_via_checktxn(db_conn, fake_alif):  # noqa: F811
-    milestone = await _create_awaiting_milestone(db_conn)
+    milestone = await _funded_milestone(db_conn)
     order_id = await _insert_held_transaction(
         db_conn,
         milestone,
@@ -305,7 +321,7 @@ async def test_confirm_refreshes_empty_sub_transactions_via_checktxn(db_conn, fa
 
 
 async def test_confirm_fails_when_sub_transactions_missing(db_conn, fake_alif):  # noqa: F811
-    milestone = await _create_awaiting_milestone(db_conn)
+    milestone = await _funded_milestone(db_conn)
     order_id = await _insert_held_transaction(
         db_conn,
         milestone,

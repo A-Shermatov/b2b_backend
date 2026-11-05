@@ -5,6 +5,9 @@ from app.modules.payments.schemas import SupplierBalanceSchema
 from app.modules.payments.services.common import history_item, pending_item
 
 
+
+PAYOUT_CURRENCY = "TJS"
+
 class PaymentReadMixin:
     async def get_milestones(self, contract_id: int, actor_id: int):
         async with self.connection() as conn:
@@ -192,16 +195,32 @@ class PaymentReadMixin:
         return build_page([pending_item(row) for row in rows], total, page, page_size)
 
     async def supplier_balance(self, supplier_actor_id: int) -> SupplierBalanceSchema:
+        """Money the platform owes the supplier and may pay out by withdrawal.
+
+        Only TJS (the payout currency) is summed — amounts in other currencies were
+        previously added together under one label. Milestones released through Alif
+        Marketplace are excluded from ``available``: the bank already paid the
+        supplier's share on confirm-delivery, so a withdrawal would pay it twice.
+        """
         async with self.connection() as conn:
             rows = await conn.fetch(
                 """
                 SELECT m.amount - COALESCE(m.commission_amount, 0) AS amount,
-                       m.status::text AS status, c.currency::text AS currency
+                       m.status::text AS status,
+                       EXISTS (
+                           SELECT 1 FROM payment_gateway_transactions t
+                           WHERE t.milestone_id = m.id
+                             AND t.gateway = 'alif'
+                             AND t.status = 'ok'
+                             AND t.marketplace_meta ? 'mpTerminalInfo'
+                       ) AS paid_by_bank
                 FROM payment_milestones m
                 JOIN contracts c ON c.id = m.contract_id
                 WHERE c.supplier_actor_id = $1
+                  AND c.currency::text = $2
                 """,
                 supplier_actor_id,
+                PAYOUT_CURRENCY,
             )
             withdrawn = await conn.fetchval(
                 """
@@ -209,25 +228,25 @@ class PaymentReadMixin:
                 FROM withdrawals
                 WHERE actor_id = $1
                   AND status::text = ANY($2::text[])
+                  AND COALESCE(currency::text, $3) = $3
                 """,
                 supplier_actor_id,
                 ["pending", "processing", "completed"],
+                PAYOUT_CURRENCY,
             )
         available = 0.0
         pending = 0.0
         escrow_locked = 0.0
-        currency = "TJS"
         for row in rows:
-            currency = row["currency"]
-            if row["status"] == "released":
+            if row["status"] == "released" and not row["paid_by_bank"]:
                 available += float(row["amount"])
             elif row["status"] == "funded":
                 pending += float(row["amount"])
                 escrow_locked += float(row["amount"])
-        available = max(0.0, available - float(withdrawn or 0))
+        available = max(0.0, round(available - float(withdrawn or 0), 2))
         return SupplierBalanceSchema(
             available=available,
-            pending=pending,
-            escrow_locked=escrow_locked,
-            currency=currency,
+            pending=round(pending, 2),
+            escrow_locked=round(escrow_locked, 2),
+            currency=PAYOUT_CURRENCY,
         )

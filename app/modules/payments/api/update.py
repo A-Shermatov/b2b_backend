@@ -30,7 +30,7 @@ async def sync_alif_order(
 @buyer_router.post("/milestones/{milestone_id}/approve")
 async def approve_milestone(
     milestone_id: int,
-    ctx: Annotated[BuyerContext, Depends(buyer_perm("payments.approve"))],
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("payments.approve", full_role=True))],
 ):
     milestone = await PaymentService().approve_milestone(milestone_id, ctx.actor.id)
     return {"id": milestone["id"], "status": milestone["status"]}

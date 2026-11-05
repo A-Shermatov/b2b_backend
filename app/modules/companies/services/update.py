@@ -191,6 +191,24 @@ class CompanyUpdateMixin:
 
                 if data.actor_types is not None:
                     actor_types = list(data.actor_types)
+                    if "supplier" in actor_types:
+                        has_supplier = await conn.fetchval(
+                            """
+                            SELECT 1 FROM actors
+                            WHERE company_id = $1 AND kind::text = 'company'
+                              AND side::text = 'supplier' AND is_active = TRUE
+                            """,
+                            company_id,
+                        )
+                        if not has_supplier:
+                            from app.modules.subscription.services import SubscriptionService
+
+                            owner_id = await conn.fetchval(
+                                "SELECT owner_id FROM companies WHERE id = $1", company_id
+                            )
+                            await SubscriptionService(conn).check_company_limit(
+                                owner_id, exclude_company_id=company_id
+                            )
                     if actor_types:
                         await conn.execute(
                             "UPDATE companies SET actor_type = $1::actor_type WHERE id = $2",
@@ -252,7 +270,7 @@ class CompanyUpdateMixin:
             await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
             membership = await conn.fetchrow(
                 """
-                SELECT id, role::text AS role, u.email
+                SELECT cu.id, cu.role::text AS role, u.email
                 FROM company_users cu
                 JOIN users u ON u.id = cu.user_id
                 WHERE cu.company_id = $1 AND cu.user_id = $2

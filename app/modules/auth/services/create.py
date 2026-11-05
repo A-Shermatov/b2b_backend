@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from app.core.exceptions import ConflictError, ForbiddenError, UnauthorizedError
+from app.config import get_settings
+from app.core.exceptions import ConflictError, ForbiddenError, RateLimitError, UnauthorizedError
 from app.core.security_core import (
     create_2fa_challenge_token,
     create_access_token,
@@ -27,7 +28,13 @@ from app.modules.auth.services.common import (
     load_user,
 )
 from app.utils.audit import AuditLogger, log_event
-from app.utils.redis_client import blacklist_refresh_token, is_refresh_token_blacklisted
+from app.utils import redis_client
+from app.utils.redis_client import (
+    blacklist_refresh_token,
+    is_refresh_token_blacklisted,
+    mark_refresh_rotated,
+    refresh_rotation_in_grace,
+)
 from app.utils.totp import (
     consume_backup_code,
     decrypt_totp_secret,
@@ -35,6 +42,10 @@ from app.utils.totp import (
     totp_failure_user_message,
     verify_totp_code,
 )
+
+
+_DUMMY_PASSWORD_HASH = hash_password("dummy-password-for-timing")
+REFRESH_REUSE_GRACE_SECONDS = 30
 
 
 class AuthCreateMixin:
@@ -90,6 +101,10 @@ class AuthCreateMixin:
                 f"SELECT {USER_COLUMNS} FROM users WHERE email = $1",
                 data.email.lower(),
             )
+            if not user:
+                # Same bcrypt cost as for a real account: response time must not
+                # reveal whether the email is registered.
+                verify_password(data.password, _DUMMY_PASSWORD_HASH)
             if not user or not verify_password(data.password, user["password_hash"]):
                 if user:
                     await AuditLogger(conn).log_action(
@@ -163,6 +178,14 @@ class AuthCreateMixin:
             raise UnauthorizedError("Invalid 2FA challenge")
         user_id = int(payload["sub"])
         side = payload.get("side")
+        # Per account, not per IP: the 6-digit code must not be brute-forced.
+        settings = get_settings()
+        if not await redis_client.check_rate_limit(
+            f"2fa_user:{user_id}",
+            settings.rate_limit_2fa_per_user,
+            settings.rate_limit_2fa_user_window_seconds,
+        ):
+            raise RateLimitError("Too many 2FA attempts. Try again later.")
         async with self.connection() as conn:
             user = await load_user(conn, user_id)
             if not user or not user.get("totp_enabled") or not user.get("totp_secret"):
@@ -221,11 +244,21 @@ class AuthCreateMixin:
         if payload.get("type") != "refresh":
             raise UnauthorizedError("Invalid token type")
         jti_hash = hashlib.sha256(payload["jti"].encode()).hexdigest()
-        if await is_refresh_token_blacklisted(jti_hash):
-            raise UnauthorizedError("Token revoked")
         user_id = int(payload["sub"])
         side = payload.get("side")
         async with self.connection() as conn:
+            # Revocation lives in the DB (survives Redis restarts and is shared by all
+            # workers); Redis is only a fast path.
+            revoked = await is_refresh_token_blacklisted(jti_hash) or bool(
+                await conn.fetchval(
+                    "SELECT 1 FROM refresh_token_blacklist WHERE token_jti_hash = $1",
+                    jti_hash,
+                )
+            )
+            # A just-rotated token may be presented again by a parallel tab for a few
+            # seconds; any later reuse is refused.
+            if revoked and not await refresh_rotation_in_grace(jti_hash):
+                raise UnauthorizedError("Token revoked")
             user = await load_user(conn, user_id)
             if not user:
                 raise UnauthorizedError("User not found")
@@ -234,6 +267,20 @@ class AuthCreateMixin:
                 raise UnauthorizedError(block_message(user))
             if int(payload.get("tv") or 0) != int(user.get("token_version") or 0):
                 raise UnauthorizedError("Session revoked")
+            if not revoked:
+                # Rotation: every refresh token works once.
+                expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+                await conn.execute(
+                    """
+                    INSERT INTO refresh_token_blacklist (token_jti_hash, expires_at)
+                    VALUES ($1, $2)
+                    ON CONFLICT (token_jti_hash) DO NOTHING
+                    """,
+                    jti_hash,
+                    expires_at,
+                )
+                await blacklist_refresh_token(jti_hash, expires_at)
+                await mark_refresh_rotated(jti_hash, REFRESH_REUSE_GRACE_SECONDS)
         if side and not user_capabilities(user["role"]).get(side):
             side = None
         return self._issue_tokens(user, side=side)

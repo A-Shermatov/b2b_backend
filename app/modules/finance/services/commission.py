@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
+from app.config import get_settings
 from app.core.exceptions import ValidationError
+from app.enums import Currency
 from app.modules.finance.services.common import record_platform_payment
 from app.modules.payments.gateways.alif import MIN_MARKETPLACE_PART, marketplace_commission
 from app.modules.settings.service import SETTINGS_CURRENCY, PlatformSettings
@@ -47,6 +49,15 @@ def calculate_commission(
 
 
 def ensure_contract_amount_allowed(amount: float, currency, settings: PlatformSettings) -> None:
+    code = str(getattr(currency, "value", currency) or "").upper()
+    if code not in {item.value for item in Currency}:
+        raise ValidationError("Неизвестная валюта")
+    app_settings = get_settings()
+    if app_settings.alif_enabled and code != app_settings.alif_currency.upper():
+        # Alif accepts only its currency: a deal in another one could never be paid.
+        raise ValidationError(
+            f"Сейчас сделки оплачиваются только в {app_settings.alif_currency}"
+        )
     limit = settings.max_contract_amount
     if limit is None or not is_settings_currency(currency):
         return

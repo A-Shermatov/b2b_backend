@@ -144,3 +144,14 @@ async def execute_sql_script(conn, sql: str) -> None:
 
 async def execute_sql_file(conn, path: Path) -> None:
     await execute_sql_script(conn, path.read_text(encoding="utf-8"))
+
+
+def like_contains(query: str, max_length: int = 200) -> str:
+    """Pattern for ILIKE '%...%' that treats the user's text literally.
+
+    % and _ typed by the user are escaped (PostgreSQL's default LIKE escape is a
+    backslash), and very long queries are cut.
+    """
+    text = (query or "")[:max_length]
+    text = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{text}%"

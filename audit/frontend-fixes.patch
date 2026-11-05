@@ -1,0 +1,435 @@
+From 1179ceac1f5763800ee4344482a2039b4614d2b5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 05:20:39 +0000
+Subject: [PATCH] =?UTF-8?q?=D0=98=D1=81=D0=BF=D1=80=D0=B0=D0=B2=D0=BB?=
+ =?UTF-8?q?=D0=B5=D0=BD=D0=B8=D1=8F=20=D0=BF=D0=BE=20=D0=B0=D1=83=D0=B4?=
+ =?UTF-8?q?=D0=B8=D1=82=D1=83:=20=D1=84=D0=B8=D0=BD=D0=B0=D0=BD=D1=81?=
+ =?UTF-8?q?=D1=8B=20=D0=B0=D0=B4=D0=BC=D0=B8=D0=BD=D0=BA=D0=B8,=20=D0=B7?=
+ =?UTF-8?q?=D0=B0=D0=BC=D0=BE=D1=80=D0=BE=D0=B7=D0=BA=D0=B0,=20=D1=82?=
+ =?UTF-8?q?=D0=B5=D0=BA=D1=81=D1=82=D1=8B=20=D0=B8=20=D0=B7=D0=B0=D0=B3?=
+ =?UTF-8?q?=D0=BE=D0=BB=D0=BE=D0=B2=D0=BA=D0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Админка: убрано действие «Повторить» (меняло статус без банка),
+  «Возврат» стал «Отметить возврат» и недоступен для выплат поставщикам.
+- Админка: «Снять заморозку» для сделки, честные описания заморозки
+  и принудительного завершения.
+- Покупатель: в диалогах выплаты и приёмки показана сумма поставщику
+  за вычетом комиссии.
+- «Правила закупок» скрыты в режиме API (сервер их не применяет),
+  убран блок бонусов, которых нет.
+- next.config: X-Frame-Options, frame-ancestors, nosniff,
+  Referrer-Policy, Permissions-Policy.
+- Доступность: подписи полей смены пароля и причины спора,
+  aria-label у кнопки удаления фото; убран горизонтальный скролл
+  на /customer/plan.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01AvqoxvLCQnvbgpqFdJzDog
+---
+ app/(admin)/admin/contracts/[id]/page.tsx     | 15 +++++++++++-
+ app/(admin)/admin/finance/[id]/page.tsx       | 24 +++++++------------
+ app/(customer)/customer/company/page.tsx      |  5 +++-
+ .../customer/contracts/[id]/page.tsx          | 11 +++++++--
+ app/(customer)/customer/plan/page.tsx         | 21 ++++------------
+ .../contracts/contract-action-dialog.tsx      | 13 +++++++---
+ .../admin/finance/finance-action-dialog.tsx   | 16 +++++--------
+ components/auth/change-password-card.tsx      |  3 +++
+ components/cabinet/dispute-dialog.tsx         |  1 +
+ components/cabinet/review-dialog.tsx          |  1 +
+ lib/api/admin.ts                              |  3 ++-
+ next.config.mjs                               | 23 +++++++++++++++++-
+ 12 files changed, 85 insertions(+), 51 deletions(-)
+
+diff --git a/app/(admin)/admin/contracts/[id]/page.tsx b/app/(admin)/admin/contracts/[id]/page.tsx
+index 381a10f..8d3fea6 100644
+--- a/app/(admin)/admin/contracts/[id]/page.tsx
++++ b/app/(admin)/admin/contracts/[id]/page.tsx
+@@ -94,6 +94,8 @@ export default function AdminContractDetailPage({ params }: PageProps) {
+     className: "bg-muted text-muted-foreground",
+   }
+   const isClosed = ["completed", "cancelled"].includes(contract.status)
++  // Frozen by an admin: milestones moved to "disputed" while money is held.
++  const isFrozen = (contract.milestones ?? []).some((m) => m.status === "disputed")
+   const buyerName =
+     contract.buyer?.company_title ||
+     contract.buyer?.name ||
+@@ -138,7 +140,7 @@ export default function AdminContractDetailPage({ params }: PageProps) {
+           </div>
+ 
+           <div className="flex flex-wrap gap-2 xl:max-w-xl xl:justify-end">
+-            {canUpdate && (
++            {canUpdate && !isFrozen && (
+               <Button
+                 type="button"
+                 size="sm"
+@@ -149,6 +151,17 @@ export default function AdminContractDetailPage({ params }: PageProps) {
+                 Заморозить
+               </Button>
+             )}
++            {canUpdate && isFrozen && (
++              <Button
++                type="button"
++                size="sm"
++                variant="outline"
++                onClick={() => setSelectedAction("unfreeze")}
++              >
++                <Snowflake aria-hidden="true" />
++                Снять заморозку
++              </Button>
++            )}
+             {canUpdate && !isClosed && (
+               <Button
+                 type="button"
+diff --git a/app/(admin)/admin/finance/[id]/page.tsx b/app/(admin)/admin/finance/[id]/page.tsx
+index b7c617e..1e4b3f2 100644
+--- a/app/(admin)/admin/finance/[id]/page.tsx
++++ b/app/(admin)/admin/finance/[id]/page.tsx
+@@ -3,7 +3,7 @@
+ import { use, useState } from "react"
+ import { formatCurrency } from "@/lib/format"
+ import Link from "next/link"
+-import { CheckCircleIcon as CheckCircle2, CurrencyCircleDollarIcon as CircleDollarSign, DownloadSimpleIcon as Download, ArrowsCounterClockwiseIcon as RefreshCcw, ArrowCounterClockwiseIcon as RotateCcw, ArrowUUpLeftIcon as Undo2 } from "@phosphor-icons/react/dist/ssr"
++import { CheckCircleIcon as CheckCircle2, CurrencyCircleDollarIcon as CircleDollarSign, DownloadSimpleIcon as Download, ArrowsCounterClockwiseIcon as RefreshCcw, ArrowUUpLeftIcon as Undo2 } from "@phosphor-icons/react/dist/ssr"
+ import { toast } from "sonner"
+ import { FinanceActionDialog } from "@/components/admin/finance/finance-action-dialog"
+ import { AdminFinanceDetailSections } from "@/components/admin/finance/finance-detail-sections"
+@@ -106,8 +106,13 @@ export default function AdminFinanceDetailPage({ params }: PageProps) {
+     className: "bg-muted text-muted-foreground",
+   }
+   const canMarkPaid = canManage && ["pending", "processing"].includes(payment.status)
+-  const canRetry = canManage && payment.status === "failed"
+-  const canRefund = canManage && payment.status === "paid" && payment.type !== "refund"
++  // Refund only records a refund made outside the platform; payouts to suppliers
++  // are reconciled with the bank instead.
++  const canRefund =
++    canManage &&
++    payment.status === "paid" &&
++    payment.type !== "refund" &&
++    payment.type !== "payout"
+ 
+   const handleExport = async () => {
+     setExporting(true)
+@@ -174,17 +179,6 @@ export default function AdminFinanceDetailPage({ params }: PageProps) {
+                 Отметить оплаченным
+               </Button>
+             )}
+-            {canRetry && (
+-              <Button
+-                type="button"
+-                size="sm"
+-                variant="outline"
+-                onClick={() => setSelectedAction("retry")}
+-              >
+-                <RotateCcw aria-hidden="true" />
+-                Повторить
+-              </Button>
+-            )}
+             {canRefund && (
+               <Button
+                 type="button"
+@@ -193,7 +187,7 @@ export default function AdminFinanceDetailPage({ params }: PageProps) {
+                 onClick={() => setSelectedAction("refund")}
+               >
+                 <Undo2 aria-hidden="true" />
+-                Возврат
++                Отметить возврат
+               </Button>
+             )}
+           </div>
+diff --git a/app/(customer)/customer/company/page.tsx b/app/(customer)/customer/company/page.tsx
+index 7e44333..e1612a4 100644
+--- a/app/(customer)/customer/company/page.tsx
++++ b/app/(customer)/customer/company/page.tsx
+@@ -402,7 +402,10 @@ export default function CustomerCompanyPage() {
+             </section>
+           ) : null}
+ 
+-          <PurchaseRulesCard rules={rules} onChange={handleRuleChange} />
++          {/* Purchase rules are not enforced by the server yet: demo mode only. */}
++          {!useApi ? (
++            <PurchaseRulesCard rules={rules} onChange={handleRuleChange} />
++          ) : null}
+         </div>
+ 
+         <CompanyRequisitesCard
+diff --git a/app/(customer)/customer/contracts/[id]/page.tsx b/app/(customer)/customer/contracts/[id]/page.tsx
+index e568be8..90057cf 100644
+--- a/app/(customer)/customer/contracts/[id]/page.tsx
++++ b/app/(customer)/customer/contracts/[id]/page.tsx
+@@ -316,6 +316,13 @@ export default function BuyerContractDetailPage({ params }: PageProps) {
+     pendingMilestone?.amount ?? contract.agreed_amount,
+     contract.currency,
+   )
++  // What the supplier actually receives: the platform commission is withheld.
++  const supplierGets = formatCurrency(
++    pendingMilestone
++      ? pendingMilestone.amount - (pendingMilestone.commission_amount ?? 0)
++      : contract.agreed_amount - (contract.commission_amount ?? 0),
++    contract.currency,
++  )
+   const fundDescription = contract.status === "completed"
+     ? "Деньги будут удерживаться банком‑партнёром. Затем подтвердите выплату исполнителю."
+     : "Деньги будут удерживаться банком‑партнёром. Исполнитель получит их только после того, как вы примете работу."
+@@ -337,7 +344,7 @@ export default function BuyerContractDetailPage({ params }: PageProps) {
+     },
+     release: {
+       title: "Перевести деньги исполнителю?",
+-      description: `${supplierName} получит ${pendingAmount}. Отменить выплату будет нельзя.`,
++      description: `${supplierName} получит ${supplierGets} (за вычетом комиссии площадки). Отменить выплату будет нельзя.`,
+       confirmLabel: "Да, перевести",
+     },
+     accept: unpaidMilestone
+@@ -348,7 +355,7 @@ export default function BuyerContractDetailPage({ params }: PageProps) {
+         }
+       : {
+           title: "Принять работу?",
+-          description: `${supplierName} получит ${pendingAmount}, которые удерживает банк. Отправить работу на доработку после приёмки будет нельзя.`,
++          description: `${supplierName} получит ${supplierGets} из удерживаемых банком ${pendingAmount} (за вычетом комиссии площадки). Отправить работу на доработку после приёмки будет нельзя.`,
+           confirmLabel: "Да, принять",
+         },
+   }
+diff --git a/app/(customer)/customer/plan/page.tsx b/app/(customer)/customer/plan/page.tsx
+index 92ecaea..3e258e0 100644
+--- a/app/(customer)/customer/plan/page.tsx
++++ b/app/(customer)/customer/plan/page.tsx
+@@ -1,7 +1,7 @@
+ "use client"
+ 
+ import Link from "next/link"
+-import { CheckIcon as Check, StarIcon as Star } from "@phosphor-icons/react/dist/ssr"
++import { CheckIcon as Check } from "@phosphor-icons/react/dist/ssr"
+ import { SurfaceCard } from "@/components/bm"
+ import { Button } from "@/components/ui/button"
+ import {
+@@ -14,7 +14,6 @@ import { helpUrl } from "@/lib/marketplace-routes"
+ /** Buyer tariff hub — read-only UI (API for paid plans not wired yet). */
+ export default function CustomerPlanPage() {
+   const onPlus = false
+-  const bonus = 0
+ 
+   return (
+     <div className="grid gap-5">
+@@ -44,18 +43,6 @@ export default function CustomerPlanPage() {
+               ),
+             )}
+           </ul>
+-          <div className="flex items-center gap-3 rounded-xl bg-canvas p-4">
+-            <span className="grid size-10 place-items-center rounded-xl bg-amber-100 text-amber-700">
+-              <Star className="size-5" aria-hidden />
+-            </span>
+-            <span className="flex-1 text-[14px]">
+-              <b className="block tnum text-[16px]">{bonus} бонусов</b>
+-              <span className="text-mute">
+-                1 бонус = 1 TJS на оплату услуг площадки. Начисляем 0,5% с оплат
+-                через гарантию.
+-              </span>
+-            </span>
+-          </div>
+         </SurfaceCard>
+ 
+         <section className="grid gap-4 rounded-2xl bg-ink p-6 text-white">
+@@ -101,9 +88,9 @@ export default function CustomerPlanPage() {
+         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+           {BUYER_SERVICES.map((svc) => (
+             <SurfaceCard key={svc.id} className="grid gap-2 p-5">
+-              <div className="flex items-start justify-between gap-2">
+-                <b className="text-[16px] text-ink">{svc.name}</b>
+-                <span className="shrink-0 text-[13px] font-semibold text-brand-700">
++              <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-2 gap-y-1">
++                <b className="min-w-0 text-[16px] text-ink">{svc.name}</b>
++                <span className="text-[13px] font-semibold text-brand-700">
+                   {svc.price}
+                 </span>
+               </div>
+diff --git a/components/admin/contracts/contract-action-dialog.tsx b/components/admin/contracts/contract-action-dialog.tsx
+index 95e964b..96ddfe2 100644
+--- a/components/admin/contracts/contract-action-dialog.tsx
++++ b/components/admin/contracts/contract-action-dialog.tsx
+@@ -28,13 +28,20 @@ const actionMetadata: Record<
+   }
+ > = {
+   freeze: {
+-    title: "Заморозить escrow?",
++    title: "Заморозить деньги по сделке?",
+     description:
+-      "Средства в held-состояниях этапов будут переведены в статус спора. Контракт может остаться активным.",
++      "Оплаченные этапы будут заморожены: покупатель не сможет принять работу и выплатить деньги, пока вы не снимете заморозку.",
+     success: "Деньги на гарантии заморожены",
+     reasonRequired: false,
+     destructive: true,
+   },
++  unfreeze: {
++    title: "Снять заморозку?",
++    description:
++      "Замороженные этапы снова станут оплаченными, покупатель сможет принять работу.",
++    success: "Заморозка снята",
++    reasonRequired: false,
++  },
+   cancel: {
+     title: "Отменить контракт?",
+     description: "Контракт получит статус «Отменён». Это действие необратимо.",
+@@ -45,7 +52,7 @@ const actionMetadata: Record<
+   force_complete: {
+     title: "Принудительно завершить?",
+     description:
+-      "Контракт будет завершён, а оплаченные этапы (funded) перейдут в статус «Выплачен».",
++      "Контракт будет завершён, а деньги по оплаченным и замороженным этапам уйдут поставщику. Если по сделке открыт спор, сначала решите его.",
+     success: "Контракт завершён",
+     reasonRequired: true,
+   },
+diff --git a/components/admin/finance/finance-action-dialog.tsx b/components/admin/finance/finance-action-dialog.tsx
+index e398318..9ee05c6 100644
+--- a/components/admin/finance/finance-action-dialog.tsx
++++ b/components/admin/finance/finance-action-dialog.tsx
+@@ -29,20 +29,16 @@ const actionMetadata: Record<
+ > = {
+   mark_paid: {
+     title: "Отметить оплаченным?",
+-    description: "Статус платежа станет «Оплачен». Связанный счёт или выплата будут синхронизированы.",
++    description:
++      "Деньги отсюда не отправляются: отметьте платёж оплаченным только после подтверждения банка. Связанный счёт или выплата будут синхронизированы.",
+     success: "Платёж отмечен оплаченным",
+     reasonRequired: false,
+   },
+-  retry: {
+-    title: "Повторить платёж?",
+-    description: "Неудачный платёж будет повторно обработан (mock success → оплачен).",
+-    success: "Повтор выполнен",
+-    reasonRequired: true,
+-  },
+   refund: {
+-    title: "Вернуть платёж?",
+-    description: "Оплаченный платёж получит статус «Возвращён». Связанный счёт будет отменён.",
+-    success: "Возврат выполнен",
++    title: "Отметить возврат, сделанный вручную?",
++    description:
++      "Деньги отсюда не отправляются: отметьте возврат только после того, как он прошёл через банк. Платёж получит статус «Возвращён», связанный счёт будет отменён. Укажите номер операции в причине.",
++    success: "Возврат отмечен",
+     reasonRequired: true,
+     destructive: true,
+   },
+diff --git a/components/auth/change-password-card.tsx b/components/auth/change-password-card.tsx
+index 97d7983..d937be2 100644
+--- a/components/auth/change-password-card.tsx
++++ b/components/auth/change-password-card.tsx
+@@ -118,6 +118,7 @@ export function ChangePasswordCard({ className }: Props) {
+                 type="password"
+                 autoComplete="current-password"
+                 placeholder="Текущий пароль"
++                aria-label="Текущий пароль"
+                 value={current}
+                 onChange={(e) => setCurrent(e.target.value)}
+               />
+@@ -125,6 +126,7 @@ export function ChangePasswordCard({ className }: Props) {
+                 type="password"
+                 autoComplete="new-password"
+                 placeholder="Новый пароль"
++                aria-label="Новый пароль"
+                 value={next}
+                 onChange={(e) => setNext(e.target.value)}
+               />
+@@ -132,6 +134,7 @@ export function ChangePasswordCard({ className }: Props) {
+                 type="password"
+                 autoComplete="new-password"
+                 placeholder="Повторите новый пароль"
++                aria-label="Повторите новый пароль"
+                 value={confirm}
+                 onChange={(e) => setConfirm(e.target.value)}
+               />
+diff --git a/components/cabinet/dispute-dialog.tsx b/components/cabinet/dispute-dialog.tsx
+index b49af5d..479a5c0 100644
+--- a/components/cabinet/dispute-dialog.tsx
++++ b/components/cabinet/dispute-dialog.tsx
+@@ -67,6 +67,7 @@ export default function DisputeDialog({ open, onOpenChange, onConfirm }: Dispute
+           onChange={(e) => setReason(e.target.value)}
+           rows={4}
+           placeholder="Опишите, что пошло не так"
++          aria-label="Причина спора"
+           className="w-full px-4 py-3 rounded-xl border border-input bg-card text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all resize-none"
+         />
+         {error && <p className="text-xs text-destructive -mt-2">{error}</p>}
+diff --git a/components/cabinet/review-dialog.tsx b/components/cabinet/review-dialog.tsx
+index ecbcebe..9d30285 100644
+--- a/components/cabinet/review-dialog.tsx
++++ b/components/cabinet/review-dialog.tsx
+@@ -251,6 +251,7 @@ export default function ReviewDialog({
+                   />
+                   <button
+                     type="button"
++                    aria-label="Удалить фото"
+                     className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white"
+                     onClick={() =>
+                       setPhotos((prev) => prev.filter((p) => p.file_url !== photo.file_url))
+diff --git a/lib/api/admin.ts b/lib/api/admin.ts
+index 9d0e501..f665ddd 100644
+--- a/lib/api/admin.ts
++++ b/lib/api/admin.ts
+@@ -793,6 +793,7 @@ export type AdminContractView =
+ 
+ export type AdminContractAction =
+   | "freeze"
++  | "unfreeze"
+   | "cancel"
+   | "force_complete"
+   | "open_investigation"
+@@ -2041,7 +2042,7 @@ export type AdminFinanceView =
+   | "refunds"
+   | "payouts"
+ 
+-export type AdminFinanceAction = "refund" | "retry" | "mark_paid"
++export type AdminFinanceAction = "refund" | "mark_paid"
+ 
+ export type AdminFinancePayment = {
+   id: number
+diff --git a/next.config.mjs b/next.config.mjs
+index 270168b..b06a617 100644
+--- a/next.config.mjs
++++ b/next.config.mjs
+@@ -1,6 +1,25 @@
+ /** @type {import('next').NextConfig} */
++
++// Baseline protection for every page: no framing (clickjacking of "pay" / "release"
++// buttons), no MIME sniffing, no full URLs (with tokens/ids) leaking in Referer.
++const securityHeaders = [
++  { key: "X-Frame-Options", value: "DENY" },
++  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
++  { key: "X-Content-Type-Options", value: "nosniff" },
++  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
++  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
++]
++
+ const nextConfig = {
+   output: "standalone",
++  async headers() {
++    return [
++      {
++        source: "/:path*",
++        headers: securityHeaders,
++      },
++    ]
++  },
+   async rewrites() {
+     return [
+       {
+@@ -8,6 +27,8 @@ const nextConfig = {
+         destination: 'http://backend:8080/api/:path*',
+       },
+       {
++        // Files are served by the API with nosniff, a CSP sandbox and
++        // Content-Disposition: attachment for anything that is not an image/PDF/video.
+         source: '/uploads/:path*',
+         destination: 'http://backend:8080/uploads/:path*',
+       },
+@@ -18,4 +39,4 @@ const nextConfig = {
+   },
+ }
+ 
+-export default nextConfig
+\ No newline at end of file
++export default nextConfig
+-- 
+2.43.0
+

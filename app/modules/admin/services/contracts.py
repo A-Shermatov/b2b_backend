@@ -21,11 +21,18 @@ from app.modules.admin.services.common import (
 )
 from app.modules.contracts.services.common import (
     file_uploader_side,
+    has_active_dispute,
     resolve_actor_user_ids,
     sender_display_name,
 )
 from app.modules.finance.services import FinanceLedgerService
 from app.modules.finance.services.commission import record_milestone_releases
+from app.utils.locks import contract_lock
+
+
+CONTRACT_ACTIONS = frozenset(
+    {"freeze", "unfreeze", "cancel", "force_complete", "open_investigation"}
+)
 
 
 def _shape_admin_contract_file(
@@ -133,6 +140,10 @@ def _contract_action_notification(action: str, contract_title: str, reason: str 
             "Escrow заморожен",
             f"Администратор заморозил средства по контракту «{contract_title}».",
         ),
+        "unfreeze": (
+            "Escrow разморожен",
+            f"Администратор снял заморозку средств по контракту «{contract_title}».",
+        ),
         "cancel": (
             "Контракт отменён",
             f"Контракт «{contract_title}» отменён администратором.",
@@ -237,7 +248,9 @@ async def _settle_partial_refund_in_bank(
     service = PaymentService()
     try:
         await service.cancel_marketplace_for_milestones(refunded, reason or "Возврат покупателю")
-        await service.confirm_marketplace_deliveries_for_milestones(released)
+        await service.confirm_marketplace_deliveries_for_milestones(
+            released, milestone_statuses=ESCROW_LOCKED_STATUSES
+        )
     except AlifGatewayError as exc:
         raise ConflictError(
             f"Не удалось провести решение по спору в Alif, изменения не сохранены: {exc.detail}"
@@ -472,8 +485,23 @@ class AdminContractsMixin:
         current_user,
         reason: str | None = None,
     ) -> dict:
-        allowed = {"freeze", "cancel", "force_complete", "open_investigation"}
-        if action not in allowed:
+        if action not in CONTRACT_ACTIONS:
+            raise ValidationError("Unsupported contract action")
+        # Bank calls below run outside DB transactions: serialise money operations
+        # of the deal (buyer acceptance, disputes, other admin actions).
+        async with contract_lock(contract_id):
+            return await self._apply_contract_action_locked(
+                contract_id, action, current_user, reason
+            )
+
+    async def _apply_contract_action_locked(
+        self,
+        contract_id: int,
+        action: str,
+        current_user,
+        reason: str | None = None,
+    ) -> dict:
+        if action not in CONTRACT_ACTIONS:
             raise ValidationError("Unsupported contract action")
         ensure_permission(
             current_user,
@@ -495,7 +523,15 @@ class AdminContractsMixin:
         from app.modules.payments.services import PaymentService
 
         if action == "force_complete":
-            await PaymentService().confirm_marketplace_deliveries_for_contract(contract_id)
+            async with self.connection() as conn:
+                if await has_active_dispute(conn, contract_id):
+                    raise ConflictError(
+                        "По сделке открыт спор: решите его в разделе «Споры» "
+                        "(выплата, возврат или частичный возврат)"
+                    )
+            await PaymentService().confirm_marketplace_deliveries_for_contract(
+                contract_id, milestone_statuses=ESCROW_LOCKED_STATUSES
+            )
         elif action == "cancel":
             async with self.connection() as conn:
                 current_status = await conn.fetchval(
@@ -524,7 +560,22 @@ class AdminContractsMixin:
             status = previous_status
             milestones = await _load_milestones(conn, contract_id)
 
-            if action == "freeze":
+            if action == "unfreeze":
+                unfrozen = await conn.fetch(
+                    """
+                    UPDATE payment_milestones m
+                    SET status = 'funded'::milestone_status
+                    FROM payment_plans p
+                    WHERE m.payment_plan_id = p.id
+                      AND p.contract_id = $1
+                      AND m.status::text = 'disputed'
+                    RETURNING m.id
+                    """,
+                    contract_id,
+                )
+                if not unfrozen:
+                    raise ConflictError("Contract has no frozen milestones")
+            elif action == "freeze":
                 await conn.execute(
                     """
                     UPDATE payment_milestones m
@@ -628,7 +679,10 @@ class AdminContractsMixin:
                     contract_id,
                 )
 
-            for party_id in (contract["buyer_actor_id"], contract["supplier_actor_id"]):
+            for party_id, cabinet in (
+                (contract["buyer_actor_id"], "customer"),
+                (contract["supplier_actor_id"], "supplier"),
+            ):
                 user_id = await resolve_owner_user_id(conn, party_id)
                 if not user_id:
                     continue
@@ -638,7 +692,7 @@ class AdminContractsMixin:
                     user_id,
                     title,
                     body,
-                    href=f"/customer/contracts/{contract_id}",
+                    href=f"/{cabinet}/contracts/{contract_id}",
                 )
             await log_admin(
                 conn,
@@ -898,6 +952,28 @@ class AdminContractsMixin:
         reason: str | None = None,
         partial_buyer_amount: float | None = None,
     ) -> dict:
+        async with self.connection() as conn:
+            pre = await conn.fetchrow(
+                "SELECT status::text AS status, contract_id FROM disputes WHERE id = $1",
+                dispute_id,
+            )
+        if not pre:
+            raise NotFoundError("Dispute not found")
+        # Serialise with buyer acceptance and other admin decisions on the same deal:
+        # the bank part of a decision must not interleave with another one.
+        async with contract_lock(pre["contract_id"]):
+            return await self._apply_dispute_action_locked(
+                dispute_id, action, current_user, reason, partial_buyer_amount
+            )
+
+    async def _apply_dispute_action_locked(
+        self,
+        dispute_id: int,
+        action: str,
+        current_user,
+        reason: str | None = None,
+        partial_buyer_amount: float | None = None,
+    ) -> dict:
         allowed = {
             "release_funds",
             "refund_buyer",
@@ -916,11 +992,19 @@ class AdminContractsMixin:
 
         if action == "release_funds":
             async with self.connection() as conn:
-                mp_contract_id = await conn.fetchval(
-                    "SELECT contract_id FROM disputes WHERE id = $1", dispute_id
+                pre = await conn.fetchrow(
+                    "SELECT status::text AS status, contract_id FROM disputes WHERE id = $1",
+                    dispute_id,
                 )
+            if not pre:
+                raise NotFoundError("Dispute not found")
+            if pre["status"] == "resolved":
+                raise ConflictError("Dispute is already resolved")
+            mp_contract_id = pre["contract_id"]
             if mp_contract_id:
-                await PaymentService().confirm_marketplace_deliveries_for_contract(mp_contract_id)
+                await PaymentService().confirm_marketplace_deliveries_for_contract(
+                    mp_contract_id, milestone_statuses=tuple(movable)
+                )
         elif action == "refund_buyer":
             async with self.connection() as conn:
                 pre = await conn.fetchrow(
@@ -1105,7 +1189,10 @@ class AdminContractsMixin:
                     dispute["contract_id"],
                 )
 
-            for party_id in (dispute["buyer_actor_id"], dispute["supplier_actor_id"]):
+            for party_id, cabinet in (
+                (dispute["buyer_actor_id"], "customer"),
+                (dispute["supplier_actor_id"], "supplier"),
+            ):
                 user_id = await resolve_owner_user_id(conn, party_id)
                 if not user_id:
                     continue
@@ -1115,7 +1202,7 @@ class AdminContractsMixin:
                     user_id,
                     title,
                     body,
-                    href=f"/customer/contracts/{dispute['contract_id']}",
+                    href=f"/{cabinet}/contracts/{dispute['contract_id']}",
                 )
             await log_admin(
                 conn,

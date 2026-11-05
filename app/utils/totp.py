@@ -169,16 +169,18 @@ def log_totp_failure(context: str, *, user_id: int, secret: str, code: str) -> d
 
 
 def totp_failure_user_message(info: dict[str, Any]) -> str:
-    """Client-facing 422 detail — never includes secret or code."""
-    if info.get("reason") == "clock_skew_or_stale_code":
-        return (
-            "Код не совпал из‑за рассинхрона времени "
-            "(телефон и сервер должны быть в пределах ±30 с). "
-            "Синхронизируйте часы и введите свежий код."
-        )
+    """Client-facing 422 detail — never includes secret or code.
+
+    The same text for every wrong code: telling apart "valid in a few minutes"
+    (clock skew) from "wrong" would let an attacker learn codes that become valid
+    soon. Clock-skew diagnostics stay in the server log only.
+    """
     if info.get("reason") == "invalid_code_format":
         return "Код должен состоять из 6 цифр"
-    return "Invalid authentication code"
+    return (
+        "Неверный код. Проверьте, что время на телефоне установлено автоматически, "
+        "и введите свежий код."
+    )
 
 
 def generate_backup_codes() -> list[str]:

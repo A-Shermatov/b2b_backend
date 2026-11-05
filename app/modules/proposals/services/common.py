@@ -207,19 +207,40 @@ def assert_chat_access(row, actor_id: int, as_buyer: bool) -> None:
         raise ForbiddenError("Access denied")
 
 
+async def _actor_user_ids(conn, actor_id: int) -> set[int]:
+    """Users who act for the actor: the person, or every member and the owner of the company."""
+    row = await conn.fetchrow(
+        """
+        SELECT a.kind::text AS kind, a.user_id, a.company_id, c.owner_id
+        FROM actors a
+        LEFT JOIN companies c ON c.id = a.company_id
+        WHERE a.id = $1
+        """,
+        actor_id,
+    )
+    if not row:
+        return set()
+    if row["kind"] != "company":
+        return {row["user_id"]} if row["user_id"] else set()
+    members = await conn.fetch(
+        "SELECT user_id FROM company_users WHERE company_id = $1", row["company_id"]
+    )
+    users = {m["user_id"] for m in members}
+    if row["owner_id"]:
+        users.add(row["owner_id"])
+    return users
+
+
 async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id: int) -> None:
+    """A deal needs two independent parties.
+
+    Blocked when the actors are the same, belong to the same company, or any person
+    can act on both sides (owner or team member of either company, or the individual).
+    """
     if buyer_actor_id == supplier_actor_id:
         raise ConflictError("Нельзя заключить сделку с самим собой")
     rows = await conn.fetch(
-        """
-        SELECT
-            a.id,
-            a.company_id,
-            CASE WHEN a.kind::text = 'company' THEN c.owner_id ELSE a.user_id END AS owner_user_id
-        FROM actors a
-        LEFT JOIN companies c ON c.id = a.company_id
-        WHERE a.id = ANY($1::int[])
-        """,
+        "SELECT id, company_id FROM actors WHERE id = ANY($1::int[])",
         [buyer_actor_id, supplier_actor_id],
     )
     by_id = {row["id"]: row for row in rows}
@@ -227,13 +248,16 @@ async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id: 
     supplier = by_id.get(supplier_actor_id)
     if not buyer or not supplier:
         return
-    same_company = buyer["company_id"] is not None and buyer["company_id"] == supplier["company_id"]
-    same_owner = (
-        buyer["owner_user_id"] is not None
-        and buyer["owner_user_id"] == supplier["owner_user_id"]
-    )
-    if same_company or same_owner:
+    if buyer["company_id"] is not None and buyer["company_id"] == supplier["company_id"]:
         raise ConflictError("Нельзя заключить сделку с самим собой")
+    shared = await _actor_user_ids(conn, buyer_actor_id) & await _actor_user_ids(
+        conn, supplier_actor_id
+    )
+    if shared:
+        raise ConflictError(
+            "Нельзя заключить сделку с самим собой: один и тот же пользователь "
+            "представляет обе стороны"
+        )
 
 
 async def ensure_proposal_buyer_reviewable(row) -> None:

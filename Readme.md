@@ -66,6 +66,9 @@ Frontend: `NEXT_PUBLIC_FILES_BASE_URL` (same public prefix) for relative/legacy 
 
 ## Demo accounts (after seed)
 
+> Только для локальной разработки: `python scripts/seed.py` или `SEED_DEMO_DATA=true`
+> для Docker. На сервере демо-аккаунтов быть не должно — их пароли опубликованы здесь.
+
 | Role | Email | Password |
 |------|-------|----------|
 | Admin | admin@example.com | Admin123! |

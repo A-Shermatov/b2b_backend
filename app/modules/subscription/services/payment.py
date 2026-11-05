@@ -506,7 +506,19 @@ class SubscriptionPaymentMixin:
         external_id: str | None,
         amount: float,
     ) -> SubscriptionResponse:
-        active_until = datetime.now(timezone.utc) + THIRTY_DAYS
+        now = datetime.now(timezone.utc)
+        current = await conn.fetchrow(
+            "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1",
+            user_id,
+        )
+        start = now
+        if current and current["plan"] == plan and current["active_until"]:
+            current_until = current["active_until"]
+            if current_until.tzinfo is None:
+                current_until = current_until.replace(tzinfo=timezone.utc)
+            # Renewing the same plan early extends it instead of burning paid days.
+            start = max(now, current_until)
+        active_until = start + THIRTY_DAYS
         updated = await conn.fetchval(
             """
             UPDATE supplier_subscriptions

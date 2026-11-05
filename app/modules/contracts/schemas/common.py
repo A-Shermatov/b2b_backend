@@ -129,25 +129,25 @@ class ContractWithRelations(ContractSchema):
 
 
 class MessageCreate(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=5000)
 
 
 class SubmissionAssetCreate(BaseModel):
     kind: str = Field(pattern="^(image|video|file|link)$")
-    name: str = Field(min_length=1)
-    url: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=255)
+    url: str = Field(min_length=1, max_length=2000)
     file_type: str | None = None
 
 
 class WorkSubmissionCreate(BaseModel):
     type: str = "delivery"
-    note: str = ""
-    file_names: list[str] = []
-    assets: list[SubmissionAssetCreate] = []
+    note: str = Field(default="", max_length=5000)
+    file_names: list[str] = Field(default_factory=list, max_length=50)
+    assets: list[SubmissionAssetCreate] = Field(default_factory=list, max_length=50)
 
 
 class DisputeRequest(BaseModel):
-    reason: str = Field(min_length=10)
+    reason: str = Field(min_length=10, max_length=5000)
 
 
 class DisputeStatementRequest(BaseModel):

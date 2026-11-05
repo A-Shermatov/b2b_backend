@@ -1,5 +1,6 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.pagination import build_page, fetch_page
+from app.db.sql import like_contains
 from app.modules.rfqs.services.common import (
     BUYER_COLUMNS,
     BUYER_TAB_STATUSES,
@@ -47,7 +48,7 @@ class RfqReadMixin:
             filters.append(f"r.type::text = ${len(params)}")
         query = (q or "").strip()
         if query:
-            params.append(f"%{query}%")
+            params.append(like_contains(query))
             n = len(params)
             filters.append(f"(r.title ILIKE ${n} OR r.id::text ILIKE ${n})")
         where = " AND ".join(filters)
@@ -104,7 +105,7 @@ class RfqReadMixin:
             filters.append(f"r.category_id = ${len(params)}")
         query = (q or "").strip()
         if query:
-            params.append(f"%{query}%")
+            params.append(like_contains(query))
             n = len(params)
             filters.append(
                 f"(r.title ILIKE ${n} OR r.id::text ILIKE ${n} "

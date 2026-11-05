@@ -21,7 +21,12 @@ class SubscriptionUpdateMixin:
             )
         return await self.get_subscription(user_id)
 
-    async def check_company_limit(self, user) -> None:
+    async def check_company_limit(self, user, *, exclude_company_id: int | None = None) -> None:
+        """Supplier companies a user may own on the current plan (COMPANY_LIMITS).
+
+        Counted for every route that creates a supplier company or adds the supplier
+        side to an existing one, so the limit cannot be bypassed via the buyer cabinet.
+        """
         user_id = user.id if hasattr(user, "id") else int(user)
         plan = await self.get_effective_plan(user_id)
         limit = COMPANY_LIMITS.get(plan, 1)
@@ -29,8 +34,19 @@ class SubscriptionUpdateMixin:
             return
         async with self.connection() as conn:
             count = await conn.fetchval(
-                "SELECT COUNT(*) FROM companies WHERE owner_id = $1",
+                """
+                SELECT COUNT(DISTINCT c.id)
+                FROM companies c
+                JOIN actors a
+                  ON a.company_id = c.id
+                 AND a.kind::text = 'company'
+                 AND a.side::text = 'supplier'
+                 AND a.is_active = TRUE
+                WHERE c.owner_id = $1
+                  AND ($2::bigint IS NULL OR c.id <> $2)
+                """,
                 user_id,
+                exclude_company_id,
             )
         if int(count or 0) >= limit:
             raise ConflictError(f"Company limit reached for plan {plan}")

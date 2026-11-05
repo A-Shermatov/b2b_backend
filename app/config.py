@@ -5,6 +5,10 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_SECRET_KEY = "change-me-to-a-long-random-secret-key-in-production"
+DEV_ENVS = frozenset({"development", "dev", "local", "test", "testing"})
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -13,7 +17,7 @@ class Settings(BaseSettings):
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
 
-    secret_key: str = "change-me-to-a-long-random-secret-key-in-production"
+    secret_key: str = DEFAULT_SECRET_KEY
     totp_encryption_key: str | None = None
     totp_issuer: str = "Brend Market"
     access_token_expire_minutes: int = 60
@@ -33,6 +37,11 @@ class Settings(BaseSettings):
     rate_limit_2fa_verify_per_minute: int = 10
     rate_limit_2fa_setup_per_minute: int = 5
     rate_limit_global_per_minute: int = 300
+    # Per-account limits (independent of the client IP).
+    rate_limit_login_per_account: int = 10
+    rate_limit_login_account_window_seconds: int = 900
+    rate_limit_2fa_per_user: int = 5
+    rate_limit_2fa_user_window_seconds: int = 300
 
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "minioadmin"
@@ -110,6 +119,22 @@ class Settings(BaseSettings):
         # Google shows app passwords as "abcd efgh ijkl mnop"; SMTP expects them without spaces.
         if self.smtp_host.lower() == "smtp.gmail.com":
             self.smtp_password = self.smtp_password.replace(" ", "")
+        return self
+
+    @property
+    def is_dev_env(self) -> bool:
+        return self.app_env.strip().lower() in DEV_ENVS
+
+    @model_validator(mode="after")
+    def require_strong_secret_outside_dev(self) -> "Settings":
+        # A known/short key lets anyone forge JWTs of any user (incl. superadmin).
+        if not self.is_dev_env and (
+            self.secret_key == DEFAULT_SECRET_KEY or len(self.secret_key) < 32
+        ):
+            raise ValueError(
+                "SECRET_KEY must be set to a random value of at least 32 characters "
+                f"when APP_ENV={self.app_env!r}"
+            )
         return self
 
     @model_validator(mode="after")

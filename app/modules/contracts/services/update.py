@@ -12,6 +12,11 @@ from app.modules.finance.services.commission import record_milestone_releases
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
 from app.utils.audit import log_event
+from app.utils.locks import contract_lock
+
+FROZEN_MESSAGE = (
+    "Сделка заморожена администратором. Приёмка и выплата недоступны до снятия заморозки."
+)
 
 
 class ContractUpdateMixin:
@@ -147,6 +152,15 @@ class ContractUpdateMixin:
         allowed = ("active", "delivered", "disputed") if after_payout else ("active", "delivered")
         if row["status"] not in allowed:
             raise ConflictError("Contract is not active")
+        if not after_payout and await conn.fetchval(
+            """
+            SELECT 1 FROM payment_milestones
+            WHERE contract_id = $1 AND status::text = 'disputed'
+            LIMIT 1
+            """,
+            row["id"],
+        ):
+            raise ConflictError(FROZEN_MESSAGE)
         sub = await conn.fetchrow(
             "SELECT id, status::text AS status FROM work_submissions WHERE id = $1 AND contract_id = $2",
             submission_id,
@@ -171,6 +185,14 @@ class ContractUpdateMixin:
             )
 
     async def approve_submission(self, contract_id: int, submission_id: int, buyer_id: int):
+        # The bank payout runs between two DB checks: hold the deal lock for the whole
+        # operation so a dispute, a second click or an admin decision cannot interleave.
+        async with contract_lock(contract_id):
+            return await self._approve_submission_locked(contract_id, submission_id, buyer_id)
+
+    async def _approve_submission_locked(
+        self, contract_id: int, submission_id: int, buyer_id: int
+    ):
         from app.modules.payments.services import PaymentService
 
         async with self.connection() as conn:
@@ -285,9 +307,22 @@ class ContractUpdateMixin:
                     "UPDATE work_submissions SET status = 'rejected'::submission_status WHERE id = $1",
                     submission_id,
                 )
-                await conn.execute(
-                    "UPDATE contracts SET status = 'active'::contract_status WHERE id = $1",
+                # Back to work: "active" only when money is actually held, otherwise
+                # the deal still waits for payment.
+                has_money = await conn.fetchval(
+                    """
+                    SELECT 1 FROM payment_milestones
+                    WHERE contract_id = $1
+                      AND status::text IN ('funded', 'released', 'disputed')
+                    LIMIT 1
+                    """,
                     contract_id,
+                )
+                next_status = "active" if has_money else "pending_payment"
+                await conn.execute(
+                    "UPDATE contracts SET status = $2::contract_status WHERE id = $1",
+                    contract_id,
+                    next_status,
                 )
                 await log_event(
                     conn,
@@ -298,7 +333,7 @@ class ContractUpdateMixin:
                     details={
                         "submission_id": submission_id,
                         "before": {"status": row["status"]},
-                        "after": {"status": "active"},
+                        "after": {"status": next_status},
                     },
                 )
             result = await load_contract_schema(conn, contract_id)

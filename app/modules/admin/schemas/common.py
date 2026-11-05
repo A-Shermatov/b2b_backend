@@ -707,7 +707,7 @@ class AdminContractDetail(AdminContractListItem):
 
 
 class ContractAdminActionRequest(BaseModel):
-    action: Literal["freeze", "cancel", "force_complete", "open_investigation"]
+    action: Literal["freeze", "unfreeze", "cancel", "force_complete", "open_investigation"]
     reason: str | None = Field(default=None, max_length=2000)
 
 

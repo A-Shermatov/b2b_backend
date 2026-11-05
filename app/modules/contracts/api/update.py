@@ -58,7 +58,8 @@ async def supplier_mark_message_delivered(
 async def approve_submission(
     contract_id: int,
     submission_id: int,
-    ctx: Annotated[BuyerContext, Depends(buyer_perm("contracts.update"))],
+    # Accepting the work releases the escrow to the supplier.
+    ctx: Annotated[BuyerContext, Depends(buyer_perm("payments.approve", full_role=True))],
 ):
     return await ContractService().approve_submission(
         contract_id, submission_id, ctx.actor.id

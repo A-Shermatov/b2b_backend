@@ -83,6 +83,19 @@ FINANCE_LIST_SQL = """
 """
 
 
+
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Text that Excel/LibreOffice would run as a formula is prefixed with a quote.
+
+    Titles come from user input (RFQ and milestone names).
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 class AdminFinanceMixin:
     async def list_finance(
         self,
@@ -262,16 +275,19 @@ class AdminFinanceMixin:
         for row in rows:
             writer.writerow(
                 [
-                    row.get("id"),
-                    row.get("type"),
-                    row.get("status"),
-                    row.get("gateway"),
-                    row.get("amount"),
-                    row.get("commission"),
-                    row.get("currency"),
-                    row.get("title"),
-                    row.get("invoice_id"),
-                    row.get("created_at"),
+                    _csv_safe(row.get(key))
+                    for key in (
+                        "id",
+                        "type",
+                        "status",
+                        "gateway",
+                        "amount",
+                        "commission",
+                        "currency",
+                        "title",
+                        "invoice_id",
+                        "created_at",
+                    )
                 ]
             )
         return buffer.getvalue()
@@ -283,14 +299,20 @@ class AdminFinanceMixin:
         current_user,
         reason: str | None = None,
     ) -> dict:
-        allowed = {"refund", "retry", "mark_paid"}
+        if action == "retry":
+            # Used to flip a failed payment to "paid" without any bank call.
+            raise ValidationError(
+                "Повтор платежа через шлюз не поддерживается. Если деньги отправлены "
+                "вручную, используйте «Отметить оплаченным» с номером операции в причине."
+            )
+        allowed = {"refund", "mark_paid"}
         if action not in allowed:
             raise ValidationError("Unsupported finance action")
         ensure_permission(current_user, "admin_finance.update")
-        if action in {"refund", "retry"} and not (reason and reason.strip()):
+        if action == "refund" and not (reason and reason.strip()):
             raise ValidationError("Reason is required for this action")
 
-        async with self.connection() as conn:
+        async with self.connection() as conn, conn.transaction():
             payment = await conn.fetchrow(
                 """
                 SELECT id, type::text AS type, status::text AS status, title,
@@ -336,49 +358,18 @@ class AdminFinanceMixin:
                         """,
                         payment["withdrawal_id"],
                     )
-            elif action == "retry":
-                if payment["status"] != "failed":
-                    raise ConflictError("Only failed payments can be retried")
-                await conn.execute(
-                    """
-                    UPDATE platform_payments
-                    SET status = 'processing'::platform_payment_status, failed_at = NULL
-                    WHERE id = $1
-                    """,
-                    payment_id,
-                )
-                status = "paid"
-                await conn.execute(
-                    """
-                    UPDATE platform_payments
-                    SET status = 'paid'::platform_payment_status, paid_at = NOW()
-                    WHERE id = $1
-                    """,
-                    payment_id,
-                )
-                if payment["invoice_id"]:
-                    await conn.execute(
-                        """
-                        UPDATE supplier_invoices
-                        SET status = 'paid'::invoice_status, paid_at = NOW()
-                        WHERE id = $1
-                        """,
-                        payment["invoice_id"],
-                    )
-                if payment["withdrawal_id"]:
-                    await conn.execute(
-                        """
-                        UPDATE withdrawals
-                        SET status = 'completed'::withdrawal_status, completed_at = NOW()
-                        WHERE id = $1
-                        """,
-                        payment["withdrawal_id"],
-                    )
             elif action == "refund":
+                # Records a refund made outside the platform; no money is moved here.
                 if payment["status"] != "paid":
                     raise ConflictError("Only paid payments can be refunded")
                 if payment["type"] == "refund":
                     raise ConflictError("Refund payments cannot be refunded")
+                if payment["type"] == "payout" or payment["withdrawal_id"]:
+                    # Cancelling a completed withdrawal would make the same money
+                    # available for withdrawal again.
+                    raise ConflictError(
+                        "Выплату поставщику нельзя отметить возвращённой: сверьте её с банком"
+                    )
                 status = "refunded"
                 await conn.execute(
                     """

@@ -27,6 +27,11 @@ FINAL_STATUSES = ("ok", "failed", "canceled")
 # Marketplace hold after successful card payment — treat as escrow funded.
 HOLD_STATUSES = ("to_approve", "ok", "partially_approved")
 PENDING_REUSE_MINUTES = 30
+# A pending order whose payment_url is not saved yet is still being created.
+PENDING_CREATE_MINUTES = 2
+# Milestone statuses whose bank hold may be released by the buyer's acceptance.
+BUYER_RELEASABLE_STATUSES = ("funded",)
+NOT_DUPLICATE_SQL = "COALESCE(t.marketplace_meta->>'duplicate', 'false') <> 'true'"
 # Gateway order plus the commission of its milestone (to rebuild a missing split).
 _TX_COLUMNS = """
     t.id, t.order_id, t.contract_id, t.amount, t.status, t.marketplace_meta,
@@ -109,6 +114,8 @@ class PaymentGatewayMixin:
                         f"Оплата через Alif доступна только в {settings.alif_currency}"
                     )
 
+                # A pending order without payment_url is being created right now by a
+                # concurrent request (double click): never start a second one.
                 existing = await conn.fetchrow(
                     """
                     SELECT order_id, payment_url
@@ -116,15 +123,24 @@ class PaymentGatewayMixin:
                     WHERE milestone_id = $1
                       AND gateway = $2
                       AND status = 'pending'
-                      AND payment_url IS NOT NULL
-                      AND created_at > NOW() - make_interval(mins => $3)
+                      AND (
+                        (payment_url IS NOT NULL
+                         AND created_at > NOW() - make_interval(mins => $3))
+                        OR (payment_url IS NULL
+                            AND created_at > NOW() - make_interval(mins => $4))
+                      )
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
                     milestone_id,
                     GATEWAY_ALIF,
                     PENDING_REUSE_MINUTES,
+                    PENDING_CREATE_MINUTES,
                 )
+                if existing and not existing["payment_url"]:
+                    raise ConflictError(
+                        "Платёж уже создаётся. Обновите страницу через несколько секунд."
+                    )
                 if existing:
                     return {
                         "id": row["id"],
@@ -232,8 +248,9 @@ class PaymentGatewayMixin:
         result = await self._apply_gateway_status(
             order_id, status, transaction_id, payload, amount
         )
+        reason = result.pop("refund_reason", None)
         if result.pop("refund_required", False):
-            await self._refund_late_payment(order_id)
+            await self._refund_late_payment(order_id, reason or "Сделка отменена до оплаты")
         return result
 
     async def _apply_gateway_status(
@@ -356,14 +373,44 @@ class PaymentGatewayMixin:
                     )
                     if milestone["status"] in FUNDABLE_MILESTONE_STATUSES:
                         await self._apply_milestone_funded(conn, milestone, source="gateway")
-                    else:
-                        logger.warning(
-                            "Alif hold/ok but milestone %s is %s (order=%s)",
-                            tx["milestone_id"],
-                            milestone["status"],
-                            order_id,
-                        )
-                    return await self._gateway_result(conn, tx, store_status)
+                        return await self._gateway_result(conn, tx, store_status)
+                    # The milestone is already paid by another order (double click, a
+                    # stale payment link) or no longer payable: this hold is a duplicate.
+                    # It must never be released to the supplier — return it to the buyer.
+                    logger.warning(
+                        "Alif hold/ok but milestone %s is %s (order=%s) — duplicate, refunding",
+                        tx["milestone_id"],
+                        milestone["status"],
+                        order_id,
+                    )
+                    meta["duplicate"] = True
+                    await conn.execute(
+                        """
+                        UPDATE payment_gateway_transactions
+                        SET marketplace_meta = $2::jsonb, updated_at = NOW()
+                        WHERE id = $1
+                        """,
+                        tx["id"],
+                        json.dumps(meta, ensure_ascii=False, default=str),
+                    )
+                    await log_event(
+                        conn,
+                        "payment.callback.duplicate",
+                        "payment",
+                        order_id,
+                        actor_id=milestone["buyer_actor_id"],
+                        details={
+                            "order_id": order_id,
+                            "milestone_id": tx["milestone_id"],
+                            "contract_id": tx["contract_id"],
+                            "amount": tx["amount"],
+                            "milestone_status": milestone["status"],
+                        },
+                    )
+                    result = await self._gateway_result(conn, tx, store_status)
+                    result["refund_required"] = True
+                    result["refund_reason"] = "Повторная оплата этапа"
+                    return result
 
                 if normalized in ("failed", "canceled", "partially_canceled"):
                     store = "canceled" if "cancel" in normalized else normalized
@@ -693,8 +740,16 @@ class PaymentGatewayMixin:
         """Call Alif POST /confirm-delivery for held sub-transactions of one milestone."""
         return await self.confirm_marketplace_deliveries_for_milestones([milestone_id])
 
-    async def confirm_marketplace_deliveries_for_milestones(self, milestone_ids: list[int]) -> bool:
-        """Confirm held sub-transactions of the given milestones; True if the bank paid out."""
+    async def confirm_marketplace_deliveries_for_milestones(
+        self,
+        milestone_ids: list[int],
+        milestone_statuses: tuple[str, ...] = BUYER_RELEASABLE_STATUSES,
+    ) -> bool:
+        """Confirm held sub-transactions of the given milestones; True if the bank paid out.
+
+        Only holds of milestones in ``milestone_statuses`` are released (frozen ones are
+        not, unless an admin passes them explicitly), and never duplicate payments.
+        """
         settings = get_settings()
         if not settings.alif_marketplace_enabled or not milestone_ids:
             return False
@@ -706,14 +761,21 @@ class PaymentGatewayMixin:
                 WHERE t.milestone_id = ANY($1::bigint[])
                   AND t.gateway = $2
                   AND t.status = 'to_approve'
+                  AND m.status::text = ANY($3::text[])
+                  AND {NOT_DUPLICATE_SQL}
                 ORDER BY t.id
                 """,
                 list(milestone_ids),
                 GATEWAY_ALIF,
+                list(milestone_statuses),
             )
         return await self._confirm_marketplace_rows(AlifClient(settings), rows) > 0
 
-    async def confirm_marketplace_deliveries_for_contract(self, contract_id: int) -> bool:
+    async def confirm_marketplace_deliveries_for_contract(
+        self,
+        contract_id: int,
+        milestone_statuses: tuple[str, ...] = BUYER_RELEASABLE_STATUSES,
+    ) -> bool:
         """Confirm held marketplace sub-transactions of a contract; True if the bank paid out."""
         settings = get_settings()
         if not settings.alif_marketplace_enabled:
@@ -726,10 +788,13 @@ class PaymentGatewayMixin:
                 WHERE t.contract_id = $1
                   AND t.gateway = $2
                   AND t.status = 'to_approve'
+                  AND m.status::text = ANY($3::text[])
+                  AND {NOT_DUPLICATE_SQL}
                 ORDER BY t.id
                 """,
                 contract_id,
                 GATEWAY_ALIF,
+                list(milestone_statuses),
             )
         return await self._confirm_marketplace_rows(AlifClient(settings), rows) > 0
 
@@ -855,8 +920,10 @@ class PaymentGatewayMixin:
             AlifClient(settings) if rows else None, rows, reason, "этапов"
         )
 
-    async def _refund_late_payment(self, order_id: str) -> None:
-        """Return a hold the buyer paid after we had already canceled the order."""
+    async def _refund_late_payment(
+        self, order_id: str, reason: str = "Сделка отменена до оплаты"
+    ) -> None:
+        """Return a hold that must not be kept: paid after cancel, or a duplicate payment."""
         settings = get_settings()
         if not settings.alif_marketplace_enabled:
             logger.error(
@@ -872,7 +939,7 @@ class PaymentGatewayMixin:
             await self._cancel_marketplace_rows(
                 AlifClient(settings) if rows else None,
                 rows,
-                "Сделка отменена до оплаты",
+                reason,
                 f"заказа {order_id}",
             )
         except AlifGatewayError as exc:
