@@ -128,10 +128,13 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
     )
     members = await conn.fetch(
         """
-        SELECT cu.id, cu.company_id, cu.user_id, cu.role::text AS role, u.email
+        SELECT
+            cu.id, cu.company_id, cu.user_id, cu.role::text AS role, u.email,
+            NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS name
         FROM company_users cu
         JOIN users u ON u.id = cu.user_id
         WHERE cu.company_id = $1
+        ORDER BY CASE cu.role::text WHEN 'director' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, cu.id
         """,
         company_id,
     )

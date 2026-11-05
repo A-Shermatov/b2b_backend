@@ -13,6 +13,9 @@ from app.modules.rfqs.services.common import (
 from app.utils.audit import log_event
 
 
+from app.modules.rfqs.services.subscriptions import notify_subscribers_safely
+
+
 class RfqCreateMixin:
     async def create(self, actor_id: int, created_by: str, data: RfqCreate):
         rfq_id = str(uuid.uuid4())
@@ -92,6 +95,8 @@ class RfqCreateMixin:
             response = await load_rfq_response(conn, rfq_id)
         if invited and status in OPEN_RFQ_STATUSES:
             await notify_invited_suppliers(rfq_id, data.title, invited)
+        if status in OPEN_RFQ_STATUSES and visibility == "public":
+            await notify_subscribers_safely(rfq_id, data.title, data.category_id, actor_id, invited)
         return response
 
     async def add_attachment(

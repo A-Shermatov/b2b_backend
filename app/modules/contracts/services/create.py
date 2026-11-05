@@ -32,6 +32,7 @@ from app.utils.storage import storage_key_from_url
 from app.enums import PaymentType
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
+from app.utils.affiliation import CONTRACT_MESSAGE_AFFILIATION
 
 
 class ContractCreateMixin:
@@ -258,11 +259,12 @@ class ContractCreateMixin:
                     message["id"],
                 )
             loaded = await conn.fetchrow(
-                """
+                f"""
                 SELECT
                     m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
                     m.status::text AS status, m.delivered_at, m.viewed_at,
-                    u.first_name, u.last_name, u.email
+                    u.first_name, u.last_name, u.email,
+                {CONTRACT_MESSAGE_AFFILIATION}
                 FROM messages m
                 LEFT JOIN users u ON u.id = m.sender_id
                 WHERE m.id = $1

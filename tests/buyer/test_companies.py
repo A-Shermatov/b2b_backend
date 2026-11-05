@@ -1,13 +1,16 @@
+import secrets
 import pytest
 
 API = "/api/v1"
 
 
 def _wizard_payload(title: str) -> dict:
+    # Every test company is a separate legal entity, so it gets its own ИНН:
+    # two companies with one ИНН cannot trade with each other.
     return {
         "title": title,
         "legal_name": f"{title} LLC",
-        "tax_number": "123456789",
+        "tax_number": f"{secrets.randbelow(10**9):09d}",
         "description": "Test company",
         "logo": "",
         "country": "Таджикистан",

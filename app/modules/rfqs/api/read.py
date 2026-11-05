@@ -13,6 +13,8 @@ from app.modules.rfqs.api.common import (
     require_supplier_ctx,
     supplier_router,
 )
+from app.modules.rfqs.schemas.subscriptions import RfqCategorySubscriptions
+from app.modules.rfqs.services.subscriptions import list_subscriptions, replace_subscriptions
 
 
 @buyer_router.get("/")
@@ -49,6 +51,7 @@ async def rfq_board(
     source: str | None = Query(None),
     type: str | None = Query(None),
     category_id: str | None = Query(None),
+    category_ids: str | None = Query(None, description="Comma-separated category ids"),
 ):
     return await RfqService().list_board_for_supplier(
         ctx.actor.id,
@@ -58,7 +61,25 @@ async def rfq_board(
         source=source,
         rfq_type=type,
         category_id=category_id,
+        category_ids=category_ids,
     )
+
+
+@supplier_router.get("/subscriptions", response_model=RfqCategorySubscriptions)
+async def get_category_subscriptions(
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+):
+    """Categories in which this employee is notified about new requests."""
+    return {"category_ids": await list_subscriptions(ctx.user.id, ctx.actor.id)}
+
+
+@supplier_router.put("/subscriptions", response_model=RfqCategorySubscriptions)
+async def set_category_subscriptions(
+    data: RfqCategorySubscriptions,
+    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
+):
+    saved = await replace_subscriptions(ctx.user.id, ctx.actor.id, data.category_ids)
+    return {"category_ids": saved}
 
 
 @supplier_router.get("/{rfq_id}")

@@ -19,6 +19,7 @@ from app.modules.rfqs.services.common import (
 )
 from app.modules.settings.service import get_platform_settings
 from app.utils.audit import log_event
+from app.utils.affiliation import PROPOSAL_MESSAGE_AFFILIATION
 
 
 class ProposalCreateMixin:
@@ -119,10 +120,11 @@ class ProposalCreateMixin:
                 text,
             )
             message = await conn.fetchrow(
-                """
+                f"""
                 SELECT
                     m.id, m.proposal_id, m.sender_id, m.text, m.created_at,
-                    u.first_name, u.last_name
+                    u.first_name, u.last_name,
+                {PROPOSAL_MESSAGE_AFFILIATION}
                 FROM proposal_messages m
                 LEFT JOIN users u ON u.id = m.sender_id
                 WHERE m.id = $1

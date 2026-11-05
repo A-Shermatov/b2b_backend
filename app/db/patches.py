@@ -465,6 +465,20 @@ COMPAT_PATCHES = [
     """
     ALTER TABLE reviews ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     """,
+    # Personal notifications about new requests by category (supplier side).
+    """
+    CREATE TABLE IF NOT EXISTS rfq_category_subscriptions (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        supplier_actor_id INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+        category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, supplier_actor_id, category_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rfq_category_subscriptions_category
+        ON rfq_category_subscriptions (category_id);
+    """,
+    # Who wrote the review on behalf of the company (shown with role and company).
+    "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;",
     """
     ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_contract_id_key;
     """,

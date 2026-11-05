@@ -1,4 +1,5 @@
 from app.modules.reviews.schemas.common import (
+    ReviewAuthorSchema,
     ReviewCreate,
     ReviewMediaSchema,
     ReviewMediaUploadResponse,
@@ -8,6 +9,7 @@ from app.modules.reviews.schemas.common import (
 )
 
 __all__ = [
+    "ReviewAuthorSchema",
     "ReviewCreate",
     "ReviewMediaSchema",
     "ReviewMediaUploadResponse",

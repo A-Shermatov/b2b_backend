@@ -15,6 +15,8 @@ from app.modules.rfqs.services.common import (
 from app.utils.audit import log_event
 
 
+from app.modules.rfqs.services.subscriptions import notify_subscribers_safely
+
 class RfqUpdateMixin:
     async def update(self, rfq_id: str, actor_id: int, data: RfqUpdate):
         async with self.connection() as conn:
@@ -112,6 +114,10 @@ class RfqUpdateMixin:
             response = await load_rfq_response(conn, rfq_id)
         if invited:
             await notify_invited_suppliers(rfq_id, row["title"], invited)
+        if row["visibility"] == "public":
+            await notify_subscribers_safely(
+                rfq_id, row["title"], row["category_id"], actor_id, invited
+            )
         return response
 
     async def close(self, rfq_id: str, actor_id: int):

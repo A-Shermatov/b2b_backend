@@ -47,7 +47,7 @@ async def create_buyer_review(
     ctx: Annotated[BuyerContext, Depends(buyer_perm("reviews.create"))],
     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
 ):
-    return await ReviewService(db).create(ctx.actor.id, data)
+    return await ReviewService(db).create(ctx.actor.id, data, author_user_id=ctx.user.id)
 
 
 @supplier_router.post("/", response_model=ReviewResponse)
@@ -56,7 +56,7 @@ async def create_supplier_review(
     ctx: Annotated[SupplierContext, Depends(supplier_perm("reviews.create"))],
     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
 ):
-    return await ReviewService(db).create(ctx.actor.id, data)
+    return await ReviewService(db).create(ctx.actor.id, data, author_user_id=ctx.user.id)
 
 
 @buyer_router.post("/{review_id}/helpful", response_model=ReviewResponse)

@@ -45,6 +45,9 @@ class MessageSchema(BaseModel):
     conversation_id: int
     sender_id: int
     sender_name: str = ""
+    # The sender speaks for this company, in this role (director, admin, moderator, accountant).
+    sender_company: str | None = None
+    sender_role: str | None = None
     text: str
     attachment: MessageAttachmentSchema | None = None
     created_at: datetime | None = None

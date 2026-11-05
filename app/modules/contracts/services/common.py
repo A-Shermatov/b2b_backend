@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.enums import PaymentMilestoneStatus, PaymentMilestoneTrigger, PaymentType
 from app.utils.storage import public_file_url
+from app.utils.affiliation import CONTRACT_MESSAGE_AFFILIATION, affiliation_fields
 
 ACTIVE_DISPUTE_STATUSES = ("open", "under_review", "appealed")
 _DELIVERY_DAYS_RE = re.compile(r"(\d+)")
@@ -261,6 +262,7 @@ def message_to_dict(row) -> dict:
         "status": row["status"] or "sent",
         "delivered_at": row["delivered_at"],
         "viewed_at": row["viewed_at"],
+        **affiliation_fields(row),
     }
 
 
@@ -393,11 +395,12 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
     conversation = None
     if conversation_row:
         messages = await conn.fetch(
-            """
+            f"""
             SELECT
                 m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
                 m.status::text AS status, m.delivered_at, m.viewed_at,
-                u.first_name, u.last_name, u.email
+                u.first_name, u.last_name, u.email,
+                {CONTRACT_MESSAGE_AFFILIATION}
             FROM messages m
             LEFT JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = $1

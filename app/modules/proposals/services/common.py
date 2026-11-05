@@ -1,5 +1,6 @@
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.utils.storage import public_file_url
+from app.utils.affiliation import affiliation_fields
 
 PROPOSAL_COLUMNS = """
     p.id,
@@ -113,6 +114,7 @@ def message_to_response(row) -> dict:
         "sender_name": sender_name,
         "text": row["text"],
         "created_at": row["created_at"],
+        **affiliation_fields(row),
     }
 
 
@@ -207,6 +209,11 @@ def assert_chat_access(row, actor_id: int, as_buyer: bool) -> None:
         raise ForbiddenError("Access denied")
 
 
+def normalize_tax_number(value: str | None) -> str:
+    """ИНН without spaces, dashes and other separators, for comparison."""
+    return "".join(ch for ch in (value or "") if ch.isalnum()).upper()
+
+
 async def _actor_user_ids(conn, actor_id: int) -> set[int]:
     """Users who act for the actor: the person, or every member and the owner of the company."""
     row = await conn.fetchrow(
@@ -234,13 +241,19 @@ async def _actor_user_ids(conn, actor_id: int) -> set[int]:
 async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id: int) -> None:
     """A deal needs two independent parties.
 
-    Blocked when the actors are the same, belong to the same company, or any person
-    can act on both sides (owner or team member of either company, or the individual).
+    Blocked when the actors are the same, belong to the same company, the two
+    companies are registered under the same tax number (ИНН), or any person can act
+    on both sides (owner or team member of either company, or the individual).
     """
     if buyer_actor_id == supplier_actor_id:
         raise ConflictError("Нельзя заключить сделку с самим собой")
     rows = await conn.fetch(
-        "SELECT id, company_id FROM actors WHERE id = ANY($1::int[])",
+        """
+        SELECT a.id, a.company_id, c.tax_number
+        FROM actors a
+        LEFT JOIN companies c ON c.id = a.company_id
+        WHERE a.id = ANY($1::int[])
+        """,
         [buyer_actor_id, supplier_actor_id],
     )
     by_id = {row["id"]: row for row in rows}
@@ -249,7 +262,14 @@ async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id: 
     if not buyer or not supplier:
         return
     if buyer["company_id"] is not None and buyer["company_id"] == supplier["company_id"]:
-        raise ConflictError("Нельзя заключить сделку с самим собой")
+        raise ConflictError(
+            "Нельзя заключить сделку с самим собой: покупатель и поставщик — одна компания"
+        )
+    buyer_tax = normalize_tax_number(buyer["tax_number"])
+    if buyer_tax and buyer_tax == normalize_tax_number(supplier["tax_number"]):
+        raise ConflictError(
+            "Нельзя заключить сделку с самим собой: у компаний покупателя и поставщика один ИНН"
+        )
     shared = await _actor_user_ids(conn, buyer_actor_id) & await _actor_user_ids(
         conn, supplier_actor_id
     )

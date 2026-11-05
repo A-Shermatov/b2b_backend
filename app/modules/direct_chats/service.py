@@ -2,6 +2,11 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.database import pool
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
+from app.utils.affiliation import (
+    DIRECT_CHAT_ACTORS,
+    affiliation_fields,
+    sender_affiliation_columns,
+)
 
 
 def _sender_display_name(first_name, last_name, email, sender_id: int) -> str:
@@ -30,13 +35,15 @@ def message_to_dict(row) -> dict:
         "status": row["status"] or "sent",
         "delivered_at": _iso(row["delivered_at"]),
         "viewed_at": _iso(row["viewed_at"]),
+        **affiliation_fields(row),
     }
 
 
-MESSAGE_SELECT = """
+MESSAGE_SELECT = f"""
     m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
     m.status::text AS status, m.delivered_at, m.viewed_at,
-    u.first_name, u.last_name, u.email
+    u.first_name, u.last_name, u.email,
+    {sender_affiliation_columns("m.sender_id", DIRECT_CHAT_ACTORS)}
 """
 
 ACTOR_NAME = """

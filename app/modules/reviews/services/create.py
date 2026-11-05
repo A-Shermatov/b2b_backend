@@ -7,7 +7,9 @@ from app.utils.audit import log_event
 
 
 class ReviewCreateMixin:
-    async def create(self, reviewer_actor_id: int, data: ReviewCreate) -> ReviewResponse:
+    async def create(
+        self, reviewer_actor_id: int, data: ReviewCreate, author_user_id: int | None = None
+    ) -> ReviewResponse:
         if len(data.photos) > 5:
             raise ValidationError("Можно прикрепить не более 5 фото")
 
@@ -53,9 +55,9 @@ class ReviewCreateMixin:
                     INSERT INTO reviews (
                         contract_id, reviewer_actor_id, target_actor_id,
                         rating, service_rating, delivery_rating, quality_rating,
-                        tags, comment, created_at
+                        tags, comment, created_at, author_user_id
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW())
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW(), $10)
                     RETURNING {REVIEW_COLUMNS}
                     """,
                     data.contract_id,
@@ -67,6 +69,7 @@ class ReviewCreateMixin:
                     data.quality_rating,
                     list(data.tags or []),
                     data.comment,
+                    author_user_id,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise ConflictError("Review already exists") from exc

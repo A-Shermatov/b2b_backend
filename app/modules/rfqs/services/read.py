@@ -18,6 +18,34 @@ from app.modules.rfqs.services.common import (
 
 HIDDEN_FROM_SUPPLIERS_STATUSES = {"draft", "archived"}
 
+# Board filter: requests of the supplier's own company (same company, same ИНН,
+# or the same person on an individual account). Uses $2 = supplier actor id and
+# the board's "a" (buyer actor) and "c" (buyer company) aliases.
+_TAX = "upper(regexp_replace(COALESCE({col}, ''), '[^0-9A-Za-z]', '', 'g'))"
+OWN_COMPANY_EXCLUSION = f"""NOT EXISTS (
+    SELECT 1 FROM actors me
+    LEFT JOIN companies mc ON mc.id = me.company_id
+    WHERE me.id = $2 AND (
+        (me.company_id IS NOT NULL AND me.company_id = a.company_id)
+        OR (me.user_id IS NOT NULL AND me.user_id = a.user_id)
+        OR (
+            {_TAX.format(col="mc.tax_number")} <> ''
+            AND {_TAX.format(col="mc.tax_number")} = {_TAX.format(col="c.tax_number")}
+        )
+    )
+)"""
+
+
+def parse_category_ids(*values: str | None) -> list[int]:
+    """Category ids from "3" or "1,4,6"; anything that is not a number is ignored."""
+    ids: list[int] = []
+    for value in values:
+        for part in (value or "").split(","):
+            part = part.strip()
+            if part.isdigit() and int(part) not in ids:
+                ids.append(int(part))
+    return ids[:50]
+
 
 class RfqReadMixin:
     async def _load(self, rfq_id: str, *, include_buyer: bool = False) -> dict:
@@ -80,6 +108,7 @@ class RfqReadMixin:
         source: str | None = None,
         rfq_type: str | None = None,
         category_id: str | None = None,
+        category_ids: str | None = None,
     ) -> dict:
         filters = [
             "r.status::text = ANY($1::text[])",
@@ -92,6 +121,8 @@ class RfqReadMixin:
             )""",
         ]
         params: list = [OPEN_RFQ_STATUSES, supplier_id]
+        # A supplier never sees its own company's requests: it could not answer them anyway.
+        filters.append(OWN_COMPANY_EXCLUSION)
         if source == "catalog":
             filters.append("r.catalog_item_id IS NOT NULL")
         elif source == "marketplace":
@@ -99,10 +130,19 @@ class RfqReadMixin:
         if rfq_type in ("product", "service"):
             params.append(rfq_type)
             filters.append(f"r.type::text = ${len(params)}")
-        category = (category_id or "").strip()
-        if category:
-            params.append(category)
-            filters.append(f"r.category_id = ${len(params)}")
+        wanted = parse_category_ids(category_id, category_ids)
+        if wanted:
+            # A parent category also matches its subcategories.
+            params.append(wanted)
+            n = len(params)
+            # Requests keep the category as an id ("2") or a slug ("web"): match both.
+            filters.append(
+                f"""r.category_id IN (
+                    SELECT v.key FROM categories cat
+                    CROSS JOIN LATERAL (VALUES (cat.id::text), (cat.slug)) v(key)
+                    WHERE cat.id = ANY(${n}::int[]) OR cat.parent_id = ANY(${n}::int[])
+                )"""
+            )
         query = (q or "").strip()
         if query:
             params.append(like_contains(query))

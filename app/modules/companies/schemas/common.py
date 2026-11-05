@@ -59,6 +59,7 @@ class CompanyUserSchema(BaseModel):
     user_id: int
     role: str
     email: str | None = None
+    name: str | None = None
 
 
 class ReviewSchema(BaseModel):

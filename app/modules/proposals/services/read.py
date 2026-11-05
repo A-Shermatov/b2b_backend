@@ -8,6 +8,7 @@ from app.modules.proposals.services.common import (
     proposal_to_response,
 )
 from app.modules.rfqs.services.common import load_rfq_row
+from app.utils.affiliation import PROPOSAL_MESSAGE_AFFILIATION
 
 
 def _thread_from_row(row) -> dict:
@@ -137,10 +138,11 @@ class ProposalReadMixin:
             row = await load_proposal_context(conn, proposal_id)
             assert_chat_access(row, actor_id, as_buyer)
             messages = await conn.fetch(
-                """
+                f"""
                 SELECT
                     m.id, m.proposal_id, m.sender_id, m.text, m.created_at,
-                    u.first_name, u.last_name
+                    u.first_name, u.last_name,
+                {PROPOSAL_MESSAGE_AFFILIATION}
                 FROM proposal_messages m
                 LEFT JOIN users u ON u.id = m.sender_id
                 WHERE m.proposal_id = $1

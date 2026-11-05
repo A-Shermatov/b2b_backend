@@ -53,6 +53,15 @@ class ReviewPartySchema(BaseModel):
     user_name: str | None = None
 
 
+class ReviewAuthorSchema(BaseModel):
+    """The person who wrote the review on behalf of the reviewing company."""
+
+    user_id: int
+    name: str | None = None
+    role: str | None = None
+    company_title: str | None = None
+
+
 class ReviewResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,3 +81,4 @@ class ReviewResponse(BaseModel):
     viewer_voted: bool = False
     reviewer: ReviewPartySchema | None = None
     target: ReviewPartySchema | None = None
+    author: ReviewAuthorSchema | None = None

@@ -13,6 +13,7 @@ from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
 from app.utils.audit import log_event
 from app.utils.locks import contract_lock
+from app.utils.affiliation import CONTRACT_MESSAGE_AFFILIATION
 
 FROZEN_MESSAGE = (
     "Сделка заморожена администратором. Приёмка и выплата недоступны до снятия заморозки."
@@ -38,11 +39,12 @@ class ContractUpdateMixin:
 
     async def _load_message(self, conn, conversation_id: int, message_id: int):
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT
                 m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
                 m.status::text AS status, m.delivered_at, m.viewed_at,
-                u.first_name, u.last_name, u.email
+                u.first_name, u.last_name, u.email,
+                {CONTRACT_MESSAGE_AFFILIATION}
             FROM messages m
             LEFT JOIN users u ON u.id = m.sender_id
             WHERE m.id = $1 AND m.conversation_id = $2
