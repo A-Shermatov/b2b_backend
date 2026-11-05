@@ -60,6 +60,9 @@ class CompanyUserSchema(BaseModel):
     role: str
     email: str | None = None
     name: str | None = None
+    # Role on purchases / sales when it differs from the company role; "none" closes the side.
+    buyer_role: str | None = None
+    supplier_role: str | None = None
 
 
 class ReviewSchema(BaseModel):
@@ -103,11 +106,25 @@ class CompanySchema(BaseModel):
         return public_file_url(value)
 
 
+class SideReputationSchema(BaseModel):
+    """How the company does in one role: as a supplier or as a buyer.
+
+    Kept apart on purpose: a supplier is judged on quality and deadlines, a buyer
+    on paying on time and accepting fairly, so one averaged number would mislead.
+    """
+
+    side: str
+    rating: float | None = None
+    reviews_count: int = 0
+    completed_deals: int = 0
+
+
 class CompanyWithRelations(CompanySchema):
     profile: CompanyProfileSchema | None = None
     categories: list[CompanyCategorySchema] = []
     stats: CompanyStatsSchema | None = None
     certificates: list[CompanyCertificateSchema] = []
+    reputation: list[SideReputationSchema] = []
     reviews: list[ReviewSchema] = []
     company_users: list[CompanyUserSchema] = []
 
@@ -132,6 +149,7 @@ class PublicCompanyDetail(BaseModel):
     categories: list[CompanyCategorySchema] = []
     stats: CompanyStatsSchema | None = None
     certificates: list[CompanyCertificateSchema] = []
+    reputation: list[SideReputationSchema] = []
 
     @field_serializer("logo")
     def serialize_logo(self, value: str | None) -> str | None:
@@ -221,7 +239,16 @@ class AddTeamMemberRequest(BaseModel):
 
 
 class UpdateTeamMemberRequest(BaseModel):
-    role: str
+    """Change the company role and/or the role on one side.
+
+    buyer_role / supplier_role: admin, moderator, accountant or none (no access);
+    null removes the override, so the company role applies again. A field that is
+    not sent stays as it is.
+    """
+
+    role: str | None = None
+    buyer_role: str | None = None
+    supplier_role: str | None = None
 
 
 class CertificateCreateRequest(BaseModel):

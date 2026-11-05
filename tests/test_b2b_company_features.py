@@ -175,7 +175,9 @@ async def test_review_shows_the_employee_who_wrote_it(client):
     _, b_token, b_me = await _register(client, "buyer")
     _, buyer = await _company(client, b_token, b_me, side="buyer", title="Review buyer Co")
     _, s_token, s_me = await _register(client, "supplier")
-    _, supplier = await _company(client, s_token, s_me, side="supplier", title="Review supplier Co")
+    supplier_company, supplier = await _company(
+        client, s_token, s_me, side="supplier", title="Review supplier Co"
+    )
 
     contract_id = await _create_contract(
         client, {"headers": buyer}, {"headers": supplier}, f"Review deal {secrets.token_hex(3)}"
@@ -199,3 +201,104 @@ async def test_review_shows_the_employee_who_wrote_it(client):
     assert author["role"] == "director"
     assert author["company_title"] == "Review buyer Co"
     assert author["name"] == "Audit User"
+
+    # Reputation is counted per role: this company was reviewed as a supplier.
+    res = await client.get(f"{API}/public/companies/{supplier_company}")
+    assert res.status_code == 200, res.text
+    reputation = {r["side"]: r for r in res.json()["reputation"]}
+    assert reputation["supplier"] == {
+        "side": "supplier",
+        "rating": 5.0,
+        "reviews_count": 1,
+        "completed_deals": 1,
+    }
+
+
+async def test_side_roles_close_sales_and_narrow_purchases(client):
+    """A purchasing manager in a company that also sells: no access to sales."""
+    _, d_token, d_me = await _register(client, "both")
+    buyer_actor = next(a["id"] for a in d_me["actors"] if a["side"] == "buyer")
+    payload = _wizard_payload("Two sided Co")
+    payload["actor_types"] = ["buyer", "supplier"]
+    res = await client.post(f"{API}/buyer/companies/", headers=_headers(d_token, buyer_actor), json=payload)
+    assert res.status_code == 200, res.text
+    company_id = res.json()["id"]
+    director = _headers(d_token, await _actor(client, d_token, side="buyer", company_id=company_id))
+
+    m_email, m_token, m_me = await _register(client, "both")
+    res = await client.post(
+        f"{API}/buyer/companies/{company_id}/team",
+        headers=director,
+        json={"email": m_email, "role": "moderator"},
+    )
+    assert res.status_code == 200, res.text
+    member_id = m_me["user"]["id"]
+    sales_actor = await _actor(client, m_token, side="supplier", company_id=company_id)
+    purchases_actor = await _actor(client, m_token, side="buyer", company_id=company_id)
+
+    # Close sales for the member.
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{member_id}",
+        headers=director,
+        json={"supplier_role": "none"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["supplier_role"] == "none"
+    assert res.json()["role"] == "moderator"
+
+    me = (await client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {m_token}"})).json()
+    assert sales_actor not in {a["id"] for a in me["actors"]}
+    assert purchases_actor in {a["id"] for a in me["actors"]}
+    res = await client.get(f"{API}/supplier/rfqs/board", headers=_headers(m_token, sales_actor))
+    assert res.status_code == 403, res.text
+
+    # Purchases as accountant only: may not create requests.
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{member_id}",
+        headers=director,
+        json={"buyer_role": "accountant"},
+    )
+    assert res.status_code == 200, res.text
+    rfq = {
+        "type": "service",
+        "title": "Side role request",
+        "category_id": "web",
+        "budget_type": "open",
+        "currency": "TJS",
+        "deadline": "2026-12-31",
+        "visibility": "public",
+        "status": "draft",
+        "project_duration": "1 month",
+        "start_date": "2026-07-01",
+    }
+    member_buyer = _headers(m_token, purchases_actor)
+    res = await client.post(f"{API}/buyer/rfqs/", headers=member_buyer, json=rfq)
+    assert res.status_code == 403, res.text
+
+    # Back to the company role (moderator): requests are allowed again.
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{member_id}",
+        headers=director,
+        json={"buyer_role": None},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["buyer_role"] is None
+    res = await client.post(f"{API}/buyer/rfqs/", headers=member_buyer, json=rfq)
+    assert res.status_code == 200, res.text
+
+    # The team list shows the overrides; the director keeps full access.
+    res = await client.get(f"{API}/buyer/companies/{company_id}", headers=director)
+    members = {m["user_id"]: m for m in res.json()["company_users"]}
+    assert members[member_id]["supplier_role"] == "none"
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{d_me['user']['id']}",
+        headers=director,
+        json={"supplier_role": "none"},
+    )
+    assert res.status_code == 403, res.text
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{member_id}",
+        headers=director,
+        json={"supplier_role": "owner"},
+    )
+    assert res.status_code in (400, 422), res.text

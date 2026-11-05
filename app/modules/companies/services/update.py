@@ -15,6 +15,7 @@ from app.modules.companies.services.common import (
     load_company_schema,
 )
 from app.utils.audit import log_event
+from app.utils.side_roles import SIDE_ROLES
 
 AUDITED_COMPANY_FIELDS = (
     "title",
@@ -264,56 +265,124 @@ class CompanyUpdateMixin:
     async def update_team_member(
         self, company_id: int, user_id: int, target_user_id: int, data: UpdateTeamMemberRequest
     ):
-        if data.role not in COMPANY_ROLES:
+        sent = data.model_fields_set
+        if data.role is not None and data.role not in COMPANY_ROLES:
             raise ValidationError("Invalid company role")
+        side_changes: dict[str, str | None] = {}
+        for side in ("buyer", "supplier"):
+            field = f"{side}_role"
+            if field not in sent:
+                continue
+            value = getattr(data, field)
+            if value is not None and value not in SIDE_ROLES:
+                raise ValidationError("Invalid side role")
+            side_changes[side] = value
+        if data.role is None and not side_changes:
+            raise ValidationError("Nothing to change")
         async with self.connection() as conn:
-            await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
-            membership = await conn.fetchrow(
-                """
-                SELECT cu.id, cu.role::text AS role, u.email
-                FROM company_users cu
-                JOIN users u ON u.id = cu.user_id
-                WHERE cu.company_id = $1 AND cu.user_id = $2
-                """,
-                company_id,
-                target_user_id,
-            )
-            if not membership:
-                raise NotFoundError("Team member not found")
-            if membership["role"] == "director" and data.role != "director":
-                raise ForbiddenError("Cannot change company director role")
-            if data.role == "director" and membership["role"] != "director":
-                raise ForbiddenError("Cannot assign director role")
-            row = await conn.fetchrow(
-                """
-                UPDATE company_users
-                SET role = $1::company_role
-                WHERE id = $2
-                RETURNING id, company_id, user_id, role::text AS role
-                """,
-                data.role,
-                membership["id"],
-            )
-            if membership["role"] != row["role"]:
-                await log_event(
-                    conn,
-                    "company.member.role_change",
-                    "company",
+            async with conn.transaction():
+                await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
+                membership = await conn.fetchrow(
+                    """
+                    SELECT cu.id, cu.role::text AS role, u.email,
+                        NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS name
+                    FROM company_users cu
+                    JOIN users u ON u.id = cu.user_id
+                    WHERE cu.company_id = $1 AND cu.user_id = $2
+                    FOR UPDATE OF cu
+                    """,
                     company_id,
-                    user_id=user_id,
-                    company_id=company_id,
-                    details={
-                        "member_user_id": target_user_id,
-                        "before": {"role": membership["role"]},
-                        "after": {"role": row["role"]},
-                    },
+                    target_user_id,
                 )
+                if not membership:
+                    raise NotFoundError("Team member not found")
+                role = data.role if data.role is not None else membership["role"]
+                if membership["role"] == "director" and role != "director":
+                    raise ForbiddenError("Cannot change company director role")
+                if role == "director" and membership["role"] != "director":
+                    raise ForbiddenError("Cannot assign director role")
+                if side_changes and membership["role"] == "director":
+                    raise ForbiddenError("Руководитель всегда имеет полный доступ к обеим сторонам")
+                if target_user_id == user_id and "none" in side_changes.values():
+                    raise ForbiddenError("Нельзя закрыть доступ самому себе")
+                row = await conn.fetchrow(
+                    """
+                    UPDATE company_users
+                    SET role = $1::company_role
+                    WHERE id = $2
+                    RETURNING id, company_id, user_id, role::text AS role
+                    """,
+                    role,
+                    membership["id"],
+                )
+                before_sides = {
+                    r["side"]: r["role"]
+                    for r in await conn.fetch(
+                        "SELECT side, role FROM company_user_side_roles WHERE company_user_id = $1",
+                        membership["id"],
+                    )
+                }
+                for side, value in side_changes.items():
+                    if value is None:
+                        await conn.execute(
+                            "DELETE FROM company_user_side_roles WHERE company_user_id = $1 AND side = $2",
+                            membership["id"],
+                            side,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            INSERT INTO company_user_side_roles (company_user_id, side, role)
+                            VALUES ($1, $2, $3)
+                            ON CONFLICT (company_user_id, side) DO UPDATE SET role = EXCLUDED.role
+                            """,
+                            membership["id"],
+                            side,
+                            value,
+                        )
+                after_sides = {**before_sides}
+                for side, value in side_changes.items():
+                    if value is None:
+                        after_sides.pop(side, None)
+                    else:
+                        after_sides[side] = value
+                if membership["role"] != row["role"]:
+                    await log_event(
+                        conn,
+                        "company.member.role_change",
+                        "company",
+                        company_id,
+                        user_id=user_id,
+                        company_id=company_id,
+                        details={
+                            "member_user_id": target_user_id,
+                            "before": {"role": membership["role"]},
+                            "after": {"role": row["role"]},
+                        },
+                    )
+                if before_sides != after_sides:
+                    await log_event(
+                        conn,
+                        "company.member.side_role_change",
+                        "company",
+                        company_id,
+                        user_id=user_id,
+                        company_id=company_id,
+                        details={
+                            "member_user_id": target_user_id,
+                            "before": before_sides,
+                            "after": after_sides,
+                        },
+                    )
         return {
             "id": row["id"],
             "company_id": row["company_id"],
             "user_id": row["user_id"],
             "role": row["role"],
             "email": membership["email"],
+            "name": membership["name"],
+            "buyer_role": after_sides.get("buyer"),
+            "supplier_role": after_sides.get("supplier"),
         }
 
     async def update_certificate(

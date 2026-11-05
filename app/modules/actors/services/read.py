@@ -1,4 +1,5 @@
 from app.modules.actors.services.common import ACTOR_COLUMNS, shape_actor_row
+from app.utils.side_roles import side_access_sql
 
 
 class ActorReadMixin:
@@ -25,8 +26,10 @@ class ActorReadMixin:
                 WHERE a.is_active = TRUE
                   AND (
                     a.user_id = $1
-                    OR a.company_id IN (
-                        SELECT company_id FROM company_users WHERE user_id = $1
+                    OR EXISTS (
+                        SELECT 1 FROM company_users cu
+                        WHERE cu.user_id = $1 AND cu.company_id = a.company_id
+                          AND {side_access_sql("cu", "a.side::text")}
                     )
                   )
                 ORDER BY a.kind, a.side, a.id
@@ -42,12 +45,14 @@ class ActorReadMixin:
             return False
         async with self.connection() as conn:
             row = await conn.fetchrow(
-                """
-                SELECT id FROM company_users
-                WHERE user_id = $1 AND company_id = $2
+                f"""
+                SELECT cu.id FROM company_users cu
+                WHERE cu.user_id = $1 AND cu.company_id = $2
+                  AND {side_access_sql("cu", "$3")}
                 """,
                 user_id,
                 actor["company_id"],
+                actor.get("side") or "",
             )
         return row is not None
 
@@ -107,12 +112,14 @@ class ActorReadMixin:
         if x_company_id is not None and side is not None:
             async with self.connection() as conn:
                 membership = await conn.fetchrow(
-                    """
-                    SELECT id FROM company_users
-                    WHERE user_id = $1 AND company_id = $2
+                    f"""
+                    SELECT cu.id FROM company_users cu
+                    WHERE cu.user_id = $1 AND cu.company_id = $2
+                      AND {side_access_sql("cu", "$3")}
                     """,
                     user_id,
                     x_company_id,
+                    side,
                 )
             if not membership:
                 return None

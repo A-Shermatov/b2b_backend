@@ -15,6 +15,7 @@ from app.modules.companies.schemas import (
     CompanyWithRelations,
     PublicBuyer,
     PublicCompanyDetail,
+    SideReputationSchema,
     PublicSupplier,
 )
 
@@ -130,11 +131,33 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
         """
         SELECT
             cu.id, cu.company_id, cu.user_id, cu.role::text AS role, u.email,
-            NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS name
+            NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS name,
+            (SELECT sr.role FROM company_user_side_roles sr
+             WHERE sr.company_user_id = cu.id AND sr.side = 'buyer') AS buyer_role,
+            (SELECT sr.role FROM company_user_side_roles sr
+             WHERE sr.company_user_id = cu.id AND sr.side = 'supplier') AS supplier_role
         FROM company_users cu
         JOIN users u ON u.id = cu.user_id
         WHERE cu.company_id = $1
         ORDER BY CASE cu.role::text WHEN 'director' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, cu.id
+        """,
+        company_id,
+    )
+    # Reputation per role: reviews about the company as a supplier / as a buyer,
+    # and deals it completed in that role.
+    reputation_rows = await conn.fetch(
+        """
+        SELECT
+            a.side::text AS side,
+            (SELECT ROUND(AVG(r.rating)::numeric, 2)::float FROM reviews r
+             WHERE r.target_actor_id = a.id) AS rating,
+            (SELECT COUNT(*)::int FROM reviews r WHERE r.target_actor_id = a.id) AS reviews_count,
+            (SELECT COUNT(*)::int FROM contracts ct
+             WHERE (ct.buyer_actor_id = a.id OR ct.supplier_actor_id = a.id)
+               AND ct.status::text = 'completed') AS completed_deals
+        FROM actors a
+        WHERE a.company_id = $1 AND a.kind::text = 'company' AND a.is_active = TRUE
+        ORDER BY CASE a.side::text WHEN 'supplier' THEN 0 ELSE 1 END
         """,
         company_id,
     )
@@ -181,6 +204,7 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
         certificates=[
             CompanyCertificateSchema.model_validate(dict(row)) for row in certificates
         ],
+        reputation=[SideReputationSchema.model_validate(dict(row)) for row in reputation_rows],
         reviews=[],
         company_users=[CompanyUserSchema.model_validate(dict(row)) for row in members],
     )
@@ -207,6 +231,7 @@ def to_public_company_detail(company: CompanyWithRelations) -> PublicCompanyDeta
         categories=company.categories,
         stats=company.stats,
         certificates=company.certificates,
+        reputation=company.reputation,
     )
 
 

@@ -5,6 +5,7 @@ from app.modules.notifications.services.common import (
     shape_notification_row,
 )
 from app.modules.notifications.ws_manager import notification_ws_manager
+from app.utils.side_roles import side_access_sql
 
 
 class NotificationCreateMixin:
@@ -12,7 +13,7 @@ class NotificationCreateMixin:
         async with self.connection() as conn:
             actor = await conn.fetchrow(
                 """
-                SELECT kind::text AS kind, user_id, company_id
+                SELECT kind::text AS kind, side::text AS side, user_id, company_id
                 FROM actors
                 WHERE id = $1
                 """,
@@ -26,9 +27,14 @@ class NotificationCreateMixin:
                 return [(actor["user_id"], None)]
             if actor["company_id"] is None:
                 return []
+            # Members who closed this side (purchases or sales) do not get its news.
             members = await conn.fetch(
-                "SELECT user_id FROM company_users WHERE company_id = $1",
+                f"""
+                SELECT cu.user_id FROM company_users cu
+                WHERE cu.company_id = $1 AND {side_access_sql("cu", "$2")}
+                """,
                 actor["company_id"],
+                actor["side"],
             )
             return [(row["user_id"], actor["company_id"]) for row in members]
 

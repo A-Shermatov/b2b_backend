@@ -18,6 +18,7 @@ from app.core.security_core import decode_token
 from app.database import pool
 from app.modules.actors.services import ActorService
 from app.modules.auth.services.common import block_message, lift_expired_ban, load_user
+from app.utils.side_roles import SIDE_LABELS_RU, effective_role_sql
 
 security = HTTPBearer(auto_error=False)
 
@@ -163,21 +164,33 @@ async def get_current_user(
     return user_from_row(row)
 
 
-async def _load_membership(user_id: int, company_id: int) -> tuple[CurrentCompany, str] | None:
+async def _load_membership(
+    user_id: int, company_id: int, side: str | None = None
+) -> tuple[CurrentCompany, str] | None:
+    """The member's company and role. With a side, the role on that side.
+
+    A side closed for the member ("none") is refused outright.
+    """
     async with pool.connection() as conn:
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT
-                c.id, c.title, c.owner_id, cu.role::text AS role
+                c.id, c.title, c.owner_id, {effective_role_sql("cu", "$3")} AS role
             FROM company_users cu
             JOIN companies c ON c.id = cu.company_id
             WHERE cu.user_id = $1 AND cu.company_id = $2
             """,
             user_id,
             company_id,
+            side or "",
         )
     if not row:
         return None
+    if row["role"] == "none":
+        raise ForbiddenError(
+            f"У вас нет доступа к {SIDE_LABELS_RU.get(side or '', 'этой стороне')} компании",
+            code="company_side_forbidden",
+        )
     return CurrentCompany(id=row["id"], title=row["title"], owner_id=row["owner_id"]), row["role"]
 
 
@@ -200,7 +213,7 @@ async def _resolve_actor_context(
     company = None
     company_role = None
     if actor and actor.kind == "company" and actor.company_id:
-        membership = await _load_membership(user.id, actor.company_id)
+        membership = await _load_membership(user.id, actor.company_id, actor.side)
         if membership:
             company, company_role = membership
     return AuthContext(user=user, actor=actor, company=company, company_role=company_role)
@@ -306,7 +319,7 @@ async def require_buyer_ctx(
     company = None
     company_role = None
     if actor.company_id:
-        membership = await _load_membership(user.id, actor.company_id)
+        membership = await _load_membership(user.id, actor.company_id, actor.side)
         if not membership:
             raise ForbiddenError("Not a member of this company")
         company, company_role = membership
@@ -360,7 +373,7 @@ async def require_supplier_ctx(
     company = None
     company_role = None
     if actor.company_id:
-        membership = await _load_membership(user.id, actor.company_id)
+        membership = await _load_membership(user.id, actor.company_id, actor.side)
         if not membership:
             raise ForbiddenError("Not a member of this company")
         company, company_role = membership

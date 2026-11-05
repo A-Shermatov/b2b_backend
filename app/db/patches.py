@@ -465,6 +465,16 @@ COMPAT_PATCHES = [
     """
     ALTER TABLE reviews ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     """,
+    # A member's role can differ between purchases (buyer) and sales (supplier),
+    # or be "none" to close that side. Without a row the company role applies.
+    """
+    CREATE TABLE IF NOT EXISTS company_user_side_roles (
+        company_user_id INTEGER NOT NULL REFERENCES company_users(id) ON DELETE CASCADE,
+        side TEXT NOT NULL CHECK (side IN ('buyer', 'supplier')),
+        role TEXT NOT NULL CHECK (role IN ('admin', 'moderator', 'accountant', 'none')),
+        PRIMARY KEY (company_user_id, side)
+    );
+    """,
     # Personal notifications about new requests by category (supplier side).
     """
     CREATE TABLE IF NOT EXISTS rfq_category_subscriptions (

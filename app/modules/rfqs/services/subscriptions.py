@@ -11,8 +11,10 @@ import logging
 from app.core.exceptions import ValidationError
 from app.database import pool
 from app.modules.notifications.services import NotificationService
+from app.utils.side_roles import side_access_sql
 
 MAX_SUBSCRIPTIONS = 100
+side_access = side_access_sql("cu", "'supplier'")
 logger = logging.getLogger(__name__)
 
 
@@ -96,7 +98,7 @@ async def subscribers_for_request(
         return []
     wanted = [category["id"]] + ([category["parent_id"]] if category["parent_id"] else [])
     rows = await conn.fetch(
-        """
+        f"""
         SELECT DISTINCT s.user_id, sa.company_id
         FROM rfq_category_subscriptions s
         JOIN actors sa ON sa.id = s.supplier_actor_id AND sa.is_active
@@ -110,6 +112,7 @@ async def subscribers_for_request(
               OR EXISTS (
                   SELECT 1 FROM company_users cu
                   WHERE cu.company_id = sa.company_id AND cu.user_id = s.user_id
+                    AND {side_access}
               )
           )
         """,
