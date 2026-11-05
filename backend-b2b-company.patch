@@ -1,0 +1,1265 @@
+From 5782c2d553e7395c043dadf60f46e392ffddb668 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 5 Nov 2026 09:56:56 +0000
+Subject: [PATCH] =?UTF-8?q?B2B:=20=D0=BA=D0=BE=D0=BC=D0=BF=D0=B0=D0=BD?=
+ =?UTF-8?q?=D0=B8=D1=8F=20=D0=B8=20=D0=B4=D0=BE=D0=BB=D0=B6=D0=BD=D0=BE?=
+ =?UTF-8?q?=D1=81=D1=82=D1=8C=20=D0=B2=20=D0=BF=D0=B5=D1=80=D0=B5=D0=BF?=
+ =?UTF-8?q?=D0=B8=D1=81=D0=BA=D0=B5=20=D0=B8=20=D0=BE=D1=82=D0=B7=D1=8B?=
+ =?UTF-8?q?=D0=B2=D0=B0=D1=85,=20=D0=98=D0=9D=D0=9D,=20=D0=BA=D0=B0=D1=82?=
+ =?UTF-8?q?=D0=B5=D0=B3=D0=BE=D1=80=D0=B8=D0=B8=20=D0=B7=D0=B0=D1=8F=D0=B2?=
+ =?UTF-8?q?=D0=BE=D0=BA?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Сообщения в личных чатах, по сделкам и по предложениям несут
+  sender_company и sender_role: от имени какой компании и в какой роли
+  пишет сотрудник (app/utils/affiliation.py).
+- Отзыв хранит автора (reviews.author_user_id) и отдаёт author: имя,
+  роль в компании, компания. Старые отзывы остаются с названием компании.
+- Самосделка: запрещена и для разных компаний с одним ИНН. Поставщик
+  больше не видит на доске заявки своей компании (та же компания, тот же
+  ИНН или тот же человек).
+- Доска заявок: фильтр category_ids по нескольким категориям; родительская
+  категория включает подкатегории; категория заявки — id или slug.
+- Подписка на категории: GET/PUT /supplier/rfqs/subscriptions, таблица
+  rfq_category_subscriptions. При публикации открытой заявки подписчики
+  получают уведомление (кроме своей компании и приглашённых лично).
+- Команда компании отдаёт имя сотрудника.
+- Тестовые компании получают разные ИНН; тесты на всё перечисленное.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01AvqoxvLCQnvbgpqFdJzDog
+---
+ app/db/patches.py                          |  14 ++
+ app/modules/companies/schemas/common.py    |   1 +
+ app/modules/companies/services/common.py   |   5 +-
+ app/modules/contracts/schemas/common.py    |   3 +
+ app/modules/contracts/services/common.py   |   7 +-
+ app/modules/contracts/services/create.py   |   6 +-
+ app/modules/contracts/services/update.py   |   6 +-
+ app/modules/direct_chats/schemas.py        |   3 +
+ app/modules/direct_chats/service.py        |  11 +-
+ app/modules/proposals/schemas/common.py    |   3 +
+ app/modules/proposals/services/common.py   |  28 ++-
+ app/modules/proposals/services/create.py   |   6 +-
+ app/modules/proposals/services/read.py     |   6 +-
+ app/modules/reviews/api/create.py          |   4 +-
+ app/modules/reviews/schemas/__init__.py    |   2 +
+ app/modules/reviews/schemas/common.py      |  10 +
+ app/modules/reviews/services/common.py     |  61 ++++++-
+ app/modules/reviews/services/create.py     |   9 +-
+ app/modules/rfqs/api/read.py               |  21 +++
+ app/modules/rfqs/schemas/subscriptions.py  |   7 +
+ app/modules/rfqs/services/create.py        |   5 +
+ app/modules/rfqs/services/read.py          |  48 ++++-
+ app/modules/rfqs/services/subscriptions.py | 163 +++++++++++++++++
+ app/modules/rfqs/services/update.py        |   6 +
+ app/utils/affiliation.py                   |  54 ++++++
+ tests/buyer/test_companies.py              |   5 +-
+ tests/test_b2b_company_features.py         | 201 +++++++++++++++++++++
+ 27 files changed, 666 insertions(+), 29 deletions(-)
+ create mode 100644 app/modules/rfqs/schemas/subscriptions.py
+ create mode 100644 app/modules/rfqs/services/subscriptions.py
+ create mode 100644 app/utils/affiliation.py
+ create mode 100644 tests/test_b2b_company_features.py
+
+diff --git a/app/db/patches.py b/app/db/patches.py
+index 9ac94ce..b4188e6 100644
+--- a/app/db/patches.py
++++ b/app/db/patches.py
+@@ -465,6 +465,20 @@ COMPAT_PATCHES = [
+     """
+     ALTER TABLE reviews ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+     """,
++    # Personal notifications about new requests by category (supplier side).
++    """
++    CREATE TABLE IF NOT EXISTS rfq_category_subscriptions (
++        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++        supplier_actor_id INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
++        category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
++        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++        PRIMARY KEY (user_id, supplier_actor_id, category_id)
++    );
++    CREATE INDEX IF NOT EXISTS idx_rfq_category_subscriptions_category
++        ON rfq_category_subscriptions (category_id);
++    """,
++    # Who wrote the review on behalf of the company (shown with role and company).
++    "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;",
+     """
+     ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_contract_id_key;
+     """,
+diff --git a/app/modules/companies/schemas/common.py b/app/modules/companies/schemas/common.py
+index 3e538ab..c90dd39 100644
+--- a/app/modules/companies/schemas/common.py
++++ b/app/modules/companies/schemas/common.py
+@@ -59,6 +59,7 @@ class CompanyUserSchema(BaseModel):
+     user_id: int
+     role: str
+     email: str | None = None
++    name: str | None = None
+ 
+ 
+ class ReviewSchema(BaseModel):
+diff --git a/app/modules/companies/services/common.py b/app/modules/companies/services/common.py
+index 1e1bd10..24db76d 100644
+--- a/app/modules/companies/services/common.py
++++ b/app/modules/companies/services/common.py
+@@ -128,10 +128,13 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
+     )
+     members = await conn.fetch(
+         """
+-        SELECT cu.id, cu.company_id, cu.user_id, cu.role::text AS role, u.email
++        SELECT
++            cu.id, cu.company_id, cu.user_id, cu.role::text AS role, u.email,
++            NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS name
+         FROM company_users cu
+         JOIN users u ON u.id = cu.user_id
+         WHERE cu.company_id = $1
++        ORDER BY CASE cu.role::text WHEN 'director' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, cu.id
+         """,
+         company_id,
+     )
+diff --git a/app/modules/contracts/schemas/common.py b/app/modules/contracts/schemas/common.py
+index c34994a..fbd1933 100644
+--- a/app/modules/contracts/schemas/common.py
++++ b/app/modules/contracts/schemas/common.py
+@@ -45,6 +45,9 @@ class MessageSchema(BaseModel):
+     conversation_id: int
+     sender_id: int
+     sender_name: str = ""
++    # The sender speaks for this company, in this role (director, admin, moderator, accountant).
++    sender_company: str | None = None
++    sender_role: str | None = None
+     text: str
+     attachment: MessageAttachmentSchema | None = None
+     created_at: datetime | None = None
+diff --git a/app/modules/contracts/services/common.py b/app/modules/contracts/services/common.py
+index a794deb..a44b15d 100644
+--- a/app/modules/contracts/services/common.py
++++ b/app/modules/contracts/services/common.py
+@@ -7,6 +7,7 @@ from types import SimpleNamespace
+ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+ from app.enums import PaymentMilestoneStatus, PaymentMilestoneTrigger, PaymentType
+ from app.utils.storage import public_file_url
++from app.utils.affiliation import CONTRACT_MESSAGE_AFFILIATION, affiliation_fields
+ 
+ ACTIVE_DISPUTE_STATUSES = ("open", "under_review", "appealed")
+ _DELIVERY_DAYS_RE = re.compile(r"(\d+)")
+@@ -261,6 +262,7 @@ def message_to_dict(row) -> dict:
+         "status": row["status"] or "sent",
+         "delivered_at": row["delivered_at"],
+         "viewed_at": row["viewed_at"],
++        **affiliation_fields(row),
+     }
+ 
+ 
+@@ -393,11 +395,12 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
+     conversation = None
+     if conversation_row:
+         messages = await conn.fetch(
+-            """
++            f"""
+             SELECT
+                 m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
+                 m.status::text AS status, m.delivered_at, m.viewed_at,
+-                u.first_name, u.last_name, u.email
++                u.first_name, u.last_name, u.email,
++                {CONTRACT_MESSAGE_AFFILIATION}
+             FROM messages m
+             LEFT JOIN users u ON u.id = m.sender_id
+             WHERE m.conversation_id = $1
+diff --git a/app/modules/contracts/services/create.py b/app/modules/contracts/services/create.py
+index 13ff540..e889bf5 100644
+--- a/app/modules/contracts/services/create.py
++++ b/app/modules/contracts/services/create.py
+@@ -32,6 +32,7 @@ from app.utils.storage import storage_key_from_url
+ from app.enums import PaymentType
+ from app.modules.notifications.services import NotificationService
+ from app.modules.notifications.ws_manager import notification_ws_manager
++from app.utils.affiliation import CONTRACT_MESSAGE_AFFILIATION
+ 
+ 
+ class ContractCreateMixin:
+@@ -258,11 +259,12 @@ class ContractCreateMixin:
+                     message["id"],
+                 )
+             loaded = await conn.fetchrow(
+-                """
++                f"""
+                 SELECT
+                     m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
+                     m.status::text AS status, m.delivered_at, m.viewed_at,
+-                    u.first_name, u.last_name, u.email
++                    u.first_name, u.last_name, u.email,
++                {CONTRACT_MESSAGE_AFFILIATION}
+                 FROM messages m
+                 LEFT JOIN users u ON u.id = m.sender_id
+                 WHERE m.id = $1
+diff --git a/app/modules/contracts/services/update.py b/app/modules/contracts/services/update.py
+index aab32ad..3d7824a 100644
+--- a/app/modules/contracts/services/update.py
++++ b/app/modules/contracts/services/update.py
+@@ -13,6 +13,7 @@ from app.modules.notifications.services import NotificationService
+ from app.modules.notifications.ws_manager import notification_ws_manager
+ from app.utils.audit import log_event
+ from app.utils.locks import contract_lock
++from app.utils.affiliation import CONTRACT_MESSAGE_AFFILIATION
+ 
+ FROZEN_MESSAGE = (
+     "Сделка заморожена администратором. Приёмка и выплата недоступны до снятия заморозки."
+@@ -38,11 +39,12 @@ class ContractUpdateMixin:
+ 
+     async def _load_message(self, conn, conversation_id: int, message_id: int):
+         row = await conn.fetchrow(
+-            """
++            f"""
+             SELECT
+                 m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
+                 m.status::text AS status, m.delivered_at, m.viewed_at,
+-                u.first_name, u.last_name, u.email
++                u.first_name, u.last_name, u.email,
++                {CONTRACT_MESSAGE_AFFILIATION}
+             FROM messages m
+             LEFT JOIN users u ON u.id = m.sender_id
+             WHERE m.id = $1 AND m.conversation_id = $2
+diff --git a/app/modules/direct_chats/schemas.py b/app/modules/direct_chats/schemas.py
+index 1f3620b..e202ebc 100644
+--- a/app/modules/direct_chats/schemas.py
++++ b/app/modules/direct_chats/schemas.py
+@@ -22,6 +22,9 @@ class DirectMessageSchema(BaseModel):
+     conversation_id: int
+     sender_id: int
+     sender_name: str = ""
++    # The sender speaks for this company, in this role (director, admin, moderator, accountant).
++    sender_company: str | None = None
++    sender_role: str | None = None
+     text: str
+     created_at: datetime | str | None = None
+     status: str = "sent"
+diff --git a/app/modules/direct_chats/service.py b/app/modules/direct_chats/service.py
+index ae723ba..6236828 100644
+--- a/app/modules/direct_chats/service.py
++++ b/app/modules/direct_chats/service.py
+@@ -2,6 +2,11 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+ from app.database import pool
+ from app.modules.notifications.services import NotificationService
+ from app.modules.notifications.ws_manager import notification_ws_manager
++from app.utils.affiliation import (
++    DIRECT_CHAT_ACTORS,
++    affiliation_fields,
++    sender_affiliation_columns,
++)
+ 
+ 
+ def _sender_display_name(first_name, last_name, email, sender_id: int) -> str:
+@@ -30,13 +35,15 @@ def message_to_dict(row) -> dict:
+         "status": row["status"] or "sent",
+         "delivered_at": _iso(row["delivered_at"]),
+         "viewed_at": _iso(row["viewed_at"]),
++        **affiliation_fields(row),
+     }
+ 
+ 
+-MESSAGE_SELECT = """
++MESSAGE_SELECT = f"""
+     m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
+     m.status::text AS status, m.delivered_at, m.viewed_at,
+-    u.first_name, u.last_name, u.email
++    u.first_name, u.last_name, u.email,
++    {sender_affiliation_columns("m.sender_id", DIRECT_CHAT_ACTORS)}
+ """
+ 
+ ACTOR_NAME = """
+diff --git a/app/modules/proposals/schemas/common.py b/app/modules/proposals/schemas/common.py
+index e380983..c987158 100644
+--- a/app/modules/proposals/schemas/common.py
++++ b/app/modules/proposals/schemas/common.py
+@@ -76,6 +76,9 @@ class ProposalMessageSchema(BaseModel):
+     proposal_id: int
+     sender_id: int
+     sender_name: str = ""
++    # The sender speaks for this company, in this role (director, admin, moderator, accountant).
++    sender_company: str | None = None
++    sender_role: str | None = None
+     text: str
+     created_at: datetime
+ 
+diff --git a/app/modules/proposals/services/common.py b/app/modules/proposals/services/common.py
+index 381d7ba..c37a14a 100644
+--- a/app/modules/proposals/services/common.py
++++ b/app/modules/proposals/services/common.py
+@@ -1,5 +1,6 @@
+ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+ from app.utils.storage import public_file_url
++from app.utils.affiliation import affiliation_fields
+ 
+ PROPOSAL_COLUMNS = """
+     p.id,
+@@ -113,6 +114,7 @@ def message_to_response(row) -> dict:
+         "sender_name": sender_name,
+         "text": row["text"],
+         "created_at": row["created_at"],
++        **affiliation_fields(row),
+     }
+ 
+ 
+@@ -207,6 +209,11 @@ def assert_chat_access(row, actor_id: int, as_buyer: bool) -> None:
+         raise ForbiddenError("Access denied")
+ 
+ 
++def normalize_tax_number(value: str | None) -> str:
++    """ИНН without spaces, dashes and other separators, for comparison."""
++    return "".join(ch for ch in (value or "") if ch.isalnum()).upper()
++
++
+ async def _actor_user_ids(conn, actor_id: int) -> set[int]:
+     """Users who act for the actor: the person, or every member and the owner of the company."""
+     row = await conn.fetchrow(
+@@ -234,13 +241,19 @@ async def _actor_user_ids(conn, actor_id: int) -> set[int]:
+ async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id: int) -> None:
+     """A deal needs two independent parties.
+ 
+-    Blocked when the actors are the same, belong to the same company, or any person
+-    can act on both sides (owner or team member of either company, or the individual).
++    Blocked when the actors are the same, belong to the same company, the two
++    companies are registered under the same tax number (ИНН), or any person can act
++    on both sides (owner or team member of either company, or the individual).
+     """
+     if buyer_actor_id == supplier_actor_id:
+         raise ConflictError("Нельзя заключить сделку с самим собой")
+     rows = await conn.fetch(
+-        "SELECT id, company_id FROM actors WHERE id = ANY($1::int[])",
++        """
++        SELECT a.id, a.company_id, c.tax_number
++        FROM actors a
++        LEFT JOIN companies c ON c.id = a.company_id
++        WHERE a.id = ANY($1::int[])
++        """,
+         [buyer_actor_id, supplier_actor_id],
+     )
+     by_id = {row["id"]: row for row in rows}
+@@ -249,7 +262,14 @@ async def ensure_not_self_dealing(conn, buyer_actor_id: int, supplier_actor_id:
+     if not buyer or not supplier:
+         return
+     if buyer["company_id"] is not None and buyer["company_id"] == supplier["company_id"]:
+-        raise ConflictError("Нельзя заключить сделку с самим собой")
++        raise ConflictError(
++            "Нельзя заключить сделку с самим собой: покупатель и поставщик — одна компания"
++        )
++    buyer_tax = normalize_tax_number(buyer["tax_number"])
++    if buyer_tax and buyer_tax == normalize_tax_number(supplier["tax_number"]):
++        raise ConflictError(
++            "Нельзя заключить сделку с самим собой: у компаний покупателя и поставщика один ИНН"
++        )
+     shared = await _actor_user_ids(conn, buyer_actor_id) & await _actor_user_ids(
+         conn, supplier_actor_id
+     )
+diff --git a/app/modules/proposals/services/create.py b/app/modules/proposals/services/create.py
+index c884187..678ea07 100644
+--- a/app/modules/proposals/services/create.py
++++ b/app/modules/proposals/services/create.py
+@@ -19,6 +19,7 @@ from app.modules.rfqs.services.common import (
+ )
+ from app.modules.settings.service import get_platform_settings
+ from app.utils.audit import log_event
++from app.utils.affiliation import PROPOSAL_MESSAGE_AFFILIATION
+ 
+ 
+ class ProposalCreateMixin:
+@@ -119,10 +120,11 @@ class ProposalCreateMixin:
+                 text,
+             )
+             message = await conn.fetchrow(
+-                """
++                f"""
+                 SELECT
+                     m.id, m.proposal_id, m.sender_id, m.text, m.created_at,
+-                    u.first_name, u.last_name
++                    u.first_name, u.last_name,
++                {PROPOSAL_MESSAGE_AFFILIATION}
+                 FROM proposal_messages m
+                 LEFT JOIN users u ON u.id = m.sender_id
+                 WHERE m.id = $1
+diff --git a/app/modules/proposals/services/read.py b/app/modules/proposals/services/read.py
+index 96efe5a..97f7fb0 100644
+--- a/app/modules/proposals/services/read.py
++++ b/app/modules/proposals/services/read.py
+@@ -8,6 +8,7 @@ from app.modules.proposals.services.common import (
+     proposal_to_response,
+ )
+ from app.modules.rfqs.services.common import load_rfq_row
++from app.utils.affiliation import PROPOSAL_MESSAGE_AFFILIATION
+ 
+ 
+ def _thread_from_row(row) -> dict:
+@@ -137,10 +138,11 @@ class ProposalReadMixin:
+             row = await load_proposal_context(conn, proposal_id)
+             assert_chat_access(row, actor_id, as_buyer)
+             messages = await conn.fetch(
+-                """
++                f"""
+                 SELECT
+                     m.id, m.proposal_id, m.sender_id, m.text, m.created_at,
+-                    u.first_name, u.last_name
++                    u.first_name, u.last_name,
++                {PROPOSAL_MESSAGE_AFFILIATION}
+                 FROM proposal_messages m
+                 LEFT JOIN users u ON u.id = m.sender_id
+                 WHERE m.proposal_id = $1
+diff --git a/app/modules/reviews/api/create.py b/app/modules/reviews/api/create.py
+index d580677..9820fb3 100644
+--- a/app/modules/reviews/api/create.py
++++ b/app/modules/reviews/api/create.py
+@@ -47,7 +47,7 @@ async def create_buyer_review(
+     ctx: Annotated[BuyerContext, Depends(buyer_perm("reviews.create"))],
+     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+ ):
+-    return await ReviewService(db).create(ctx.actor.id, data)
++    return await ReviewService(db).create(ctx.actor.id, data, author_user_id=ctx.user.id)
+ 
+ 
+ @supplier_router.post("/", response_model=ReviewResponse)
+@@ -56,7 +56,7 @@ async def create_supplier_review(
+     ctx: Annotated[SupplierContext, Depends(supplier_perm("reviews.create"))],
+     db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+ ):
+-    return await ReviewService(db).create(ctx.actor.id, data)
++    return await ReviewService(db).create(ctx.actor.id, data, author_user_id=ctx.user.id)
+ 
+ 
+ @buyer_router.post("/{review_id}/helpful", response_model=ReviewResponse)
+diff --git a/app/modules/reviews/schemas/__init__.py b/app/modules/reviews/schemas/__init__.py
+index b13a005..cecc7a1 100644
+--- a/app/modules/reviews/schemas/__init__.py
++++ b/app/modules/reviews/schemas/__init__.py
+@@ -1,4 +1,5 @@
+ from app.modules.reviews.schemas.common import (
++    ReviewAuthorSchema,
+     ReviewCreate,
+     ReviewMediaSchema,
+     ReviewMediaUploadResponse,
+@@ -8,6 +9,7 @@ from app.modules.reviews.schemas.common import (
+ )
+ 
+ __all__ = [
++    "ReviewAuthorSchema",
+     "ReviewCreate",
+     "ReviewMediaSchema",
+     "ReviewMediaUploadResponse",
+diff --git a/app/modules/reviews/schemas/common.py b/app/modules/reviews/schemas/common.py
+index a47bcc3..18c4262 100644
+--- a/app/modules/reviews/schemas/common.py
++++ b/app/modules/reviews/schemas/common.py
+@@ -53,6 +53,15 @@ class ReviewPartySchema(BaseModel):
+     user_name: str | None = None
+ 
+ 
++class ReviewAuthorSchema(BaseModel):
++    """The person who wrote the review on behalf of the reviewing company."""
++
++    user_id: int
++    name: str | None = None
++    role: str | None = None
++    company_title: str | None = None
++
++
+ class ReviewResponse(BaseModel):
+     model_config = ConfigDict(from_attributes=True)
+ 
+@@ -72,3 +81,4 @@ class ReviewResponse(BaseModel):
+     viewer_voted: bool = False
+     reviewer: ReviewPartySchema | None = None
+     target: ReviewPartySchema | None = None
++    author: ReviewAuthorSchema | None = None
+diff --git a/app/modules/reviews/services/common.py b/app/modules/reviews/services/common.py
+index ac05d1b..d9a945b 100644
+--- a/app/modules/reviews/services/common.py
++++ b/app/modules/reviews/services/common.py
+@@ -1,4 +1,9 @@
+-from app.modules.reviews.schemas import ReviewMediaSchema, ReviewPartySchema, ReviewResponse
++from app.modules.reviews.schemas import (
++    ReviewAuthorSchema,
++    ReviewMediaSchema,
++    ReviewPartySchema,
++    ReviewResponse,
++)
+ 
+ REVIEW_COLUMNS = """
+     id,
+@@ -12,7 +17,8 @@ REVIEW_COLUMNS = """
+     COALESCE(tags, '{}'::text[]) AS tags,
+     comment,
+     created_at,
+-    COALESCE(helpful_count, 0) AS helpful_count
++    COALESCE(helpful_count, 0) AS helpful_count,
++    author_user_id
+ """
+ 
+ 
+@@ -125,6 +131,52 @@ async def load_review_parties(conn, actor_ids: list[int]) -> dict[int, ReviewPar
+     return parties
+ 
+ 
++async def load_review_authors(conn, rows) -> dict[int, ReviewAuthorSchema]:
++    """The person who wrote each review: name, role in the reviewing company, company.
++
++    Older reviews were saved without an author; they get no entry here and the
++    page falls back to the company's name.
++    """
++    pairs = {
++        (row["author_user_id"], row["reviewer_actor_id"])
++        for row in rows
++        if "author_user_id" in row.keys() and row["author_user_id"]
++    }
++    if not pairs:
++        return {}
++    found = await conn.fetch(
++        """
++        SELECT
++            u.id AS user_id,
++            a.id AS actor_id,
++            NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS name,
++            cu.role::text AS role,
++            COALESCE(NULLIF(c.title, ''), c.legal_name) AS company_title
++        FROM unnest($1::int[], $2::int[]) AS p(user_id, actor_id)
++        JOIN users u ON u.id = p.user_id
++        JOIN actors a ON a.id = p.actor_id
++        LEFT JOIN companies c ON c.id = a.company_id AND a.kind::text = 'company'
++        LEFT JOIN company_users cu ON cu.company_id = c.id AND cu.user_id = u.id
++        """,
++        [user_id for user_id, _ in pairs],
++        [actor_id for _, actor_id in pairs],
++    )
++    by_pair = {(r["user_id"], r["actor_id"]): r for r in found}
++    authors: dict[int, ReviewAuthorSchema] = {}
++    for row in rows:
++        key = (row.get("author_user_id"), row["reviewer_actor_id"])
++        hit = by_pair.get(key)
++        if hit is None:
++            continue
++        authors[row["id"]] = ReviewAuthorSchema(
++            user_id=hit["user_id"],
++            name=hit["name"],
++            role=hit["role"],
++            company_title=hit["company_title"],
++        )
++    return authors
++
++
+ def shape_review_row(
+     row,
+     *,
+@@ -132,8 +184,11 @@ def shape_review_row(
+     viewer_voted: bool = False,
+     reviewer: ReviewPartySchema | None = None,
+     target: ReviewPartySchema | None = None,
++    author: ReviewAuthorSchema | None = None,
+ ) -> ReviewResponse:
+     payload = dict(row)
++    payload.pop("author_user_id", None)
++    payload["author"] = author
+     payload["tags"] = list(payload.get("tags") or [])
+     payload["photos"] = photos or []
+     payload["helpful_count"] = int(payload.get("helpful_count") or 0)
+@@ -153,6 +208,7 @@ async def shape_review_rows(
+         row["target_actor_id"] for row in rows
+     ]
+     parties = await load_review_parties(conn, actor_ids)
++    authors = await load_review_authors(conn, rows)
+     return [
+         shape_review_row(
+             row,
+@@ -160,6 +216,7 @@ async def shape_review_rows(
+             viewer_voted=row["id"] in voted,
+             reviewer=parties.get(row["reviewer_actor_id"]),
+             target=parties.get(row["target_actor_id"]),
++            author=authors.get(row["id"]),
+         )
+         for row in rows
+     ]
+diff --git a/app/modules/reviews/services/create.py b/app/modules/reviews/services/create.py
+index a35d224..605e97c 100644
+--- a/app/modules/reviews/services/create.py
++++ b/app/modules/reviews/services/create.py
+@@ -7,7 +7,9 @@ from app.utils.audit import log_event
+ 
+ 
+ class ReviewCreateMixin:
+-    async def create(self, reviewer_actor_id: int, data: ReviewCreate) -> ReviewResponse:
++    async def create(
++        self, reviewer_actor_id: int, data: ReviewCreate, author_user_id: int | None = None
++    ) -> ReviewResponse:
+         if len(data.photos) > 5:
+             raise ValidationError("Можно прикрепить не более 5 фото")
+ 
+@@ -53,9 +55,9 @@ class ReviewCreateMixin:
+                     INSERT INTO reviews (
+                         contract_id, reviewer_actor_id, target_actor_id,
+                         rating, service_rating, delivery_rating, quality_rating,
+-                        tags, comment, created_at
++                        tags, comment, created_at, author_user_id
+                     )
+-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW())
++                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW(), $10)
+                     RETURNING {REVIEW_COLUMNS}
+                     """,
+                     data.contract_id,
+@@ -67,6 +69,7 @@ class ReviewCreateMixin:
+                     data.quality_rating,
+                     list(data.tags or []),
+                     data.comment,
++                    author_user_id,
+                 )
+             except asyncpg.UniqueViolationError as exc:
+                 raise ConflictError("Review already exists") from exc
+diff --git a/app/modules/rfqs/api/read.py b/app/modules/rfqs/api/read.py
+index a66a158..29dc5fc 100644
+--- a/app/modules/rfqs/api/read.py
++++ b/app/modules/rfqs/api/read.py
+@@ -13,6 +13,8 @@ from app.modules.rfqs.api.common import (
+     require_supplier_ctx,
+     supplier_router,
+ )
++from app.modules.rfqs.schemas.subscriptions import RfqCategorySubscriptions
++from app.modules.rfqs.services.subscriptions import list_subscriptions, replace_subscriptions
+ 
+ 
+ @buyer_router.get("/")
+@@ -49,6 +51,7 @@ async def rfq_board(
+     source: str | None = Query(None),
+     type: str | None = Query(None),
+     category_id: str | None = Query(None),
++    category_ids: str | None = Query(None, description="Comma-separated category ids"),
+ ):
+     return await RfqService().list_board_for_supplier(
+         ctx.actor.id,
+@@ -58,9 +61,27 @@ async def rfq_board(
+         source=source,
+         rfq_type=type,
+         category_id=category_id,
++        category_ids=category_ids,
+     )
+ 
+ 
++@supplier_router.get("/subscriptions", response_model=RfqCategorySubscriptions)
++async def get_category_subscriptions(
++    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
++):
++    """Categories in which this employee is notified about new requests."""
++    return {"category_ids": await list_subscriptions(ctx.user.id, ctx.actor.id)}
++
++
++@supplier_router.put("/subscriptions", response_model=RfqCategorySubscriptions)
++async def set_category_subscriptions(
++    data: RfqCategorySubscriptions,
++    ctx: Annotated[SupplierContext, Depends(require_supplier_ctx)],
++):
++    saved = await replace_subscriptions(ctx.user.id, ctx.actor.id, data.category_ids)
++    return {"category_ids": saved}
++
++
+ @supplier_router.get("/{rfq_id}")
+ async def get_supplier_rfq(
+     rfq_id: str,
+diff --git a/app/modules/rfqs/schemas/subscriptions.py b/app/modules/rfqs/schemas/subscriptions.py
+new file mode 100644
+index 0000000..3a0e782
+--- /dev/null
++++ b/app/modules/rfqs/schemas/subscriptions.py
+@@ -0,0 +1,7 @@
++from pydantic import BaseModel, Field
++
++
++class RfqCategorySubscriptions(BaseModel):
++    """Categories in which an employee wants to hear about new requests."""
++
++    category_ids: list[int] = Field(default_factory=list, max_length=100)
+diff --git a/app/modules/rfqs/services/create.py b/app/modules/rfqs/services/create.py
+index ae15d56..3d39a61 100644
+--- a/app/modules/rfqs/services/create.py
++++ b/app/modules/rfqs/services/create.py
+@@ -13,6 +13,9 @@ from app.modules.rfqs.services.common import (
+ from app.utils.audit import log_event
+ 
+ 
++from app.modules.rfqs.services.subscriptions import notify_subscribers_safely
++
++
+ class RfqCreateMixin:
+     async def create(self, actor_id: int, created_by: str, data: RfqCreate):
+         rfq_id = str(uuid.uuid4())
+@@ -92,6 +95,8 @@ class RfqCreateMixin:
+             response = await load_rfq_response(conn, rfq_id)
+         if invited and status in OPEN_RFQ_STATUSES:
+             await notify_invited_suppliers(rfq_id, data.title, invited)
++        if status in OPEN_RFQ_STATUSES and visibility == "public":
++            await notify_subscribers_safely(rfq_id, data.title, data.category_id, actor_id, invited)
+         return response
+ 
+     async def add_attachment(
+diff --git a/app/modules/rfqs/services/read.py b/app/modules/rfqs/services/read.py
+index 424b81a..26823d0 100644
+--- a/app/modules/rfqs/services/read.py
++++ b/app/modules/rfqs/services/read.py
+@@ -18,6 +18,34 @@ from app.modules.rfqs.services.common import (
+ 
+ HIDDEN_FROM_SUPPLIERS_STATUSES = {"draft", "archived"}
+ 
++# Board filter: requests of the supplier's own company (same company, same ИНН,
++# or the same person on an individual account). Uses $2 = supplier actor id and
++# the board's "a" (buyer actor) and "c" (buyer company) aliases.
++_TAX = "upper(regexp_replace(COALESCE({col}, ''), '[^0-9A-Za-z]', '', 'g'))"
++OWN_COMPANY_EXCLUSION = f"""NOT EXISTS (
++    SELECT 1 FROM actors me
++    LEFT JOIN companies mc ON mc.id = me.company_id
++    WHERE me.id = $2 AND (
++        (me.company_id IS NOT NULL AND me.company_id = a.company_id)
++        OR (me.user_id IS NOT NULL AND me.user_id = a.user_id)
++        OR (
++            {_TAX.format(col="mc.tax_number")} <> ''
++            AND {_TAX.format(col="mc.tax_number")} = {_TAX.format(col="c.tax_number")}
++        )
++    )
++)"""
++
++
++def parse_category_ids(*values: str | None) -> list[int]:
++    """Category ids from "3" or "1,4,6"; anything that is not a number is ignored."""
++    ids: list[int] = []
++    for value in values:
++        for part in (value or "").split(","):
++            part = part.strip()
++            if part.isdigit() and int(part) not in ids:
++                ids.append(int(part))
++    return ids[:50]
++
+ 
+ class RfqReadMixin:
+     async def _load(self, rfq_id: str, *, include_buyer: bool = False) -> dict:
+@@ -80,6 +108,7 @@ class RfqReadMixin:
+         source: str | None = None,
+         rfq_type: str | None = None,
+         category_id: str | None = None,
++        category_ids: str | None = None,
+     ) -> dict:
+         filters = [
+             "r.status::text = ANY($1::text[])",
+@@ -92,6 +121,8 @@ class RfqReadMixin:
+             )""",
+         ]
+         params: list = [OPEN_RFQ_STATUSES, supplier_id]
++        # A supplier never sees its own company's requests: it could not answer them anyway.
++        filters.append(OWN_COMPANY_EXCLUSION)
+         if source == "catalog":
+             filters.append("r.catalog_item_id IS NOT NULL")
+         elif source == "marketplace":
+@@ -99,10 +130,19 @@ class RfqReadMixin:
+         if rfq_type in ("product", "service"):
+             params.append(rfq_type)
+             filters.append(f"r.type::text = ${len(params)}")
+-        category = (category_id or "").strip()
+-        if category:
+-            params.append(category)
+-            filters.append(f"r.category_id = ${len(params)}")
++        wanted = parse_category_ids(category_id, category_ids)
++        if wanted:
++            # A parent category also matches its subcategories.
++            params.append(wanted)
++            n = len(params)
++            # Requests keep the category as an id ("2") or a slug ("web"): match both.
++            filters.append(
++                f"""r.category_id IN (
++                    SELECT v.key FROM categories cat
++                    CROSS JOIN LATERAL (VALUES (cat.id::text), (cat.slug)) v(key)
++                    WHERE cat.id = ANY(${n}::int[]) OR cat.parent_id = ANY(${n}::int[])
++                )"""
++            )
+         query = (q or "").strip()
+         if query:
+             params.append(like_contains(query))
+diff --git a/app/modules/rfqs/services/subscriptions.py b/app/modules/rfqs/services/subscriptions.py
+new file mode 100644
+index 0000000..10e15e1
+--- /dev/null
++++ b/app/modules/rfqs/services/subscriptions.py
+@@ -0,0 +1,163 @@
++"""Notifications about new requests by category.
++
++A supplier's employee ticks the categories they care about ("ИТ и разработка",
++"Логистика"...). When a buyer publishes an open request in one of them, or in
++one of its subcategories, the employee gets a notification. Subscriptions are
++personal: every member of the company chooses for themselves.
++"""
++
++import logging
++
++from app.core.exceptions import ValidationError
++from app.database import pool
++from app.modules.notifications.services import NotificationService
++
++MAX_SUBSCRIPTIONS = 100
++logger = logging.getLogger(__name__)
++
++
++async def list_subscriptions(user_id: int, supplier_actor_id: int) -> list[int]:
++    async with pool.connection() as conn:
++        rows = await conn.fetch(
++            """
++            SELECT category_id FROM rfq_category_subscriptions
++            WHERE user_id = $1 AND supplier_actor_id = $2
++            ORDER BY category_id
++            """,
++            user_id,
++            supplier_actor_id,
++        )
++    return [row["category_id"] for row in rows]
++
++
++async def replace_subscriptions(
++    user_id: int, supplier_actor_id: int, category_ids: list[int]
++) -> list[int]:
++    wanted = sorted({int(cid) for cid in category_ids})
++    if len(wanted) > MAX_SUBSCRIPTIONS:
++        raise ValidationError(f"Можно выбрать не больше {MAX_SUBSCRIPTIONS} категорий")
++    async with pool.connection() as conn:
++        async with conn.transaction():
++            known = {
++                row["id"]
++                for row in await conn.fetch(
++                    "SELECT id FROM categories WHERE id = ANY($1::int[])", wanted
++                )
++            }
++            unknown = [cid for cid in wanted if cid not in known]
++            if unknown:
++                raise ValidationError("Такой категории нет: " + ", ".join(map(str, unknown)))
++            await conn.execute(
++                """
++                DELETE FROM rfq_category_subscriptions
++                WHERE user_id = $1 AND supplier_actor_id = $2
++                  AND NOT (category_id = ANY($3::int[]))
++                """,
++                user_id,
++                supplier_actor_id,
++                wanted,
++            )
++            await conn.execute(
++                """
++                INSERT INTO rfq_category_subscriptions (user_id, supplier_actor_id, category_id)
++                SELECT $1, $2, unnest($3::int[])
++                ON CONFLICT DO NOTHING
++                """,
++                user_id,
++                supplier_actor_id,
++                wanted,
++            )
++    return wanted
++
++
++async def resolve_category(conn, category_id: str | int | None):
++    """A request stores its category as an id ("2") or a slug ("web")."""
++    key = str(category_id or "").strip()
++    if not key:
++        return None
++    return await conn.fetchrow(
++        "SELECT id, parent_id, name FROM categories WHERE id::text = $1 OR slug = $1 LIMIT 1",
++        key,
++    )
++
++
++async def subscribers_for_request(
++    conn, category_id: str | int | None, buyer_actor_id: int, skip_actor_ids: list[int]
++) -> list[tuple[int, int | None]]:
++    """(user_id, company_id) of people to notify about an open request in this category.
++
++    The request's own category and its parent both count. People are only
++    notified while they are still members of the supplier company, never for
++    their own company's requests, and suppliers that were invited personally
++    already got their own notification.
++    """
++    category = await resolve_category(conn, category_id)
++    if category is None:
++        return []
++    wanted = [category["id"]] + ([category["parent_id"]] if category["parent_id"] else [])
++    rows = await conn.fetch(
++        """
++        SELECT DISTINCT s.user_id, sa.company_id
++        FROM rfq_category_subscriptions s
++        JOIN actors sa ON sa.id = s.supplier_actor_id AND sa.is_active
++        JOIN actors ba ON ba.id = $2
++        WHERE s.category_id = ANY($1::int[])
++          AND NOT (s.supplier_actor_id = ANY($3::int[]))
++          AND (sa.company_id IS NULL OR ba.company_id IS NULL OR sa.company_id <> ba.company_id)
++          AND (sa.user_id IS NULL OR ba.user_id IS NULL OR sa.user_id <> ba.user_id)
++          AND (
++              sa.kind::text <> 'company'
++              OR EXISTS (
++                  SELECT 1 FROM company_users cu
++                  WHERE cu.company_id = sa.company_id AND cu.user_id = s.user_id
++              )
++          )
++        """,
++        wanted,
++        buyer_actor_id,
++        [buyer_actor_id, *skip_actor_ids],
++    )
++    return [(row["user_id"], row["company_id"]) for row in rows]
++
++
++async def notify_category_subscribers(
++    rfq_id: str,
++    title: str,
++    category_id: str | int | None,
++    buyer_actor_id: int,
++    skip_actor_ids: list[int] | None = None,
++) -> int:
++    async with pool.connection() as conn:
++        recipients = await subscribers_for_request(
++            conn, category_id, buyer_actor_id, list(skip_actor_ids or [])
++        )
++        category = await resolve_category(conn, category_id)
++        category_name = category["name"] if category else None
++    service = NotificationService()
++    body = f"«{title}»" + (f" в категории «{category_name}»" if category_name else "")
++    for user_id, company_id in recipients:
++        await service.notify_user(
++            user_id,
++            "rfq",
++            "Новая заявка в вашей категории",
++            body,
++            f"/supplier/rfqs/{rfq_id}",
++            company_id=company_id,
++        )
++    return len(recipients)
++
++
++async def notify_subscribers_safely(
++    rfq_id: str,
++    title: str,
++    category_id: str | int | None,
++    buyer_actor_id: int,
++    skip_actor_ids: list[int] | None = None,
++) -> None:
++    """The request is already saved: a failed notification must not turn it into an error."""
++    try:
++        await notify_category_subscribers(
++            rfq_id, title, category_id, buyer_actor_id, skip_actor_ids
++        )
++    except Exception:  # noqa: BLE001 - logged, the request itself succeeded
++        logger.exception("Category notifications failed for rfq %s", rfq_id)
+diff --git a/app/modules/rfqs/services/update.py b/app/modules/rfqs/services/update.py
+index 4178fdd..e07d6e4 100644
+--- a/app/modules/rfqs/services/update.py
++++ b/app/modules/rfqs/services/update.py
+@@ -15,6 +15,8 @@ from app.modules.rfqs.services.common import (
+ from app.utils.audit import log_event
+ 
+ 
++from app.modules.rfqs.services.subscriptions import notify_subscribers_safely
++
+ class RfqUpdateMixin:
+     async def update(self, rfq_id: str, actor_id: int, data: RfqUpdate):
+         async with self.connection() as conn:
+@@ -112,6 +114,10 @@ class RfqUpdateMixin:
+             response = await load_rfq_response(conn, rfq_id)
+         if invited:
+             await notify_invited_suppliers(rfq_id, row["title"], invited)
++        if row["visibility"] == "public":
++            await notify_subscribers_safely(
++                rfq_id, row["title"], row["category_id"], actor_id, invited
++            )
+         return response
+ 
+     async def close(self, rfq_id: str, actor_id: int):
+diff --git a/app/utils/affiliation.py b/app/utils/affiliation.py
+new file mode 100644
+index 0000000..72062c4
+--- /dev/null
++++ b/app/utils/affiliation.py
+@@ -0,0 +1,54 @@
++"""Who is writing: the sender's company and position, for chats and reviews.
++
++In a B2B deal people speak for their companies, so every message shows the
++person, their role in the company and the company itself. The SQL helpers
++below add two columns, ``sender_company`` and ``sender_role``, to a message
++query. They look for the sender among the members of the companies that take
++part in the conversation, so a person who belongs to several companies is shown
++with the one that is actually in this deal.
++"""
++
++# Actor ids taking part in each kind of conversation, for a message aliased "m".
++DIRECT_CHAT_ACTORS = (
++    "SELECT v.x FROM direct_conversations dc "
++    "CROSS JOIN LATERAL (VALUES (dc.buyer_actor_id), (dc.supplier_actor_id)) v(x) "
++    "WHERE dc.id = m.conversation_id"
++)
++CONTRACT_CHAT_ACTORS = (
++    "SELECT v.x FROM conversations cv JOIN contracts ct ON ct.id = cv.contract_id "
++    "CROSS JOIN LATERAL (VALUES (ct.buyer_actor_id), (ct.supplier_actor_id)) v(x) "
++    "WHERE cv.id = m.conversation_id"
++)
++PROPOSAL_CHAT_ACTORS = (
++    "SELECT v.x FROM proposals pp JOIN rfqs rr ON rr.id = pp.rfq_id "
++    "CROSS JOIN LATERAL (VALUES (rr.actor_id), (pp.supplier_actor_id)) v(x) "
++    "WHERE pp.id = m.proposal_id"
++)
++
++
++def sender_affiliation_columns(sender_expr: str, actors_sql: str) -> str:
++    """Select-list SQL for ``sender_company`` and ``sender_role``."""
++    source = (
++        "FROM actors sa "
++        "JOIN companies sc ON sc.id = sa.company_id "
++        f"JOIN company_users scu ON scu.company_id = sc.id AND scu.user_id = {sender_expr} "
++        f"WHERE sa.kind::text = 'company' AND sa.id IN ({actors_sql}) "
++        "ORDER BY sa.id LIMIT 1"
++    )
++    return (
++        f"(SELECT COALESCE(NULLIF(sc.title, ''), sc.legal_name) {source}) AS sender_company, "
++        f"(SELECT scu.role::text {source}) AS sender_role"
++    )
++
++
++CONTRACT_MESSAGE_AFFILIATION = sender_affiliation_columns("m.sender_id", CONTRACT_CHAT_ACTORS)
++PROPOSAL_MESSAGE_AFFILIATION = sender_affiliation_columns("m.sender_id", PROPOSAL_CHAT_ACTORS)
++
++
++def affiliation_fields(row) -> dict:
++    """The two affiliation values from a row, or None when the query has no such columns."""
++    keys = row.keys() if hasattr(row, "keys") else ()
++    return {
++        "sender_company": row["sender_company"] if "sender_company" in keys else None,
++        "sender_role": row["sender_role"] if "sender_role" in keys else None,
++    }
+diff --git a/tests/buyer/test_companies.py b/tests/buyer/test_companies.py
+index 0c49364..5c51b86 100644
+--- a/tests/buyer/test_companies.py
++++ b/tests/buyer/test_companies.py
+@@ -1,13 +1,16 @@
++import secrets
+ import pytest
+ 
+ API = "/api/v1"
+ 
+ 
+ def _wizard_payload(title: str) -> dict:
++    # Every test company is a separate legal entity, so it gets its own ИНН:
++    # two companies with one ИНН cannot trade with each other.
+     return {
+         "title": title,
+         "legal_name": f"{title} LLC",
+-        "tax_number": "123456789",
++        "tax_number": f"{secrets.randbelow(10**9):09d}",
+         "description": "Test company",
+         "logo": "",
+         "country": "Таджикистан",
+diff --git a/tests/test_b2b_company_features.py b/tests/test_b2b_company_features.py
+new file mode 100644
+index 0000000..3063e9f
+--- /dev/null
++++ b/tests/test_b2b_company_features.py
+@@ -0,0 +1,201 @@
++"""B2B features: who speaks for the company, self-dealing by ИНН, request categories.
++
++- chats and reviews carry the sender's company and role;
++- two companies with one ИНН cannot trade, and a supplier does not see its own
++  company's requests on the board;
++- the board filters by category (a parent covers its subcategories, requests may
++  store the category as an id or a slug);
++- employees subscribe to categories and get notified about new public requests.
++"""
++
++import secrets
++
++from app.modules.proposals.services.common import normalize_tax_number
++from app.modules.rfqs.services.read import parse_category_ids
++from tests.buyer.test_companies import _wizard_payload
++from tests.sql import fetch, fetchval
++from tests.test_audit_regressions import _actor, _headers, _register
++
++API = "/api/v1"
++
++
++def test_tax_number_normalization():
++    assert normalize_tax_number(" 020-033 881 ") == "020033881"
++    assert normalize_tax_number(None) == ""
++    assert normalize_tax_number("") == ""
++
++
++def test_parse_category_ids_ignores_junk():
++    assert parse_category_ids("1, 4,x,4", None) == [1, 4]
++    assert parse_category_ids(None, "7") == [7]
++    assert parse_category_ids("", "") == []
++
++
++async def _company(client, token, me, *, side: str, title: str, tax: str | None = None) -> tuple[int, dict]:
++    actor = next(a["id"] for a in me["actors"] if a["side"] == side)
++    payload = _wizard_payload(title)
++    payload["actor_types"] = [side]
++    if tax is not None:
++        payload["tax_number"] = tax
++    res = await client.post(f"{API}/{side}/companies/", headers=_headers(token, actor), json=payload)
++    assert res.status_code == 200, res.text
++    company_id = res.json()["id"]
++    return company_id, _headers(token, await _actor(client, token, side=side, company_id=company_id))
++
++
++async def _public_rfq(client, headers, title: str, category_id: str) -> str:
++    res = await client.post(
++        f"{API}/buyer/rfqs/",
++        headers=headers,
++        json={
++            "type": "service",
++            "title": title,
++            "category_id": category_id,
++            "budget_type": "open",
++            "currency": "TJS",
++            "deadline": "2026-12-31",
++            "visibility": "public",
++            "status": "receiving_proposals",
++            "project_duration": "2 months",
++            "start_date": "2026-07-01",
++        },
++    )
++    assert res.status_code == 200, res.text
++    return res.json()["id"]
++
++
++async def _category(slug: str) -> dict:
++    rows = await fetch("SELECT id, parent_id, slug FROM categories WHERE slug = $1", slug)
++    assert rows, f"category {slug} missing from the test database"
++    return dict(rows[0])
++
++
++async def test_same_tax_number_blocks_the_deal_and_hides_the_request(client):
++    tax = f"{secrets.randbelow(10**9):09d}"
++    _, b_token, b_me = await _register(client, "buyer")
++    _, buyer = await _company(client, b_token, b_me, side="buyer", title="Twin buyer", tax=tax)
++    _, s_token, s_me = await _register(client, "supplier")
++    _, supplier = await _company(client, s_token, s_me, side="supplier", title="Twin supplier", tax=f" {tax[:3]}-{tax[3:]} ")
++
++    rfq_id = await _public_rfq(client, buyer, f"Twin request {secrets.token_hex(3)}", "web")
++
++    board = await client.get(f"{API}/supplier/rfqs/board?page_size=100", headers=supplier)
++    assert board.status_code == 200, board.text
++    assert rfq_id not in {item["id"] for item in board.json()["items"]}
++
++    res = await client.post(
++        f"{API}/supplier/rfqs/{rfq_id}/proposals",
++        headers=supplier,
++        json={"price": 100, "currency": "TJS", "delivery_time": "1 day", "message": "twin"},
++    )
++    assert res.status_code == 409, res.text
++    assert "ИНН" in res.text
++
++
++async def test_board_category_filter_covers_subcategories_and_slugs(client):
++    web = await _category("web")
++    _, b_token, b_me = await _register(client, "buyer")
++    _, buyer = await _company(client, b_token, b_me, side="buyer", title="Filter buyer")
++    by_slug = await _public_rfq(client, buyer, f"Slug request {secrets.token_hex(3)}", "web")
++    by_id = await _public_rfq(client, buyer, f"Id request {secrets.token_hex(3)}", str(web["id"]))
++    other = await _public_rfq(client, buyer, f"Other request {secrets.token_hex(3)}", "logistics")
++
++    _, s_token, s_me = await _register(client, "supplier")
++    _, supplier = await _company(client, s_token, s_me, side="supplier", title="Filter supplier")
++    res = await client.get(
++        f"{API}/supplier/rfqs/board?page_size=100&category_ids={web['parent_id']}",
++        headers=supplier,
++    )
++    assert res.status_code == 200, res.text
++    ids = {item["id"] for item in res.json()["items"]}
++    assert {by_slug, by_id} <= ids
++    assert other not in ids
++
++
++async def test_category_subscribers_are_notified_about_new_requests(client):
++    web = await _category("web")
++    _, s_token, s_me = await _register(client, "supplier")
++    _, supplier = await _company(client, s_token, s_me, side="supplier", title="Alert supplier")
++
++    res = await client.put(
++        f"{API}/supplier/rfqs/subscriptions",
++        headers=supplier,
++        json={"category_ids": [web["parent_id"]]},
++    )
++    assert res.status_code == 200, res.text
++    assert res.json() == {"category_ids": [web["parent_id"]]}
++    res = await client.get(f"{API}/supplier/rfqs/subscriptions", headers=supplier)
++    assert res.json() == {"category_ids": [web["parent_id"]]}
++    res = await client.put(
++        f"{API}/supplier/rfqs/subscriptions", headers=supplier, json={"category_ids": [987654]}
++    )
++    assert res.status_code in (400, 422), res.text
++
++    _, b_token, b_me = await _register(client, "buyer")
++    _, buyer = await _company(client, b_token, b_me, side="buyer", title="Alert buyer")
++    title = f"Alert request {secrets.token_hex(3)}"
++    rfq_id = await _public_rfq(client, buyer, title, "web")
++    await _public_rfq(client, buyer, f"Quiet request {secrets.token_hex(3)}", "logistics")
++
++    user_id = s_me["user"]["id"]
++    rows = await fetch(
++        "SELECT title, body, href FROM notifications WHERE user_id = $1 AND type::text = 'rfq'",
++        user_id,
++    )
++    assert [r["href"] for r in rows] == [f"/supplier/rfqs/{rfq_id}"]
++    assert title in rows[0]["body"]
++
++
++async def test_chat_messages_carry_sender_company_and_role(client):
++    _, b_token, b_me = await _register(client, "buyer")
++    buyer_company, buyer = await _company(client, b_token, b_me, side="buyer", title="Chat buyer Co")
++    _, s_token, s_me = await _register(client, "supplier")
++    _, supplier = await _company(client, s_token, s_me, side="supplier", title="Chat supplier Co")
++    supplier_actor = int(supplier["X-Actor-Id"])
++
++    res = await client.post(
++        f"{API}/buyer/direct-chats/", headers=buyer, json={"supplier_actor_id": supplier_actor}
++    )
++    assert res.status_code == 200, res.text
++    chat_id = res.json()["id"]
++    res = await client.post(
++        f"{API}/buyer/direct-chats/{chat_id}/messages", headers=buyer, json={"text": "Здравствуйте"}
++    )
++    assert res.status_code == 200, res.text
++    message = res.json()["messages"][-1]
++    assert message["sender_company"] == "Chat buyer Co"
++    assert message["sender_role"] == "director"
++    assert await fetchval("SELECT title FROM companies WHERE id = $1", buyer_company) == "Chat buyer Co"
++
++
++async def test_review_shows_the_employee_who_wrote_it(client):
++    from tests.admin.test_disputes import _create_contract
++    from tests.sql import execute
++
++    _, b_token, b_me = await _register(client, "buyer")
++    _, buyer = await _company(client, b_token, b_me, side="buyer", title="Review buyer Co")
++    _, s_token, s_me = await _register(client, "supplier")
++    _, supplier = await _company(client, s_token, s_me, side="supplier", title="Review supplier Co")
++
++    contract_id = await _create_contract(
++        client, {"headers": buyer}, {"headers": supplier}, f"Review deal {secrets.token_hex(3)}"
++    )
++    await execute(
++        "UPDATE contracts SET status = 'completed'::contract_status WHERE id = $1", contract_id
++    )
++    res = await client.post(
++        f"{API}/buyer/reviews/",
++        headers=buyer,
++        json={
++            "contract_id": contract_id,
++            "target_actor_id": int(supplier["X-Actor-Id"]),
++            "rating": 5,
++            "comment": "Всё вовремя",
++        },
++    )
++    assert res.status_code == 200, res.text
++    author = res.json()["author"]
++    assert author["user_id"] == b_me["user"]["id"]
++    assert author["role"] == "director"
++    assert author["company_title"] == "Review buyer Co"
++    assert author["name"] == "Audit User"
+-- 
+2.43.0
+
