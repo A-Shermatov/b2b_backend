@@ -62,7 +62,9 @@ class RfqReadMixin:
         q: str | None = None,
         rfq_type: str | None = None,
     ) -> dict:
-        filters = ["r.actor_id = $1", "r.status::text <> 'archived'"]
+        filters = ["r.actor_id = $1"]
+        if tab not in ("closed", "archived"):
+            filters.append("r.status::text <> 'archived'")
         params: list = [actor_id]
         if tab and tab != "all":
             if tab in BUYER_TAB_STATUSES:

@@ -74,6 +74,9 @@ def public_file_url(stored: str | None) -> str:
         path = path[len("uploads/") :]
 
     if _using_local:
+        # FILES_BASE_URL may already point at the /uploads mount.
+        if base.endswith("/uploads"):
+            return f"{base}/{path}"
         return f"{base}/uploads/{path}"
     return f"{base}/{path}"
 
@@ -202,8 +205,16 @@ class StorageService:
         allowed = {m.lower() for m in settings.allowed_mime_types_list}
         if mime not in allowed and not (MIME_ALIASES.get(mime, set()) & allowed):
             raise ValidationError(UNSUPPORTED_FILE_MESSAGE)
-        if declared and declared != "application/octet-stream" and declared != mime and (
-            declared not in MIME_ALIASES.get(mime, set())
+        # A picture saved with the wrong extension (WEBP named .jpg) is still a
+        # picture: it is stored under its real type. Anything else claiming to be
+        # something it is not is refused.
+        image_for_image = declared.startswith("image/") and mime.startswith("image/")
+        if (
+            declared
+            and declared != "application/octet-stream"
+            and declared != mime
+            and declared not in MIME_ALIASES.get(mime, set())
+            and not image_for_image
         ):
             raise ValidationError("Тип файла не совпадает с его содержимым")
         return content, mime, ext

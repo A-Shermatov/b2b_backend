@@ -37,4 +37,20 @@ class NotificationConnectionManager:
                     self.disconnect(user_id, websocket)
 
 
+    async def end_sessions(self, user_id: int, reason: str, message: str) -> None:
+        """Tell every open tab of the user that the session is over, then close it.
+
+        Tokens are already invalid by then; this only makes the tab react at once
+        instead of on its next request.
+        """
+        payload = json.dumps({"event": "session_ended", "data": {"reason": reason, "message": message}})
+        for websocket in list(self._connections.get(user_id, set())):
+            try:
+                await websocket.send_text(payload)
+                await websocket.close(code=4401)
+            except Exception:
+                logger.debug("WS close failed for user %s", user_id, exc_info=True)
+            self.disconnect(user_id, websocket)
+
+
 notification_ws_manager = NotificationConnectionManager()

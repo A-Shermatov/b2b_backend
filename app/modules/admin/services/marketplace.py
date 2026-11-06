@@ -407,10 +407,20 @@ class AdminMarketplaceMixin:
             else:
                 status = rfq["status"]
 
+            moderated = action in {"hide", "close", "delete"}
             await conn.execute(
-                "UPDATE rfqs SET status = $1::rfq_status, updated_at = NOW() WHERE id = $2",
+                """
+                UPDATE rfqs
+                SET status = $1::rfq_status,
+                    moderation_reason = CASE WHEN $3 THEN $4 ELSE moderation_reason END,
+                    moderated_at = CASE WHEN $3 THEN NOW() ELSE moderated_at END,
+                    updated_at = NOW()
+                WHERE id = $2
+                """,
                 status,
                 rfq_id,
+                moderated,
+                reason.strip() if reason else None,
             )
             if action in {"hide", "delete"}:
                 await conn.execute(

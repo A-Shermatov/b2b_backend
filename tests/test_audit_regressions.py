@@ -503,3 +503,31 @@ async def test_bank_paid_milestone_is_not_withdrawable_again(client, buyer_auth,
     net = float(milestone["amount"]) - float(milestone["commission_amount"] or 0)
     assert round(before - after, 2) == round(min(net, before), 2)
 
+
+
+async def test_catalog_photo_with_wrong_extension_is_stored_as_its_real_type(client, supplier_auth):
+    webp = b"RIFF\x24\x00\x00\x00WEBPVP8 " + b"\x00" * 32
+    res = await client.post(
+        f"{API}/supplier/catalog/media",
+        headers=supplier_auth["headers"],
+        files={"file": ("photo.jpg", webp, "image/jpeg")},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["file_url"].endswith(".webp")
+    # A page pretending to be a picture is still refused.
+    res = await client.post(
+        f"{API}/supplier/catalog/media",
+        headers=supplier_auth["headers"],
+        files={"file": ("photo.jpg", b"<svg onload=alert(1)>", "image/jpeg")},
+    )
+    assert res.status_code == 422, res.text
+
+
+def test_local_file_url_does_not_repeat_uploads(monkeypatch):
+    from app.utils import storage
+
+    monkeypatch.setattr(storage, "_using_local", True)
+    monkeypatch.setattr(storage.settings, "files_base_url", "http://localhost:8000/uploads")
+    assert storage.public_file_url("catalog/3/a.png") == "http://localhost:8000/uploads/catalog/3/a.png"
+    monkeypatch.setattr(storage.settings, "files_base_url", "")
+    assert storage.public_file_url("catalog/3/a.png") == "http://localhost:8000/uploads/catalog/3/a.png"
