@@ -32,6 +32,9 @@ class RfqBaseSchema(BaseModel):
     deadline: str
     visibility: str
     status: str
+    # Set when a moderator hid or closed the RFQ.
+    moderation_reason: str | None = None
+    moderated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -1,3 +1,4 @@
+from app.modules.admin.services.marks import AdminMarksMixin
 from app.modules.admin.services.analytics import AdminAnalyticsMixin
 from app.modules.admin.services.base import AdminServiceBase
 from app.modules.admin.services.categories import AdminCategoriesMixin
@@ -22,6 +23,7 @@ from app.modules.admin.services.users import AdminUsersMixin
 
 
 class AdminService(
+    AdminMarksMixin,
     AdminUsersMixin,
     AdminStaffMixin,
     AdminDashboardMixin,

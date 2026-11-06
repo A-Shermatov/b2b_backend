@@ -40,6 +40,7 @@ SUPPLIER_SELECT = f"""
             AND (c.vip_until IS NULL OR c.vip_until > NOW())
         ) AS vip,
         {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS subscription_plan,
+        a.reputation_override,
         cs.average_rating,
         cp.industries,
         u.first_name,

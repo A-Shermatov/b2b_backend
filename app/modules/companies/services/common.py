@@ -278,6 +278,17 @@ def _public_supplier_rating(row) -> float:
     return round(float(row["average_rating"] or row["rating"] or 0), 2)
 
 
+def apply_reputation_override(row, computed: str) -> str:
+    """An admin-set mark (or an admin-removed one) replaces the computed tier."""
+    from app.modules.trust.levels import TIER_LABELS_RU
+
+    try:
+        override = row["reputation_override"]
+    except (KeyError, IndexError):
+        return computed
+    return override if override in TIER_LABELS_RU else computed
+
+
 def row_to_public_supplier(row) -> PublicSupplier:
     completed = int(row["completed_contracts"] or 0)
     active = int(row["active_contracts"] or 0)
@@ -291,11 +302,14 @@ def row_to_public_supplier(row) -> PublicSupplier:
     verification = row["verification_status"] or (
         "pending" if row["kind"] == "company" and row["company_id"] else "unverified"
     )
-    reputation = _reputation_tier(
-        verification_status=verification,
-        completed=completed,
-        rating=rating,
-        success_rate=success_rate,
+    reputation = apply_reputation_override(
+        row,
+        _reputation_tier(
+            verification_status=verification,
+            completed=completed,
+            rating=rating,
+            success_rate=success_rate,
+        ),
     )
     if row["kind"] == "company" and row["company_id"]:
         return PublicSupplier(

@@ -52,3 +52,27 @@ async def test_rfq_close_only_from_open_statuses(client, buyer_auth):
         f"{API}/buyer/rfqs/{rfq_id}/close", headers=buyer_auth["headers"]
     )
     assert again.status_code == 409, again.text
+
+
+@pytest.mark.asyncio
+async def test_rfq_hidden_by_admin_moves_to_the_buyer_archive(client, buyer_auth, admin_auth):
+    rfq_id = await _create_rfq(client, buyer_auth, "Archive after moderation", status="published")
+    res = await client.post(
+        f"{API}/admin/rfqs/{rfq_id}/action",
+        json={"action": "hide", "reason": "Запрещённый товар"},
+        headers=admin_auth["headers"],
+    )
+    assert res.status_code == 200, res.text
+
+    everything = await client.get(f"{API}/buyer/rfqs/", params={"tab": "all", "page_size": 100}, headers=buyer_auth["headers"])
+    assert rfq_id not in [r["id"] for r in everything.json()["items"]]
+
+    archive = await client.get(
+        f"{API}/buyer/rfqs/", params={"tab": "closed", "q": "Archive after moderation", "page_size": 100},
+        headers=buyer_auth["headers"],
+    )
+    assert archive.status_code == 200, archive.text
+    found = next(r for r in archive.json()["items"] if r["id"] == rfq_id)
+    assert found["status"] == "archived"
+    assert found["moderation_reason"] == "Запрещённый товар"
+    assert found["moderated_at"]

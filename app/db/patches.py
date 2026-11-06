@@ -738,4 +738,12 @@ COMPAT_PATCHES = [
     "ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS bank VARCHAR(20);",
     "UPDATE withdrawals SET bank = 'alif' WHERE bank IS NULL;",
     "CREATE INDEX IF NOT EXISTS ix_withdrawals_bank ON withdrawals (bank);",
+    # Why a moderator took an RFQ off the board; shown to the buyer in the archive.
+    "ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS moderation_reason TEXT;",
+    "ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS moderated_at TIMESTAMPTZ;",
+    # Reliability mark set by an admin; NULL means "computed from deals".
+    "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override VARCHAR(16);",
+    "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override_reason TEXT;",
+    "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override_by INTEGER REFERENCES users(id) ON DELETE SET NULL;",
+    "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override_at TIMESTAMPTZ;",
 ]

@@ -28,6 +28,8 @@ RFQ_COLUMNS = """
     r.team_size_required,
     r.experience_required,
     r.catalog_item_id,
+    r.moderation_reason,
+    r.moderated_at,
     r.created_at,
     r.updated_at
 """
@@ -185,6 +187,8 @@ def rfq_to_response(
         "invited_supplier_ids": list(invited_ids or []),
         "catalog_item_id": row.get("catalog_item_id"),
         "is_catalog_offer": row.get("catalog_item_id") is not None,
+        "moderation_reason": row.get("moderation_reason"),
+        "moderated_at": row.get("moderated_at"),
     }
     if include_buyer:
         base["buyer"] = buyer_summary_from_row(row)

@@ -1,5 +1,7 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.permissions import ensure_permission
+from app.modules.auth.services.common import block_message
+from app.modules.notifications.ws_manager import notification_ws_manager
 from app.modules.admin.services.chats import CHAT_RISK_RE
 from app.modules.admin.services.common import (
     STAFF_RANK,
@@ -567,6 +569,10 @@ class AdminUsersMixin:
                     "permanent": permanent if status_value == "blocked" else None,
                 },
             )
+        if bump_sessions:
+            await notification_ws_manager.end_sessions(
+                user_id, "blocked", block_message(dict(updated))
+            )
         return {
             "id": updated["id"],
             "email": updated["email"],
@@ -614,6 +620,9 @@ class AdminUsersMixin:
                 user_id,
                 {"token_version": int(updated["token_version"] or 0)},
             )
+        await notification_ws_manager.end_sessions(
+            user_id, "revoked", "Администратор завершил ваш сеанс. Войдите снова."
+        )
         return {
             "user_id": updated["id"],
             "token_version": int(updated["token_version"] or 0),
