@@ -1,6 +1,7 @@
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.pagination import build_page, fetch_page
 from app.modules.proposals.services.common import (
+    ACCEPTABLE_RFQ_STATUSES,
     PROPOSAL_SELECT,
     assert_chat_access,
     load_proposal_context,
@@ -9,6 +10,34 @@ from app.modules.proposals.services.common import (
 )
 from app.modules.rfqs.services.common import load_rfq_row
 from app.utils.affiliation import PROPOSAL_MESSAGE_AFFILIATION
+
+
+def proposal_outcome(proposal: dict, rfq: dict | None, winner: dict | None) -> dict:
+    """Where a supplier's proposal stands, in the words the supplier needs.
+
+    waiting   – the buyer has not chosen anyone yet;
+    your_move – a catalog offer waits for the supplier's answer;
+    won       – the buyer chose this proposal (contract_id opens the deal);
+    lost      – the buyer chose another supplier (winner_name says whom);
+    rejected  – the buyer declined this proposal and chose no one yet;
+    withdrawn – the supplier took it back;
+    closed    – the request closed without choosing anyone.
+    """
+    if winner is not None:
+        if winner["proposal_id"] == proposal["id"]:
+            return {"kind": "won", "contract_id": winner["contract_id"]}
+        return {"kind": "lost", "winner_name": winner["name"]}
+    status = proposal["status"]
+    if status == "withdrawn":
+        return {"kind": "withdrawn"}
+    if status == "rejected":
+        return {"kind": "rejected"}
+    if status == "pending_supplier":
+        return {"kind": "your_move"}
+    # The buyer can still choose exactly while a proposal could be accepted.
+    if status == "archived" or (rfq is not None and rfq["status"] not in ACCEPTABLE_RFQ_STATUSES):
+        return {"kind": "closed"}
+    return {"kind": "waiting"}
 
 
 def _thread_from_row(row) -> dict:
@@ -116,15 +145,15 @@ class ProposalReadMixin:
         page_size: int = 20,
         status: str | None = None,
     ) -> dict:
+        # Every proposal the supplier sent, won and lost included: closing a
+        # request archives the others, and they must not just disappear.
         filters = ["p.supplier_actor_id = $1"]
         params: list = [supplier_id]
         if status:
             params.append(status)
             filters.append(f"p.status::text = ${len(params)}")
-        else:
-            filters.append("p.status::text NOT IN ('accepted', 'archived')")
         async with self.connection() as conn:
-            return await self._page_proposals(
+            result = await self._page_proposals(
                 conn,
                 " AND ".join(filters),
                 params,
@@ -132,6 +161,63 @@ class ProposalReadMixin:
                 page_size,
                 actor_role="buyer",
             )
+            await self._attach_outcomes(conn, result["items"])
+            return result
+
+    async def _attach_outcomes(self, conn, items: list[dict]) -> None:
+        """Adds the request (title, status, deadline) and the outcome to each proposal."""
+        rfq_ids = list({item["rfq_id"] for item in items})
+        if not rfq_ids:
+            return
+        rfqs = {
+            row["id"]: dict(row)
+            for row in await conn.fetch(
+                """
+                SELECT id, title, status::text AS status, deadline
+                FROM rfqs
+                WHERE id = ANY($1::varchar[])
+                """,
+                rfq_ids,
+            )
+        }
+        # The chosen proposal of each request: its supplier's public name and the deal.
+        winners = {
+            row["rfq_id"]: dict(row)
+            for row in await conn.fetch(
+                """
+                SELECT DISTINCT ON (p.rfq_id)
+                    p.rfq_id,
+                    p.id AS proposal_id,
+                    COALESCE(
+                        NULLIF(sc.title, ''),
+                        NULLIF(sa.display_name, ''),
+                        'Исполнитель'
+                    ) AS name,
+                    c.id AS contract_id
+                FROM proposals p
+                JOIN actors sa ON sa.id = p.supplier_actor_id
+                LEFT JOIN companies sc ON sc.id = sa.company_id
+                LEFT JOIN contracts c ON c.proposal_id = p.id
+                WHERE p.rfq_id = ANY($1::varchar[])
+                  AND p.status::text = 'accepted'
+                ORDER BY p.rfq_id, p.id
+                """,
+                rfq_ids,
+            )
+        }
+        for item in items:
+            rfq = rfqs.get(item["rfq_id"])
+            item["rfq_summary"] = (
+                {
+                    "id": rfq["id"],
+                    "title": rfq["title"],
+                    "status": rfq["status"],
+                    "deadline": rfq["deadline"],
+                }
+                if rfq
+                else None
+            )
+            item["outcome"] = proposal_outcome(item, rfq, winners.get(item["rfq_id"]))
 
     async def list_messages(self, proposal_id: int, actor_id: int, as_buyer: bool) -> list:
         async with self.connection() as conn:
