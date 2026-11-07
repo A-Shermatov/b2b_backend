@@ -16,9 +16,19 @@ class AdminSubscriptionState(BaseModel):
     is_active: bool
 
 
+class AdminMarkProfile(BaseModel):
+    actor_id: int
+    side: str
+    display_name: str
+
+
 class AdminSupplierMark(BaseModel):
     actor_id: int
     display_name: str
+    # Roles the mark shows on: "supplier", "buyer".
+    sides: list[str] = []
+    # Every profile of the owner (own and company ones) that shows the mark.
+    profiles: list[AdminMarkProfile] = []
     tier_auto: str
     tier_override: str | None = None
     tier: str

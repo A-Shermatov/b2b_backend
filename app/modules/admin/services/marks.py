@@ -1,14 +1,19 @@
-"""Manual subscription plans and reliability marks set by an admin."""
+"""Manual subscription plans and reliability marks set by an admin.
+
+A reliability mark belongs to a party: one user with their own profiles and
+every company they own. It shows on all of them, buying and selling alike.
+"""
 
 from datetime import datetime, timedelta, timezone
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import actor_id_of, log_admin
-from app.modules.companies.services.common import row_to_public_supplier
-from app.modules.companies.services.read import SUPPLIER_SELECT
+from app.modules.companies.services.common import row_to_public_buyer, row_to_public_supplier
+from app.modules.companies.services.read import BUYER_SELECT, SUPPLIER_SELECT
 from app.modules.subscription.services.common import PAID_PLANS, is_active_plan
-from app.modules.trust.levels import TIER_LABELS_RU
+from app.modules.trust.levels import TIER_LABELS_RU, TIER_ORDER
+from app.modules.trust.party import party_actor_ids_sql, party_owner_sql
 
 PLAN_CHOICES = (*PAID_PLANS, "none")
 REPUTATION_CHOICES = ("auto", *TIER_LABELS_RU)
@@ -28,42 +33,69 @@ class AdminMarksMixin:
         until = row["active_until"] if row else None
         return {"plan": plan, "active_until": until, "is_active": is_active_plan(plan, until)}
 
-    async def _supplier_marks(self, conn, where: str, arg: int) -> list[dict]:
-        actors = await conn.fetch(
-            f"""
-            SELECT a.id, a.reputation_override, a.reputation_override_reason, a.reputation_override_at
+    async def _computed_tier(self, conn, actor_id: int, side: str) -> tuple[str, str | None]:
+        """(mark from deals and reviews, ignoring the admin's, public name) for one actor."""
+        select, shape = (SUPPLIER_SELECT, row_to_public_supplier) if side == "supplier" else (
+            BUYER_SELECT,
+            row_to_public_buyer,
+        )
+        row = await conn.fetchrow(select + " AND a.id = $1", actor_id)
+        if row is None:
+            # Blocked owner or company: not public, the mark is still editable.
+            return "none", None
+        data = dict(row)
+        data["party_override"] = None
+        public = shape(data)
+        return public.reputation_tier, public.display_name
+
+    async def _party_marks(self, conn, owner_id: int) -> list[dict]:
+        """The owner's one mark, with every profile it shows on (empty without profiles)."""
+        members = await conn.fetch(
+            """
+            SELECT a.id, a.side::text AS side, a.display_name,
+                   a.reputation_override, a.reputation_override_reason, a.reputation_override_at
             FROM actors a
             LEFT JOIN companies c ON c.id = a.company_id
-            WHERE a.side::text = 'supplier' AND a.is_active = TRUE AND {where}
-            ORDER BY a.id
+            WHERE a.is_active = TRUE AND COALESCE(c.owner_id, a.user_id) = $1
+            ORDER BY a.company_id NULLS FIRST, a.side DESC, a.id
             """,
-            arg,
+            owner_id,
         )
-        result = []
-        for actor in actors:
-            row = await conn.fetchrow(SUPPLIER_SELECT + " AND a.id = $1", actor["id"])
-            if row is None:
-                # Blocked owner or company: not public, the mark is still editable.
-                name = await conn.fetchval("SELECT display_name FROM actors WHERE id = $1", actor["id"])
-                auto = "none"
-            else:
-                data = dict(row)
-                data["reputation_override"] = None
-                auto = row_to_public_supplier(data).reputation_tier
-                name = row_to_public_supplier(data).display_name
-            override = actor["reputation_override"]
-            result.append(
+        if not members:
+            return []
+        profiles = []
+        for member in members:
+            auto, public_name = await self._computed_tier(conn, member["id"], member["side"])
+            profiles.append(
                 {
-                    "actor_id": actor["id"],
-                    "display_name": name or f"Поставщик #{actor['id']}",
+                    "actor_id": member["id"],
+                    "side": member["side"],
+                    "display_name": public_name or member["display_name"] or f"Профиль #{member['id']}",
                     "tier_auto": auto,
-                    "tier_override": override,
-                    "tier": override or auto,
-                    "override_reason": actor["reputation_override_reason"],
-                    "override_at": actor["reputation_override_at"],
                 }
             )
-        return result
+        # The selling profile is the one buyers judge; fall back to the buying one.
+        lead = next((p for p in profiles if p["side"] == "supplier"), profiles[0])
+        auto = min((p["tier_auto"] for p in profiles), key=TIER_ORDER.index)
+        pinned = max(
+            (m for m in members if m["reputation_override"]),
+            key=lambda m: (m["reputation_override_at"] is not None, m["reputation_override_at"] or 0, -m["id"]),
+            default=None,
+        )
+        override = pinned["reputation_override"] if pinned else None
+        return [
+            {
+                "actor_id": lead["actor_id"],
+                "display_name": lead["display_name"],
+                "sides": sorted({p["side"] for p in profiles}, reverse=True),
+                "profiles": [{k: p[k] for k in ("actor_id", "side", "display_name")} for p in profiles],
+                "tier_auto": auto,
+                "tier_override": override,
+                "tier": override or auto,
+                "override_reason": pinned["reputation_override_reason"] if pinned else None,
+                "override_at": pinned["reputation_override_at"] if pinned else None,
+            }
+        ]
 
     async def get_user_marks(self, user_id: int, current_user) -> dict:
         ensure_permission(current_user, "admin_users.view")
@@ -73,9 +105,7 @@ class AdminMarksMixin:
             return {
                 "user_id": user_id,
                 "subscription": await self._subscription_of(conn, user_id),
-                "suppliers": await self._supplier_marks(
-                    conn, "(a.user_id = $1 AND a.company_id IS NULL OR c.owner_id = $1)", user_id
-                ),
+                "suppliers": await self._party_marks(conn, user_id),
             }
 
     async def get_company_marks(self, company_id: int, current_user) -> dict:
@@ -87,7 +117,7 @@ class AdminMarksMixin:
             return {
                 "user_id": owner_id,
                 "subscription": await self._subscription_of(conn, owner_id),
-                "suppliers": await self._supplier_marks(conn, "a.company_id = $1", company_id),
+                "suppliers": await self._party_marks(conn, owner_id),
             }
 
     async def set_user_subscription(
@@ -134,27 +164,32 @@ class AdminMarksMixin:
     async def set_supplier_reputation(
         self, actor_id: int, tier: str, current_user, *, reason: str | None = None
     ) -> dict:
-        """Pin a reliability mark ('none' removes it) or return to the computed one ('auto')."""
+        """Pin a mark ('none' removes it) or return to the computed one ('auto').
+
+        Applies to the whole party of the actor, so both profiles show it.
+        """
         ensure_permission(current_user, "admin_companies.update")
         if tier not in REPUTATION_CHOICES:
             raise ValidationError("Неизвестный уровень знака")
         override = None if tier == "auto" else tier
         async with self.connection() as conn:
             actor = await conn.fetchrow(
-                "SELECT id, side::text AS side, reputation_override FROM actors WHERE id = $1",
+                f"SELECT a.id, a.reputation_override, {party_owner_sql('a')} AS owner_id FROM actors a WHERE a.id = $1",
                 actor_id,
             )
-            if not actor or actor["side"] != "supplier":
-                raise NotFoundError("Supplier not found")
+            if not actor:
+                raise NotFoundError("Profile not found")
             await conn.execute(
-                """
+                f"""
                 UPDATE actors
                 SET reputation_override = $2::varchar,
                     reputation_override_reason = $3,
                     reputation_override_by = $4,
                     reputation_override_at = CASE WHEN $2::varchar IS NULL THEN NULL ELSE NOW() END,
                     updated_at = NOW()
-                WHERE id = $1
+                WHERE id IN (SELECT a.id FROM actors me, LATERAL (
+                    SELECT pa.id FROM actors pa WHERE pa.id IN {party_actor_ids_sql("me")}
+                ) a WHERE me.id = $1)
                 """,
                 actor_id,
                 override,
@@ -169,5 +204,7 @@ class AdminMarksMixin:
                 actor_id,
                 {"tier": tier, "previous": actor["reputation_override"] or "auto", "reason": _clean(reason)},
             )
-            marks = await self._supplier_marks(conn, "a.id = $1", actor_id)
+            marks = await self._party_marks(conn, actor["owner_id"]) if actor["owner_id"] else []
+        if not marks:
+            raise NotFoundError("Profile not found")
         return marks[0]

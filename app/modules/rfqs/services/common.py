@@ -1,5 +1,7 @@
 from app.core.exceptions import NotFoundError
 from app.modules.notifications.services import NotificationService
+from app.modules.subscription.services.common import active_plan_sql
+from app.modules.trust.party import party_tier, party_reputation_columns
 from app.modules.verification.common import actor_verification_sql
 from app.utils.storage import public_file_url
 
@@ -45,7 +47,9 @@ BUYER_COLUMNS = f"""
     c.legal_name AS buyer_legal_name,
     c.description AS buyer_description,
     c.website AS buyer_website,
-    cs.completed_contracts AS buyer_completed_contracts
+    cs.completed_contracts AS buyer_completed_contracts,
+    {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS buyer_subscription_plan,
+    {party_reputation_columns("a")}
 """
 
 CLOSED_RFQ_STATUSES = [
@@ -121,8 +125,14 @@ RFQ_UPDATABLE_SERVICE = {
 def buyer_summary_from_row(row) -> dict | None:
     if row["buyer_id"] is None:
         return None
+    # The same marks the buyer has on its public profile (both roles count).
+    marks = {
+        "reputation_tier": party_tier(row, row["buyer_verification_status"]) or "none",
+        "subscription_plan": row.get("buyer_subscription_plan"),
+    }
     if row["buyer_kind"] == "company":
         return {
+            **marks,
             "id": row["buyer_id"],
             "kind": row["buyer_kind"],
             "display_name": row["buyer_display_name"],
@@ -136,6 +146,7 @@ def buyer_summary_from_row(row) -> dict | None:
             "completed_contracts": int(row["buyer_completed_contracts"] or 0),
         }
     return {
+        **marks,
         "id": row["buyer_id"],
         "kind": row["buyer_kind"],
         "display_name": row["buyer_display_name"],

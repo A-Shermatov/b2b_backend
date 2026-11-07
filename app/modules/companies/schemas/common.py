@@ -346,3 +346,5 @@ class PublicBuyer(BaseModel):
     active_contracts: int = 0
     disputed_contracts: int = 0
     success_rate: float | None = None
+    # Active paid plan of the owner, shown next to the name on both profiles.
+    subscription_plan: str | None = None
