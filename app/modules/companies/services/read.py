@@ -14,6 +14,7 @@ from app.modules.companies.services.common import (
     to_public_company_detail,
 )
 from app.modules.subscription.services.common import active_plan_sql
+from app.modules.trust.party import party_reputation_columns
 from app.modules.verification.common import actor_verification_sql
 from app.db.sql import like_contains
 
@@ -40,7 +41,7 @@ SUPPLIER_SELECT = f"""
             AND (c.vip_until IS NULL OR c.vip_until > NOW())
         ) AS vip,
         {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS subscription_plan,
-        a.reputation_override,
+        {party_reputation_columns("a")},
         cs.average_rating,
         cp.industries,
         u.first_name,
@@ -114,6 +115,8 @@ BUYER_SELECT = f"""
         c.legal_name,
         c.rating,
         {ACTOR_VERIFICATION_SQL} AS verification_status,
+        {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS subscription_plan,
+        {party_reputation_columns("a")},
         cs.average_rating,
         u.first_name,
         u.last_name,

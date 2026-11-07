@@ -278,15 +278,11 @@ def _public_supplier_rating(row) -> float:
     return round(float(row["average_rating"] or row["rating"] or 0), 2)
 
 
-def apply_reputation_override(row, computed: str) -> str:
-    """An admin-set mark (or an admin-removed one) replaces the computed tier."""
-    from app.modules.trust.levels import TIER_LABELS_RU
+def _party_or_side_tier(row, side_tier: str, verification: str | None, rating: float) -> str:
+    """The party's mark (both roles, admin override) when the row carries it."""
+    from app.modules.trust.party import party_tier
 
-    try:
-        override = row["reputation_override"]
-    except (KeyError, IndexError):
-        return computed
-    return override if override in TIER_LABELS_RU else computed
+    return party_tier(row, verification, fallback_rating=rating) or side_tier
 
 
 def row_to_public_supplier(row) -> PublicSupplier:
@@ -302,7 +298,7 @@ def row_to_public_supplier(row) -> PublicSupplier:
     verification = row["verification_status"] or (
         "pending" if row["kind"] == "company" and row["company_id"] else "unverified"
     )
-    reputation = apply_reputation_override(
+    reputation = _party_or_side_tier(
         row,
         _reputation_tier(
             verification_status=verification,
@@ -310,6 +306,8 @@ def row_to_public_supplier(row) -> PublicSupplier:
             rating=rating,
             success_rate=success_rate,
         ),
+        verification,
+        rating,
     )
     if row["kind"] == "company" and row["company_id"]:
         return PublicSupplier(
@@ -378,12 +376,18 @@ def row_to_public_buyer(row) -> PublicBuyer:
     verification = row["verification_status"] or (
         "pending" if row["kind"] == "company" and row["company_id"] else "unverified"
     )
-    reputation = _reputation_tier(
-        verification_status=verification,
-        completed=completed,
-        rating=rating,
-        success_rate=success_rate,
+    reputation = _party_or_side_tier(
+        row,
+        _reputation_tier(
+            verification_status=verification,
+            completed=completed,
+            rating=rating,
+            success_rate=success_rate,
+        ),
+        verification,
+        rating,
     )
+    plan = row.get("subscription_plan") if "subscription_plan" in row.keys() else None
     if row["kind"] == "company" and row["company_id"]:
         return PublicBuyer(
             actor_id=row["id"],
@@ -404,6 +408,7 @@ def row_to_public_buyer(row) -> PublicBuyer:
             active_contracts=active,
             disputed_contracts=disputed,
             success_rate=success_rate,
+            subscription_plan=plan,
         )
     display = row["display_name"]
     if not display:
@@ -428,4 +433,5 @@ def row_to_public_buyer(row) -> PublicBuyer:
         active_contracts=active,
         disputed_contracts=disputed,
         success_rate=success_rate,
+        subscription_plan=plan,
     )
