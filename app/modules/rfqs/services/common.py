@@ -20,6 +20,7 @@ RFQ_COLUMNS = """
     r.deadline,
     r.visibility::text AS visibility,
     r.status::text AS status,
+    r.payment_mode,
     r.quantity,
     r.delivery_country,
     r.delivery_city,
@@ -104,6 +105,7 @@ RFQ_UPDATABLE_COMMON = {
     "budget_to",
     "currency",
     "deadline",
+    "payment_mode",
 }
 
 RFQ_UPDATABLE_PRODUCT = {
@@ -192,6 +194,7 @@ def rfq_to_response(
         "deadline": row["deadline"],
         "visibility": row["visibility"],
         "status": row["status"],
+        "payment_mode": row.get("payment_mode") or "escrow",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "attachments": [attachment_to_dict(item) for item in (attachments or [])],

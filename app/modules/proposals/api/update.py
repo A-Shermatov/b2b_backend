@@ -47,6 +47,7 @@ async def accept_proposal(
         payment_type=payment_type,
         milestones=milestones,
         buyer_user_id=ctx.user.id,
+        payment_mode=data.payment_mode if data else None,
     )
 
 

@@ -129,7 +129,36 @@ class PaymentUpdateMixin:
                 if row["status"] not in FUNDABLE_MILESTONE_STATUSES:
                     raise ConflictError("Milestone cannot be funded")
                 await self._apply_milestone_funded(conn, row)
+        if await self.release_if_direct(milestone_id):
+            return {"id": milestone_id, "status": "released"}
         return {"id": milestone_id, "status": "funded"}
+
+    async def release_if_direct(self, milestone_id: int) -> bool:
+        """Pay the supplier at once when the buyer chose to pay without the bank hold.
+
+        Runs after the payment is recorded. A failed payout leaves the milestone
+        funded, so acceptance of the work still releases it the usual way.
+        """
+        async with self.connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT m.status::text AS status, c.payment_mode, c.buyer_actor_id
+                FROM payment_milestones m
+                JOIN contracts c ON c.id = m.contract_id
+                WHERE m.id = $1
+                """,
+                milestone_id,
+            )
+        if not row or row["payment_mode"] != "direct" or row["status"] != "funded":
+            return False
+        try:
+            result = await self.approve_milestone(milestone_id, row["buyer_actor_id"])
+        except Exception:
+            logger.exception(
+                "Direct payout of milestone %s failed; it stays funded", milestone_id
+            )
+            return False
+        return result.get("status") == "released"
 
     async def _ensure_milestone_approvable(self, conn, row, buyer_id: int) -> None:
         if row["buyer_actor_id"] != buyer_id:

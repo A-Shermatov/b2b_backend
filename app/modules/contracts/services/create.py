@@ -43,9 +43,16 @@ class ContractCreateMixin:
         payment_type: PaymentType | None = None,
         milestones: list[dict] | None = None,
         buyer_user_id: int | None = None,
+        payment_mode: str = "escrow",
     ) -> dict:
         data = proposal_fields(proposal)
-        ptype = enum_value(payment_type) if payment_type else PaymentType.full_postpayment.value
+        mode = enum_value(payment_mode) if payment_mode else "escrow"
+        if mode == "direct":
+            # Paying at once means one payment up front that goes straight to the supplier.
+            ptype = PaymentType.full_prepayment.value
+            milestones = None
+        else:
+            ptype = enum_value(payment_type) if payment_type else PaymentType.full_postpayment.value
         start_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         due_date = resolve_contract_due_date(
             start_date,
@@ -65,13 +72,15 @@ class ContractCreateMixin:
                     rfq_id, proposal_id, buyer_actor_id, supplier_actor_id,
                     title, description, agreed_amount, currency, start_date, due_date,
                     payment_type, status, created_at,
-                    commission_amount, commission_percent, commission_min
+                    commission_amount, commission_percent, commission_min,
+                    payment_mode
                 )
                 VALUES (
                     $1, $2, $3, $4,
                     $5, $6, $7, $8::contract_currency, $9, $10,
                     $11::payment_type, 'pending_payment'::contract_status, NOW(),
-                    $12, $13, $14
+                    $12, $13, $14,
+                    $15
                 )
                 RETURNING id, agreed_amount
                 """,
@@ -89,6 +98,7 @@ class ContractCreateMixin:
                 quote.amount,
                 quote.percent,
                 quote.minimum,
+                mode,
             )
             plan = await conn.fetchrow(
                 """
@@ -154,6 +164,7 @@ class ContractCreateMixin:
                     "amount": contract["agreed_amount"],
                     "currency": data["currency"],
                     "payment_type": ptype,
+                    "payment_mode": mode,
                     "milestones": len(plan_milestones),
                     "commission_amount": quote.amount,
                 },

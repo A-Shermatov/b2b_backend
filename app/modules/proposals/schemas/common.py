@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -107,8 +108,10 @@ class ProposalMessageThread(BaseModel):
 
 
 class ProposalAcceptRequest(BaseModel):
-    payment_type: PaymentType
+    payment_type: PaymentType = PaymentType.full_postpayment
     milestones: list[MilestoneInput] | None = Field(default=None, max_length=20)
+    # None keeps what the buyer chose in the request.
+    payment_mode: Literal["escrow", "direct"] | None = None
 
     @model_validator(mode="after")
     def _validate_milestones(self) -> "ProposalAcceptRequest":

@@ -6,6 +6,7 @@ from fastapi import Depends
 from app.core.pagination import Page
 from app.deps import PaginationDep
 from app.deps import SupplierContext, require_supplier_ctx
+from app.modules.reviews.schemas import ItemReviewEligibility, ItemReviewsPage
 from app.modules.reviews.api.common import (
     BuyerContext,
     CompanyService,
@@ -17,6 +18,26 @@ from app.modules.reviews.api.common import (
     require_buyer_ctx,
     supplier_router,
 )
+
+
+@buyer_router.get(
+    "/catalog-items/{item_id}/eligibility", response_model=ItemReviewEligibility
+)
+async def buyer_item_review_eligibility(
+    item_id: int,
+    ctx: Annotated[BuyerContext, Depends(require_buyer_ctx)],
+    db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+):
+    return await ReviewService(db).item_review_eligibility(item_id, ctx.actor.id)
+
+
+@public_router.get("/catalog/items/{item_id}/reviews", response_model=ItemReviewsPage)
+async def catalog_item_reviews(
+    item_id: int,
+    db: Annotated[asyncpg.Connection, Depends(raw_db_dependency)],
+    pagination: PaginationDep,
+):
+    return await ReviewService(db).list_for_item(item_id, pagination.page, pagination.page_size)
 
 
 @buyer_router.get("/", response_model=Page[ReviewResponse])

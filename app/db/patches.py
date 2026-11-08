@@ -746,4 +746,41 @@ COMPAT_PATCHES = [
     "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override_reason TEXT;",
     "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override_by INTEGER REFERENCES users(id) ON DELETE SET NULL;",
     "ALTER TABLE actors ADD COLUMN IF NOT EXISTS reputation_override_at TIMESTAMPTZ;",
+    # How the buyer pays: "escrow" keeps the money in the bank until acceptance,
+    # "direct" sends it to the supplier as soon as it is paid.
+    "ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(10) NOT NULL DEFAULT 'escrow';",
+    "ALTER TABLE contracts ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(10) NOT NULL DEFAULT 'escrow';",
+    """
+    DO $$
+    BEGIN
+        ALTER TABLE rfqs ADD CONSTRAINT rfqs_payment_mode_check
+            CHECK (payment_mode IN ('escrow', 'direct'));
+    EXCEPTION
+        WHEN duplicate_object THEN NULL;
+    END
+    $$;
+    """,
+    """
+    DO $$
+    BEGIN
+        ALTER TABLE contracts ADD CONSTRAINT contracts_payment_mode_check
+            CHECK (payment_mode IN ('escrow', 'direct'));
+    EXCEPTION
+        WHEN duplicate_object THEN NULL;
+    END
+    $$;
+    """,
+    # A buyer's review of a deal that came from the catalog also rates that item.
+    "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS catalog_item_id INTEGER REFERENCES catalog_items(id) ON DELETE SET NULL;",
+    "CREATE INDEX IF NOT EXISTS ix_reviews_catalog_item ON reviews (catalog_item_id, created_at DESC) WHERE catalog_item_id IS NOT NULL;",
+    """
+    UPDATE reviews r
+    SET catalog_item_id = rf.catalog_item_id
+    FROM contracts c
+    JOIN rfqs rf ON rf.id = c.rfq_id
+    WHERE c.id = r.contract_id
+      AND r.reviewer_actor_id = c.buyer_actor_id
+      AND r.catalog_item_id IS NULL
+      AND rf.catalog_item_id IS NOT NULL;
+    """,
 ]

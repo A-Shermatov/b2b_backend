@@ -34,11 +34,14 @@ class PurchaseApprovalDecide(BaseModel):
 class CartCheckoutItem(BaseModel):
     item_id: int = Field(gt=0)
     qty: int = Field(default=1, ge=1, le=9999)
+    # buy: at the published price; quote: ask the supplier to name the price.
+    mode: Literal["buy", "quote"] = "buy"
 
 
 class CartCheckoutRequest(BaseModel):
     items: list[CartCheckoutItem] = Field(min_length=1, max_length=50)
     idempotency_key: str | None = Field(default=None, max_length=64)
+    payment_mode: Literal["escrow", "direct"] = "escrow"
 
 
 class CartCheckoutResponse(BaseModel):

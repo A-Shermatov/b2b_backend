@@ -136,6 +136,13 @@ class PaymentType(str, enum.Enum):
     full_postpayment = "full_postpayment"
 
 
+class PaymentMode(str, enum.Enum):
+    """Escrow holds the money in the bank until acceptance; direct pays the supplier at once."""
+
+    escrow = "escrow"
+    direct = "direct"
+
+
 class ContractStatus(str, enum.Enum):
     pending_payment = "pending_payment"
     active = "active"

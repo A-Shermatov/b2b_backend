@@ -11,7 +11,7 @@ from app.modules.approvals.schemas import (
 )
 from app.modules.catalog.schemas.offers import CatalogOfferCreate
 from app.modules.catalog.services import CatalogItemService
-from app.modules.catalog.services.offers import resolve_list_price
+from app.modules.catalog.services.offers import minimum_order, unit_price_for_qty
 
 ROLE_LABELS = {
     "director": "Руководитель",
@@ -139,7 +139,7 @@ class ApprovalService:
         return build_page([_row_to_schema(row) for row in rows], total, page, page_size)
 
     async def _load_priced_lines(
-        self, conn, items: list[CartCheckoutItem]
+        self, conn, items: list[CartCheckoutItem], payment_mode: str = "escrow"
     ) -> tuple[list[dict], float, str]:
         lines: list[dict] = []
         total = 0.0
@@ -165,19 +165,40 @@ class ApprovalService:
                 """,
                 entry.item_id,
             )
-            list_price = resolve_list_price(pricing)
-            if list_price is None:
+            if entry.qty < minimum_order(pricing):
                 raise ValidationError(
-                    f"У позиции «{item['title']}» нет опубликованной цены"
+                    f"«{item['title']}»: минимальный заказ — {minimum_order(pricing)} шт."
                 )
-            unit_price, currency = list_price
-            line_total = float(unit_price) * entry.qty
+            if entry.mode == "quote":
+                # The supplier names the price; nothing is counted in the total yet.
+                lines.append(
+                    {
+                        "item_id": entry.item_id,
+                        "qty": entry.qty,
+                        "title": item["title"],
+                        "mode": "quote",
+                        "payment_mode": payment_mode,
+                        "unit_price": None,
+                        "line_total": 0.0,
+                        "currency": pricing["currency"] if pricing else currency,
+                    }
+                )
+                continue
+            unit = unit_price_for_qty(pricing, entry.qty)
+            if unit is None:
+                raise ValidationError(
+                    f"У позиции «{item['title']}» нет опубликованной цены — запросите цену"
+                )
+            unit_price, currency = unit
+            line_total = round(float(unit_price) * entry.qty, 2)
             total += line_total
             lines.append(
                 {
                     "item_id": entry.item_id,
                     "qty": entry.qty,
                     "title": item["title"],
+                    "mode": "buy",
+                    "payment_mode": payment_mode,
                     "unit_price": float(unit_price),
                     "line_total": line_total,
                     "currency": currency,
@@ -196,16 +217,18 @@ class ApprovalService:
         catalog = CatalogItemService()
         for line in lines:
             qty = int(line.get("qty") or 1)
-            message = (
-                f"Покупка из корзины, количество: {qty}"
-                if qty > 1
-                else "Покупка из корзины с гарантией по опубликованной цене"
-            )
+            kind = "quote" if line.get("mode") == "quote" else "buy"
+            payment_mode = "direct" if line.get("payment_mode") == "direct" else "escrow"
             offer = await catalog.create_offer(
                 int(line["item_id"]),
                 buyer_actor_id,
                 str(user_id),
-                CatalogOfferCreate(kind="buy", message=message),
+                CatalogOfferCreate(
+                    kind=kind,
+                    qty=qty,
+                    payment_mode=payment_mode,
+                    message="Оформлено через корзину",
+                ),
                 skip_approval_gate=True,
             )
             rfq_ids.append(offer.rfq_id)
@@ -285,6 +308,7 @@ class ApprovalService:
         company_role: str | None,
         items: list[CartCheckoutItem],
         idempotency_key: str | None,
+        payment_mode: str = "escrow",
     ) -> CartCheckoutResponse:
         if actor_kind == "company" and not company_role:
             raise ForbiddenError("Company role required")
@@ -317,7 +341,9 @@ class ApprovalService:
                         and bool(approval.rfq_ids),
                     )
 
-            lines, total, currency = await self._load_priced_lines(conn, items)
+            lines, total, currency = await self._load_priced_lines(
+                conn, items, payment_mode
+            )
 
         title = (
             lines[0]["title"]

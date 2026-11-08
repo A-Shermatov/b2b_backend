@@ -82,3 +82,30 @@ class ReviewResponse(BaseModel):
     reviewer: ReviewPartySchema | None = None
     target: ReviewPartySchema | None = None
     author: ReviewAuthorSchema | None = None
+    # Set when the deal came from this catalog item: the review rates it too.
+    catalog_item_id: int | None = None
+
+
+class ItemReviewSummary(BaseModel):
+    """How buyers rated one catalog item: average, count and stars 5..1."""
+
+    average: float = 0.0
+    count: int = 0
+    distribution: dict[int, int] = Field(default_factory=dict)
+
+
+class ItemReviewsPage(BaseModel):
+    items: list[ReviewResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    summary: ItemReviewSummary
+
+
+class ItemReviewEligibility(BaseModel):
+    """The finished deal for this item the buyer can still review, if any."""
+
+    contract_id: int | None = None
+    target_actor_id: int | None = None
+    already_reviewed: bool = False

@@ -251,6 +251,15 @@ class PaymentGatewayMixin:
         reason = result.pop("refund_reason", None)
         if result.pop("refund_required", False):
             await self._refund_late_payment(order_id, reason or "Сделка отменена до оплаты")
+        elif status.strip().lower() in HOLD_STATUSES:
+            # A deal paid "at once" goes to the supplier as soon as the bank holds it.
+            async with self.connection() as conn:
+                milestone_id = await conn.fetchval(
+                    "SELECT milestone_id FROM payment_gateway_transactions WHERE order_id = $1",
+                    order_id,
+                )
+            if milestone_id:
+                await self.release_if_direct(milestone_id)
         return result
 
     async def _apply_gateway_status(

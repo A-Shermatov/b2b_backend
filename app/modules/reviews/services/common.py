@@ -18,7 +18,8 @@ REVIEW_COLUMNS = """
     comment,
     created_at,
     COALESCE(helpful_count, 0) AS helpful_count,
-    author_user_id
+    author_user_id,
+    catalog_item_id
 """
 
 

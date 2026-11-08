@@ -1,4 +1,7 @@
 from app.modules.reviews.schemas.common import (
+    ItemReviewEligibility,
+    ItemReviewsPage,
+    ItemReviewSummary,
     ReviewAuthorSchema,
     ReviewCreate,
     ReviewMediaSchema,
@@ -9,6 +12,9 @@ from app.modules.reviews.schemas.common import (
 )
 
 __all__ = [
+    "ItemReviewEligibility",
+    "ItemReviewSummary",
+    "ItemReviewsPage",
     "ReviewAuthorSchema",
     "ReviewCreate",
     "ReviewMediaSchema",
