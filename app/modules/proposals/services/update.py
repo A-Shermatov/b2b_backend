@@ -250,6 +250,7 @@ class ProposalUpdateMixin:
                     payment_type=PaymentType.full_postpayment,
                     milestones=None,
                     buyer_user_id=None,
+                    payment_mode=row["rfq_payment_mode"] or "escrow",
                 )
                 await _log_transition(
                     conn,
@@ -282,6 +283,7 @@ class ProposalUpdateMixin:
         payment_type: PaymentType | None = None,
         milestones: list[dict] | None = None,
         buyer_user_id: int | None = None,
+        payment_mode: str | None = None,
     ):
         async with self.connection() as conn:
             async with conn.transaction():
@@ -346,6 +348,7 @@ class ProposalUpdateMixin:
                     payment_type=payment_type,
                     milestones=milestones,
                     buyer_user_id=buyer_user_id,
+                    payment_mode=payment_mode or row["rfq_payment_mode"] or "escrow",
                 )
                 await _log_transition(
                     conn,

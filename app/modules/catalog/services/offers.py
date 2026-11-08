@@ -36,6 +36,37 @@ def resolve_list_price(pricing) -> tuple[float, str] | None:
     return None
 
 
+def _tiers(pricing) -> list[dict]:
+    tiers = pricing["tiers"] if pricing else None
+    if isinstance(tiers, str):
+        try:
+            tiers = json.loads(tiers)
+        except json.JSONDecodeError:
+            tiers = []
+    return [t for t in (tiers or []) if t.get("price") is not None]
+
+
+def unit_price_for_qty(pricing, qty: int) -> tuple[float, str] | None:
+    """The unit price a buyer pays for `qty`: the deepest tier the amount reaches."""
+    if pricing and pricing["pricing_type"] == "tiered":
+        tiers = sorted(_tiers(pricing), key=lambda t: int(t.get("min_qty") or 1))
+        if tiers:
+            unit = float(tiers[0]["price"])
+            for tier in tiers:
+                if qty >= int(tier.get("min_qty") or 1):
+                    unit = float(tier["price"])
+            return unit, pricing["currency"]
+    return resolve_list_price(pricing)
+
+
+def minimum_order(pricing) -> int:
+    if pricing and pricing["pricing_type"] == "tiered":
+        tiers = _tiers(pricing)
+        if tiers:
+            return max(1, min(int(t.get("min_qty") or 1) for t in tiers))
+    return 1
+
+
 class CatalogOfferMixin:
     async def create_offer(
         self,
@@ -90,25 +121,46 @@ class CatalogOfferMixin:
                 """,
                 item_id,
             )
-            list_price = resolve_list_price(pricing)
-
+            qty = data.qty
+            if qty < minimum_order(pricing):
+                raise ValidationError(f"Минимальный заказ — {minimum_order(pricing)} шт.")
+            pay_label = (
+                "оплата сразу поставщику"
+                if data.payment_mode == "direct"
+                else "оплата с гарантией площадки"
+            )
+            price: float | None
             if data.kind == "buy":
-                if list_price is None:
+                unit = unit_price_for_qty(pricing, qty)
+                if unit is None:
                     raise ValidationError("У позиции нет опубликованной цены для покупки")
-                price, currency = list_price
-                if not message:
-                    message = "Запрос на покупку с гарантией по опубликованной цене"
-            else:
+                unit_price, currency = unit
+                price = round(unit_price * qty, 2)
+                order_line = f"Количество: {qty}. Цена за единицу: {unit_price:g} {currency}."
+                message = "\n".join(
+                    part
+                    for part in (
+                        f"Покупка по опубликованной цене, {pay_label}.",
+                        order_line,
+                        message,
+                    )
+                    if part
+                )
+            elif data.kind == "negotiate":
                 if data.price is None or data.price <= 0:
                     raise ValidationError("Укажите цену для торга")
                 if not message:
                     raise ValidationError("Укажите текст предложения")
                 price = float(data.price)
                 currency = pricing["currency"] if pricing else "TJS"
+            else:
+                price = None
+                currency = pricing["currency"] if pricing else "TJS"
 
-            ensure_contract_amount_allowed(
-                price, currency, await get_platform_settings(conn)
-            )
+            if price is not None:
+                ensure_contract_amount_allowed(
+                    price, currency, await get_platform_settings(conn)
+                )
 
             supplier_actor_id = item["actor_id"]
             category_id = item["category_slug"] or str(item["category_id"])
@@ -119,6 +171,12 @@ class CatalogOfferMixin:
             description = item["description"] or item["title"]
             if data.kind == "negotiate":
                 description = f"{description}\n\n—\nПредложение заказчика:\n{message}"
+            elif data.kind == "quote":
+                request = f"Количество: {qty}. Способ оплаты: {pay_label}."
+                if message:
+                    request = f"{request}\n{message}"
+                description = f"{description}\n\n—\nЗапрос цены от заказчика:\n{request}"
+            is_product = item["type"] == "product"
 
             async with conn.transaction():
                 await conn.execute(
@@ -130,16 +188,16 @@ class CatalogOfferMixin:
                         quantity, delivery_country, delivery_city, delivery_address,
                         delivery_date,
                         project_duration, start_date, team_size_required, experience_required,
-                        catalog_item_id,
+                        catalog_item_id, payment_mode,
                         created_at, updated_at
                     )
                     VALUES (
                         $1, $2, $3, $4::rfq_type, $5, $6, $7,
-                        'fixed'::budget_type, $8, NULL, $9, $10,
+                        $12::budget_type, $8, NULL, $9, $10,
                         'invited_only'::rfq_visibility, 'receiving_proposals'::rfq_status,
-                        NULL, NULL, NULL, NULL, NULL,
+                        $14, NULL, NULL, NULL, NULL,
                         NULL, NULL, NULL, NULL,
-                        $11,
+                        $11, $13,
                         NOW(), NOW()
                     )
                     """,
@@ -154,39 +212,51 @@ class CatalogOfferMixin:
                     currency,
                     deadline,
                     item_id,
+                    "open" if price is None else "fixed",
+                    data.payment_mode,
+                    qty if is_product else None,
                 )
                 await insert_invites(conn, rfq_id, [supplier_actor_id])
-                proposal = await conn.fetchrow(
-                    """
-                    INSERT INTO proposals (
-                        rfq_id, supplier_actor_id, price, currency, delivery_time,
-                        message, status, created_at
+                proposal = None
+                if data.kind != "quote":
+                    proposal = await conn.fetchrow(
+                        """
+                        INSERT INTO proposals (
+                            rfq_id, supplier_actor_id, price, currency, delivery_time,
+                            message, status, created_at
+                        )
+                        VALUES (
+                            $1, $2, $3, $4::currency, NULL, $5,
+                            'pending_supplier'::proposal_status, NOW()
+                        )
+                        RETURNING id
+                        """,
+                        rfq_id,
+                        supplier_actor_id,
+                        price,
+                        currency,
+                        message,
                     )
-                    VALUES (
-                        $1, $2, $3, $4::currency, NULL, $5,
-                        'pending_supplier'::proposal_status, NOW()
-                    )
-                    RETURNING id
-                    """,
-                    rfq_id,
-                    supplier_actor_id,
-                    price,
-                    currency,
-                    message,
-                )
 
-        kind_label = "покупку с гарантией" if data.kind == "buy" else "торг"
+        if data.kind == "quote":
+            title = "Запрос цены"
+            body = f"Заказчик просит назвать цену за «{item['title']}», количество: {qty}"
+        else:
+            title = "Запрос на покупку" if data.kind == "buy" else "Запрос на торг"
+            body = f"Заказчик предлагает {price:g} {currency} за «{item['title']}»"
         await NotificationService().notify_actor_members(
             supplier_actor_id,
             "rfq",
-            f"Запрос на {kind_label}",
-            f"Заказчик предлагает {price} {currency} за «{item['title']}»",
+            title,
+            body,
             f"/supplier/rfqs/{rfq_id}",
         )
         return CatalogOfferResponse(
             rfq_id=rfq_id,
-            proposal_id=proposal["id"],
+            proposal_id=proposal["id"] if proposal else None,
             kind=data.kind,
             price=price,
             currency=currency,
+            qty=qty,
+            payment_mode=data.payment_mode,
         )

@@ -16,9 +16,11 @@ class ReviewCreateMixin:
         async with self.conn.transaction():
             contract = await self.conn.fetchrow(
                 """
-                SELECT id, buyer_actor_id, supplier_actor_id, status::text AS status
-                FROM contracts
-                WHERE id = $1
+                SELECT c.id, c.buyer_actor_id, c.supplier_actor_id,
+                       c.status::text AS status, rf.catalog_item_id
+                FROM contracts c
+                LEFT JOIN rfqs rf ON rf.id = c.rfq_id
+                WHERE c.id = $1
                 """,
                 data.contract_id,
             )
@@ -55,9 +57,9 @@ class ReviewCreateMixin:
                     INSERT INTO reviews (
                         contract_id, reviewer_actor_id, target_actor_id,
                         rating, service_rating, delivery_rating, quality_rating,
-                        tags, comment, created_at, author_user_id
+                        tags, comment, created_at, author_user_id, catalog_item_id
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW(), $10)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, NOW(), $10, $11)
                     RETURNING {REVIEW_COLUMNS}
                     """,
                     data.contract_id,
@@ -70,6 +72,8 @@ class ReviewCreateMixin:
                     list(data.tags or []),
                     data.comment,
                     author_user_id,
+                    # Only the buyer's review rates the item that was bought.
+                    contract["catalog_item_id"] if reviewer_actor_id == buyer_id else None,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise ConflictError("Review already exists") from exc

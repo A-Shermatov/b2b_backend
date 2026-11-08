@@ -42,7 +42,7 @@ class RfqCreateMixin:
                         visibility, status,
                         quantity, delivery_country, delivery_city, delivery_address, delivery_date,
                         project_duration, start_date, team_size_required, experience_required,
-                        created_at, updated_at
+                        payment_mode, created_at, updated_at
                     )
                     VALUES (
                         $1, $2, $3, $4::rfq_type, $5, $6, $7,
@@ -50,7 +50,7 @@ class RfqCreateMixin:
                         $13::rfq_visibility, $14::rfq_status,
                         $15, $16, $17, $18, $19,
                         $20, $21, $22, $23,
-                        NOW(), NOW()
+                        $24, NOW(), NOW()
                     )
                     """,
                     rfq_id,
@@ -76,6 +76,7 @@ class RfqCreateMixin:
                     None if is_product else data.start_date,
                     None if is_product else data.team_size_required,
                     None if is_product else data.experience_required,
+                    data.payment_mode,
                 )
                 await insert_invites(conn, rfq_id, invited)
                 await log_event(

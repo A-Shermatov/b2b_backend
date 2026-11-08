@@ -32,6 +32,7 @@ class RfqBaseSchema(BaseModel):
     deadline: str
     visibility: str
     status: str
+    payment_mode: Literal["escrow", "direct"] = "escrow"
     # Set when a moderator hid or closed the RFQ.
     moderation_reason: str | None = None
     moderated_at: datetime | None = None
@@ -82,6 +83,7 @@ class ProductRfqCreate(BaseModel):
     visibility: str = "public"
     status: str | None = "draft"
     invited_supplier_ids: list[int] = Field(default_factory=list, max_length=50)
+    payment_mode: Literal["escrow", "direct"] = "escrow"
     quantity: int = Field(ge=1)
     delivery_country: str
     delivery_city: str
@@ -102,6 +104,7 @@ class ServiceRfqCreate(BaseModel):
     visibility: str = "public"
     status: str | None = "draft"
     invited_supplier_ids: list[int] = Field(default_factory=list, max_length=50)
+    payment_mode: Literal["escrow", "direct"] = "escrow"
     project_duration: str
     start_date: str
     team_size_required: int | None = None
@@ -121,6 +124,7 @@ class RfqUpdate(BaseModel):
     currency: str | None = None
     deadline: str | None = None
     visibility: Literal["public", "invited_only"] | None = None
+    payment_mode: Literal["escrow", "direct"] | None = None
     quantity: int | None = Field(default=None, ge=1)
     delivery_country: str | None = None
     delivery_city: str | None = None

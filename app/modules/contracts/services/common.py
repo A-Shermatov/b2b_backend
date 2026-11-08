@@ -16,6 +16,7 @@ CONTRACT_COLUMNS = """
     c.id, c.rfq_id, c.proposal_id, c.buyer_actor_id, c.supplier_actor_id,
     c.title, c.description, c.agreed_amount, c.currency::text AS currency,
     c.start_date, c.due_date, c.payment_type::text AS payment_type,
+    c.payment_mode,
     c.status::text AS status, c.created_at,
     c.commission_amount, c.commission_percent, c.commission_min
 """
@@ -500,6 +501,7 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
         "start_date": contract["start_date"],
         "due_date": contract["due_date"],
         "payment_type": contract["payment_type"],
+        "payment_mode": contract.get("payment_mode") or "escrow",
         "status": contract["status"],
         "created_at": contract["created_at"],
         "commission_amount": contract["commission_amount"],

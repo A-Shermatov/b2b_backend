@@ -117,6 +117,8 @@ class ContractSchema(BaseModel):
     start_date: str
     due_date: str
     payment_type: str
+    # "escrow": the bank holds the money until acceptance; "direct": paid out at once.
+    payment_mode: Literal["escrow", "direct"] = "escrow"
     status: str
     created_at: datetime
     commission_amount: float = 0.0

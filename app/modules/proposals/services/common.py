@@ -187,7 +187,8 @@ async def load_proposal_context(conn, proposal_id: int):
             r.description AS rfq_description,
             r.deadline AS rfq_deadline,
             r.status::text AS rfq_status,
-            r.visibility::text AS rfq_visibility
+            r.visibility::text AS rfq_visibility,
+            r.payment_mode AS rfq_payment_mode
         FROM proposals p
         JOIN rfqs r ON r.id = p.rfq_id
         LEFT JOIN proposal_attachments pa ON pa.proposal_id = p.id

@@ -50,6 +50,7 @@ async def checkout_cart(
         company_role=ctx.company_role,
         items=data.items,
         idempotency_key=data.idempotency_key,
+        payment_mode=data.payment_mode,
     )
 
 
