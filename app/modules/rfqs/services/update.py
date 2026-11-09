@@ -1,4 +1,10 @@
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.modules.notifications.services import NotificationService
 from app.modules.rfqs.schemas import RfqUpdate
 from app.modules.rfqs.services.common import (
     OPEN_RFQ_STATUSES,
@@ -12,10 +18,15 @@ from app.modules.rfqs.services.common import (
     notify_invited_suppliers,
     validate_supplier_actor_ids,
 )
+from app.modules.telegram.service import schedule_request_post
 from app.utils.audit import log_event
+
+# A request can go to the archive once nothing is happening on it any more.
+ARCHIVABLE_RFQ_STATUSES = ("draft", "cancelled", "expired", "completed", "archived")
 
 
 from app.modules.rfqs.services.subscriptions import notify_subscribers_safely
+
 
 class RfqUpdateMixin:
     async def update(self, rfq_id: str, actor_id: int, data: RfqUpdate):
@@ -118,9 +129,12 @@ class RfqUpdateMixin:
             await notify_subscribers_safely(
                 rfq_id, row["title"], row["category_id"], actor_id, invited
             )
+            # The channel post goes out in the background; publishing never waits for it.
+            schedule_request_post(rfq_id)
         return response
 
-    async def close(self, rfq_id: str, actor_id: int):
+    async def close(self, rfq_id: str, actor_id: int, reason: str | None = None):
+        reason = (reason or "").strip() or None
         async with self.connection() as conn:
             async with conn.transaction():
                 await conn.fetchval("SELECT id FROM rfqs WHERE id = $1 FOR UPDATE", rfq_id)
@@ -132,11 +146,24 @@ class RfqUpdateMixin:
                 await conn.execute(
                     """
                     UPDATE rfqs
-                    SET status = 'cancelled'::rfq_status, updated_at = NOW()
+                    SET status = 'cancelled'::rfq_status, cancel_reason = $2, updated_at = NOW()
                     WHERE id = $1
                     """,
                     rfq_id,
+                    reason,
                 )
+                # Suppliers who answered hear that the request is off.
+                answered = [
+                    r["supplier_actor_id"]
+                    for r in await conn.fetch(
+                        """
+                        SELECT DISTINCT supplier_actor_id FROM proposals
+                        WHERE rfq_id = $1
+                          AND status::text IN ('submitted', 'viewed', 'shortlisted', 'pending_supplier')
+                        """,
+                        rfq_id,
+                    )
+                ]
                 rejected = await conn.execute(
                     """
                     UPDATE proposals
@@ -156,7 +183,47 @@ class RfqUpdateMixin:
                         "before": {"status": row["status"]},
                         "after": {"status": "cancelled"},
                         "rejected_proposals": int(rejected.split()[-1]),
+                        "reason": reason,
                     },
+                )
+            response = await load_rfq_response(conn, rfq_id)
+        body = f"Покупатель отменил заявку «{row['title']}»"
+        if reason:
+            body = f"{body}: {reason}"
+        notifier = NotificationService()
+        for supplier_actor_id in answered:
+            await notifier.notify_actor_members(
+                supplier_actor_id, "rfq", "Заявка отменена", body, "/supplier/proposals"
+            )
+        return response
+
+    async def set_archived(self, rfq_id: str, actor_id: int, archived: bool):
+        """Put a finished request away, or bring it back; its status stays as it is."""
+        async with self.connection() as conn:
+            async with conn.transaction():
+                await conn.fetchval("SELECT id FROM rfqs WHERE id = $1 FOR UPDATE", rfq_id)
+                row = await load_rfq_row(conn, rfq_id)
+                if row["actor_id"] != actor_id:
+                    raise ForbiddenError("Access denied")
+                if archived and row["status"] not in ARCHIVABLE_RFQ_STATUSES:
+                    raise ConflictError(
+                        "В архив можно убрать черновик или закрытую заявку — сначала отмените её"
+                    )
+                await conn.execute(
+                    f"""
+                    UPDATE rfqs
+                    SET archived_at = {"NOW()" if archived else "NULL"}, updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    rfq_id,
+                )
+                await log_event(
+                    conn,
+                    "rfq.archive" if archived else "rfq.unarchive",
+                    "rfq",
+                    rfq_id,
+                    actor_id=actor_id,
+                    details={"status": row["status"]},
                 )
             return await load_rfq_response(conn, rfq_id)
 

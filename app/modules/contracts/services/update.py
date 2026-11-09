@@ -43,7 +43,7 @@ class ContractUpdateMixin:
             SELECT
                 m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
                 m.status::text AS status, m.delivered_at, m.viewed_at,
-                u.first_name, u.last_name, u.email,
+                u.first_name, u.last_name, u.email, u.avatar_url AS sender_avatar,
                 {CONTRACT_MESSAGE_AFFILIATION}
             FROM messages m
             LEFT JOIN users u ON u.id = m.sender_id

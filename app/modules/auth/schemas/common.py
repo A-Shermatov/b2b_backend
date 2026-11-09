@@ -100,6 +100,8 @@ class UserPublic(BaseModel):
     role: str
     status: str
     totp_enabled: bool = False
+    # Public link to the person's photo; None until they upload one.
+    avatar_url: str | None = None
     created_at: datetime
     updated_at: datetime
 

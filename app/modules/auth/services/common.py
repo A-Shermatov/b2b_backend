@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.modules.auth.schemas import ActorSummary, UserPublic
 from app.modules.actors.services import ActorService, user_capabilities
+from app.utils.storage import public_file_url
 
 USER_COLUMNS = """
     id,
@@ -19,6 +20,7 @@ USER_COLUMNS = """
     COALESCE(totp_enabled, false) AS totp_enabled,
     totp_secret,
     COALESCE(totp_backup_codes_hash, '{}'::text[]) AS totp_backup_codes_hash,
+    avatar_url,
     created_at,
     updated_at
 """
@@ -71,6 +73,7 @@ def shape_user_public(user: dict) -> UserPublic:
         "role": user["role"],
         "status": user["status"],
         "totp_enabled": bool(user.get("totp_enabled")),
+        "avatar_url": public_file_url(user["avatar_url"]) if user.get("avatar_url") else None,
         "created_at": user["created_at"],
         "updated_at": user["updated_at"],
     }

@@ -68,7 +68,7 @@ async def test_rfq_hidden_by_admin_moves_to_the_buyer_archive(client, buyer_auth
     assert rfq_id not in [r["id"] for r in everything.json()["items"]]
 
     archive = await client.get(
-        f"{API}/buyer/rfqs/", params={"tab": "closed", "q": "Archive after moderation", "page_size": 100},
+        f"{API}/buyer/rfqs/", params={"tab": "archived", "q": "Archive after moderation", "page_size": 100},
         headers=buyer_auth["headers"],
     )
     assert archive.status_code == 200, archive.text

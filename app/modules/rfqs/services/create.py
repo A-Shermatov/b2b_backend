@@ -10,6 +10,7 @@ from app.modules.rfqs.services.common import (
     notify_invited_suppliers,
     validate_supplier_actor_ids,
 )
+from app.modules.telegram.service import schedule_request_post
 from app.utils.audit import log_event
 
 
@@ -98,6 +99,7 @@ class RfqCreateMixin:
             await notify_invited_suppliers(rfq_id, data.title, invited)
         if status in OPEN_RFQ_STATUSES and visibility == "public":
             await notify_subscribers_safely(rfq_id, data.title, data.category_id, actor_id, invited)
+            schedule_request_post(rfq_id)
         return response
 
     async def add_attachment(

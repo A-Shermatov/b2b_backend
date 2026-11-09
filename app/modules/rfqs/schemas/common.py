@@ -33,6 +33,10 @@ class RfqBaseSchema(BaseModel):
     visibility: str
     status: str
     payment_mode: Literal["escrow", "direct"] = "escrow"
+    # Set when the buyer moved the request to the archive.
+    archived_at: datetime | None = None
+    # Why the buyer cancelled the request, if they said.
+    cancel_reason: str | None = None
     # Set when a moderator hid or closed the RFQ.
     moderation_reason: str | None = None
     moderated_at: datetime | None = None
@@ -134,6 +138,10 @@ class RfqUpdate(BaseModel):
     start_date: str | None = None
     team_size_required: int | None = None
     experience_required: str | None = None
+
+
+class RfqCloseRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class InviteSuppliersRequest(BaseModel):

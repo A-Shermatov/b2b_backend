@@ -7,6 +7,7 @@ from app.utils.affiliation import (
     affiliation_fields,
     sender_affiliation_columns,
 )
+from app.utils.storage import public_file_url
 
 
 def _sender_display_name(first_name, last_name, email, sender_id: int) -> str:
@@ -42,8 +43,16 @@ def message_to_dict(row) -> dict:
 MESSAGE_SELECT = f"""
     m.id, m.conversation_id, m.sender_id, m.text, m.created_at,
     m.status::text AS status, m.delivered_at, m.viewed_at,
-    u.first_name, u.last_name, u.email,
+    u.first_name, u.last_name, u.email, u.avatar_url AS sender_avatar,
     {sender_affiliation_columns("m.sender_id", DIRECT_CHAT_ACTORS)}
+"""
+
+# The other side's picture: the company logo, or the person's own photo.
+COUNTERPART_AVATAR = """
+    COALESCE(
+        NULLIF(co.logo, ''),
+        (SELECT NULLIF(pu.avatar_url, '') FROM users pu WHERE pu.id = a.user_id)
+    ) AS counterpart_avatar
 """
 
 ACTOR_NAME = """
@@ -87,7 +96,8 @@ class DirectChatService:
                         NULLIF(a.display_name, ''),
                         NULLIF(co.title, ''),
                         $2
-                    ) AS counterpart_name
+                    ) AS counterpart_name,
+                    {COUNTERPART_AVATAR}
                 FROM direct_conversations d
                 JOIN actors a ON a.id = d.{counterpart_col}
                 LEFT JOIN companies co ON co.id = a.company_id
@@ -285,7 +295,8 @@ class DirectChatService:
                     NULLIF(a.display_name, ''),
                     NULLIF(co.title, ''),
                     $2
-                ) AS counterpart_name
+                ) AS counterpart_name,
+                {COUNTERPART_AVATAR}
             FROM direct_conversations d
             JOIN actors a ON a.id = d.{counterpart_col}
             LEFT JOIN companies co ON co.id = a.company_id
@@ -343,6 +354,9 @@ class DirectChatService:
             "supplier_actor_id": row["supplier_actor_id"],
             "counterpart_actor_id": row["counterpart_actor_id"],
             "counterpart_name": row["counterpart_name"],
+            "counterpart_avatar": (
+                public_file_url(row["counterpart_avatar"]) if row.get("counterpart_avatar") else None
+            ),
             "unread_count": unread,
             "last_message": message_to_dict(last_row) if last_row else None,
             "messages": messages,

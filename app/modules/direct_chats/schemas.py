@@ -25,6 +25,8 @@ class DirectMessageSchema(BaseModel):
     # The sender speaks for this company, in this role (director, admin, moderator, accountant).
     sender_company: str | None = None
     sender_role: str | None = None
+    # Public link to the sender's photo, if they uploaded one.
+    sender_avatar: str | None = None
     text: str
     created_at: datetime | str | None = None
     status: str = "sent"
@@ -38,6 +40,7 @@ class DirectChatThread(BaseModel):
     supplier_actor_id: int
     counterpart_actor_id: int
     counterpart_name: str
+    counterpart_avatar: str | None = None
     unread_count: int = 0
     last_message: DirectMessageSchema | None = None
     messages: list[DirectMessageSchema] = []
