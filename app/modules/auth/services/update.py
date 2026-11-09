@@ -55,6 +55,29 @@ class AuthUpdateMixin:
             )
         return shape_user_public(dict(row))
 
+    async def set_avatar(self, user_id: int, key: str | None) -> UserPublic:
+        """Store the key of the person's new photo, or clear it."""
+        async with self.connection() as conn:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE users SET avatar_url = $1, updated_at = NOW()
+                WHERE id = $2
+                RETURNING {USER_COLUMNS}
+                """,
+                key,
+                user_id,
+            )
+            if not row:
+                raise UnauthorizedError("User not found")
+            await log_event(
+                conn,
+                "user.avatar.update" if key else "user.avatar.remove",
+                "user",
+                user_id,
+                user_id=user_id,
+            )
+        return shape_user_public(dict(row))
+
     async def switch_actor(self, user_id: int, actor_id: int) -> MeResponse:
         actor_svc = ActorService(self.conn)
         actor = await actor_svc.get_by_id(actor_id)

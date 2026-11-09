@@ -8,6 +8,8 @@ part in the conversation, so a person who belongs to several companies is shown
 with the one that is actually in this deal.
 """
 
+from app.utils.storage import public_file_url
+
 # Actor ids taking part in each kind of conversation, for a message aliased "m".
 DIRECT_CHAT_ACTORS = (
     "SELECT v.x FROM direct_conversations dc "
@@ -48,7 +50,10 @@ PROPOSAL_MESSAGE_AFFILIATION = sender_affiliation_columns("m.sender_id", PROPOSA
 def affiliation_fields(row) -> dict:
     """The two affiliation values from a row, or None when the query has no such columns."""
     keys = row.keys() if hasattr(row, "keys") else ()
+    avatar = row["sender_avatar"] if "sender_avatar" in keys else None
     return {
         "sender_company": row["sender_company"] if "sender_company" in keys else None,
         "sender_role": row["sender_role"] if "sender_role" in keys else None,
+        # The sender's photo as a public link, or None.
+        "sender_avatar": public_file_url(avatar) if avatar else None,
     }

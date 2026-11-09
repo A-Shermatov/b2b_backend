@@ -1,9 +1,10 @@
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, Request
+from fastapi import BackgroundTasks, Depends, File, Request, UploadFile
 
 from app.config import get_settings
-from app.core.exceptions import RateLimitError
+from app.core.exceptions import RateLimitError, ValidationError
+from app.utils.storage import storage_service
 from app.modules.auth.api.common import (
     ActivateRoleRequest,
     AuthService,
@@ -35,6 +36,31 @@ async def update_me(
     user: Annotated[CurrentUser, Depends(get_current_user)],
 ):
     return await AuthService().update_me(user.id, data)
+
+
+AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_AVATAR_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/me/avatar", response_model=UserPublic)
+async def upload_avatar(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    file: UploadFile = File(...),
+):
+    """A new profile photo: a picture of up to 5 MB, checked by its real type."""
+    content, mime, _ = await storage_service.validate_upload(file)
+    if mime not in AVATAR_TYPES:
+        raise ValidationError("Загрузите фото в формате JPG, PNG, WEBP или GIF")
+    if len(content) > MAX_AVATAR_BYTES:
+        raise ValidationError("Фото должно быть не больше 5 МБ")
+    await file.seek(0)
+    key, _ = await storage_service.upload(file, f"avatars/{user.id}")
+    return await AuthService().set_avatar(user.id, key)
+
+
+@router.delete("/me/avatar", response_model=UserPublic)
+async def delete_avatar(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    return await AuthService().set_avatar(user.id, None)
 
 
 @router.post("/2fa/setup", response_model=TwoFactorSetupResponse)

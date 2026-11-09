@@ -39,6 +39,7 @@ from app.modules.roles.router import register as register_roles
 from app.modules.settings.router import register as register_settings
 from app.modules.subscription.router import register as register_subscription
 from app.modules.support.router import register as register_support
+from app.modules.telegram.router import register as register_telegram
 from app.modules.verification.router import register as register_verification
 from app.db.schema import backfill_actors_if_needed, ensure_schema
 
@@ -151,6 +152,7 @@ register_reviews(app, prefix=settings.api_v1_prefix)
 register_catalog(app, prefix=settings.api_v1_prefix)
 register_notifications(app, prefix=settings.api_v1_prefix)
 register_nav(app, prefix=settings.api_v1_prefix)
+register_telegram(app, prefix=settings.api_v1_prefix)
 register_subscription(app, prefix=settings.api_v1_prefix)
 register_rfqs(app, prefix=settings.api_v1_prefix)
 register_proposals(app, prefix=settings.api_v1_prefix)

@@ -227,7 +227,7 @@ class ProposalReadMixin:
                 f"""
                 SELECT
                     m.id, m.proposal_id, m.sender_id, m.text, m.created_at,
-                    u.first_name, u.last_name,
+                    u.first_name, u.last_name, u.avatar_url AS sender_avatar,
                 {PROPOSAL_MESSAGE_AFFILIATION}
                 FROM proposal_messages m
                 LEFT JOIN users u ON u.id = m.sender_id

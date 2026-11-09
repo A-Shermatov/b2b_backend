@@ -48,6 +48,8 @@ class MessageSchema(BaseModel):
     # The sender speaks for this company, in this role (director, admin, moderator, accountant).
     sender_company: str | None = None
     sender_role: str | None = None
+    # Public link to the sender's photo, if they uploaded one.
+    sender_avatar: str | None = None
     text: str
     attachment: MessageAttachmentSchema | None = None
     created_at: datetime | None = None

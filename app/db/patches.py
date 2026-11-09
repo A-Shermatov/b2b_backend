@@ -783,4 +783,37 @@ COMPAT_PATCHES = [
       AND r.catalog_item_id IS NULL
       AND rf.catalog_item_id IS NOT NULL;
     """,
+    # The buyer puts a finished request away; it keeps its own status.
+    "ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;",
+    # Why the buyer cancelled the request; suppliers who answered see it.
+    "ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS cancel_reason TEXT;",
+    "CREATE INDEX IF NOT EXISTS ix_rfqs_actor_archived ON rfqs (actor_id, archived_at);",
+    # The person's photo, shown in the menu and next to their messages.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;",
+    # The platform bot that posts new requests to a Telegram channel (one row).
+    """
+    CREATE TABLE IF NOT EXISTS telegram_settings (
+        id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        bot_token_enc TEXT,
+        bot_username VARCHAR(64),
+        channel_id VARCHAR(128),
+        channel_title VARCHAR(255),
+        site_url VARCHAR(255),
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS telegram_posts (
+        id SERIAL PRIMARY KEY,
+        rfq_id VARCHAR(36) NOT NULL UNIQUE REFERENCES rfqs(id) ON DELETE CASCADE,
+        chat_id VARCHAR(128),
+        message_id BIGINT,
+        status VARCHAR(16) NOT NULL,
+        error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_telegram_posts_created ON telegram_posts (created_at DESC);",
 ]
