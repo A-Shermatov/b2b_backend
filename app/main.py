@@ -25,6 +25,7 @@ from app.modules.approvals.router import register as register_approvals
 from app.modules.auth.router import register as register_auth
 from app.modules.catalog.router import register as register_catalog
 from app.modules.companies.router import register as register_companies
+from app.modules.files.router import register as register_files
 from app.modules.finance.router import register as register_finance
 from app.modules.contracts.router import register as register_contracts
 from app.modules.direct_chats.router import register as register_direct_chats
@@ -164,6 +165,7 @@ register_admin(app, prefix=settings.api_v1_prefix)
 register_roles(app, prefix=settings.api_v1_prefix)
 register_settings(app, prefix=settings.api_v1_prefix)
 register_verification(app, prefix=settings.api_v1_prefix)
+register_files(app, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health")
