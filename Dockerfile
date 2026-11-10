@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Fonts with Cyrillic letters for the Telegram request cards: DejaVu always,
 # Inter where the distribution has it.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends curl gosu fonts-dejavu-core \
     && (apt-get install -y --no-install-recommends fonts-inter || true) \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,6 +20,12 @@ COPY scripts ./scripts
 
 RUN pip install --upgrade pip \
     && pip install .
+
+# The API runs as an unprivileged user; the entrypoint (root) only fixes the
+# ownership of the uploads volume and then drops to it.
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /app --no-create-home app \
+    && mkdir -p /app/uploads && chown app:app /app/uploads
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
