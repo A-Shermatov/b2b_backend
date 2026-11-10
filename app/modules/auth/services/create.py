@@ -198,6 +198,14 @@ class AuthCreateMixin:
             except ValueError as exc:
                 raise UnauthorizedError("Invalid 2FA configuration") from exc
             code_ok = verify_totp_code(secret, data.code)
+            if code_ok:
+                # A code stays valid for up to 90 s (±1 step): accept it only once, so
+                # an intercepted or shoulder-surfed code cannot be replayed.
+                digits = "".join(ch for ch in str(data.code) if ch.isdigit())
+                if not await redis_client.claim_once(f"totp_used:{user_id}:{digits}", 120):
+                    from app.core.exceptions import ValidationError
+
+                    raise ValidationError("Этот код уже использован. Дождитесь следующего кода")
             remaining_hashes = None
             if not code_ok:
                 hashes = list(user.get("totp_backup_codes_hash") or [])

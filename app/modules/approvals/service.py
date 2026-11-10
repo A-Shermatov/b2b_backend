@@ -189,7 +189,13 @@ class ApprovalService:
                 raise ValidationError(
                     f"У позиции «{item['title']}» нет опубликованной цены — запросите цену"
                 )
-            unit_price, currency = unit
+            unit_price, line_currency = unit
+            if any(line["mode"] == "buy" and line["currency"] != line_currency for line in lines):
+                # One approval carries one amount: never add TJS and USD together.
+                raise ValidationError(
+                    "В корзине позиции в разных валютах — оформите их отдельными заказами"
+                )
+            currency = line_currency
             line_total = round(float(unit_price) * entry.qty, 2)
             total += line_total
             lines.append(

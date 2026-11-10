@@ -79,16 +79,23 @@ class CatalogOfferMixin:
         company_role: str | None = None,
         actor_kind: str | None = None,
     ) -> CatalogOfferResponse:
-        # Direct buy-offers from non-privileged company members must go through
-        # cart checkout + purchase approval (skip_approval_gate for fulfill path).
+        # An offer with a price ("buy" or "negotiate") becomes a deal as soon as the
+        # supplier accepts it, so for a company it is the same commitment as accepting
+        # a proposal: director/admin only. Other members buy through the cart and its
+        # purchase approval (skip_approval_gate is that fulfil path) or ask for a quote.
         if (
-            data.kind == "buy"
+            data.kind in ("buy", "negotiate")
             and not skip_approval_gate
             and actor_kind == "company"
             and company_role not in {"director", "admin"}
         ):
+            if data.kind == "buy":
+                raise ForbiddenError(
+                    "Покупка по каталогу для вашей роли требует согласования — оформите через корзину"
+                )
             raise ForbiddenError(
-                "Покупка по каталогу для вашей роли требует согласования — оформите через корзину"
+                "Предложить свою цену может руководитель или администратор компании. "
+                "Запросите цену у поставщика или оформите покупку через корзину"
             )
 
         message = (data.message or "").strip()

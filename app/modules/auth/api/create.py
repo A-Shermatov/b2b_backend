@@ -1,7 +1,8 @@
-from fastapi import BackgroundTasks, Request
+from fastapi import BackgroundTasks, Request, Response
 
 from app.config import get_settings
-from app.core.exceptions import RateLimitError
+from app.core.exceptions import RateLimitError, UnauthorizedError
+from app.utils.redis_client import rate_limit_reached
 from app.modules.auth.api.common import (
     AuthService,
     ForgotPasswordRequest,
@@ -10,11 +11,14 @@ from app.modules.auth.api.common import (
     LogoutRequest,
     MessageResponse,
     RefreshRequest,
+    REFRESH_COOKIE,
     RegisterRequest,
     ResetPasswordRequest,
     TokenResponse,
     TwoFactorVerifyRequest,
     check_rate_limit,
+    clear_refresh_cookie,
+    deliver_refresh_token,
     get_client_ip,
     router,
 )
@@ -26,60 +30,86 @@ settings = get_settings()
 
 
 @router.post("/register", response_model=TokenResponse)
-async def register(data: RegisterRequest, request: Request):
+async def register(data: RegisterRequest, request: Request, response: Response):
     ip = await get_client_ip(request)
     allowed = await check_rate_limit(
         f"register:{ip}", settings.rate_limit_register_per_minute, 60
     )
     if not allowed:
         raise RateLimitError("Too many registration attempts. Try again later.")
-    return await AuthService().register(data, ip)
+    tokens = await AuthService().register(data, ip)
+    return deliver_refresh_token(request, response, tokens)
 
 
 @router.post("/login", response_model=LoginResult)
-async def login(data: LoginRequest, request: Request):
+async def login(data: LoginRequest, request: Request, response: Response):
     ip = await get_client_ip(request)
     allowed = await check_rate_limit(
         f"login:{ip}", settings.rate_limit_login_per_minute, 60
     )
     if not allowed:
         raise RateLimitError("Too many login attempts. Try again later.")
-    # Per account as well: password guessing from many IPs is limited too.
-    account_allowed = await check_rate_limit(
-        f"login_account:{data.email.lower()}",
+    # Per account as well: password guessing from many IPs is limited too. Only
+    # failed attempts count, so the owner's own successful logins never lock them out.
+    account_key = f"login_account:{data.email.lower()}"
+    if await rate_limit_reached(
+        account_key,
         settings.rate_limit_login_per_account,
         settings.rate_limit_login_account_window_seconds,
-    )
-    if not account_allowed:
+    ):
         raise RateLimitError("Too many login attempts. Try again later.")
-    return await AuthService().login(data, ip)
+    try:
+        result = await AuthService().login(data, ip)
+        return deliver_refresh_token(request, response, result)
+    except UnauthorizedError:
+        await check_rate_limit(
+            account_key,
+            settings.rate_limit_login_per_account,
+            settings.rate_limit_login_account_window_seconds,
+        )
+        raise
 
 
 @router.post("/2fa/verify", response_model=TokenResponse)
-async def verify_2fa(data: TwoFactorVerifyRequest, request: Request):
+async def verify_2fa(data: TwoFactorVerifyRequest, request: Request, response: Response):
     ip = await get_client_ip(request)
     allowed = await check_rate_limit(
         f"2fa_verify:{ip}", settings.rate_limit_2fa_verify_per_minute, 60
     )
     if not allowed:
         raise RateLimitError("Too many 2FA attempts. Try again later.")
-    return await AuthService().verify_2fa(data, ip)
+    tokens = await AuthService().verify_2fa(data, ip)
+    return deliver_refresh_token(request, response, tokens)
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(data: RefreshRequest, request: Request):
+async def refresh(request: Request, response: Response, data: RefreshRequest | None = None):
     ip = await get_client_ip(request)
     allowed = await check_rate_limit(
         f"refresh:{ip}", settings.rate_limit_refresh_per_minute, 60
     )
     if not allowed:
         raise RateLimitError("Too many refresh attempts. Try again later.")
-    return await AuthService().refresh(data.refresh_token)
+    body_token = data.refresh_token if data else None
+    cookie_token = request.cookies.get(REFRESH_COOKIE)
+    token = body_token or cookie_token
+    if not token:
+        raise UnauthorizedError("Invalid refresh token")
+    try:
+        tokens = await AuthService().refresh(token)
+    except UnauthorizedError:
+        if not body_token:
+            clear_refresh_cookie(response)
+        raise
+    return deliver_refresh_token(request, response, tokens, from_cookie=not body_token)
 
 
 @router.post("/logout", status_code=204)
-async def logout(data: LogoutRequest):
-    await AuthService().logout(data.refresh_token)
+async def logout(request: Request, response: Response, data: LogoutRequest | None = None):
+    token = (data.refresh_token if data else None) or request.cookies.get(REFRESH_COOKIE)
+    if token:
+        await AuthService().logout(token)
+    clear_refresh_cookie(response)
 
 
 def _queue_email(background: BackgroundTasks, job) -> None:

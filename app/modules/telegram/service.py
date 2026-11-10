@@ -27,7 +27,7 @@ from app.core.exceptions import ValidationError
 from app.database import pool
 from app.modules.telegram.card import CardData, CardUnavailable, render_request_card
 from app.utils.audit import log_event
-from app.utils.storage import public_file_url, storage_key_from_url
+from app.utils.storage import files_base_url, storage_key_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -237,19 +237,27 @@ def format_post(row, site_url: str) -> str:
 
 
 def _logo_bytes(stored: str | None) -> bytes | None:
-    """The buyer's logo from storage: the local folder, or its public link."""
+    """The buyer's logo from our own storage: the local folder, or our files URL.
+
+    Never any other address: the logo field is client data, and fetching whatever
+    it names would let a company make the server request internal URLs (SSRF).
+    """
     if not stored:
         return None
     key = storage_key_from_url(stored)
-    if key and not key.startswith(("http://", "https://")):
-        local = Path(get_settings().local_upload_dir) / key
-        if local.is_file() and local.stat().st_size <= MAX_LOGO_BYTES:
+    if not key or key.startswith(("http://", "https://")) or ".." in key.split("/"):
+        return None
+    root = Path(get_settings().local_upload_dir).resolve()
+    local = (root / key).resolve()
+    if local.is_relative_to(root) and local.is_file():
+        if local.stat().st_size <= MAX_LOGO_BYTES:
             return local.read_bytes()
-    url = public_file_url(stored)
+        return None
+    url = f"{files_base_url().rstrip('/')}/{key}"
     if not url.startswith(("http://", "https://")):
         return None
     try:
-        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+        with httpx.Client(timeout=5.0, follow_redirects=False) as client:
             response = client.get(url)
         if response.status_code == 200 and len(response.content) <= MAX_LOGO_BYTES:
             return response.content

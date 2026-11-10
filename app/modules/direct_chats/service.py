@@ -1,4 +1,4 @@
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, RateLimitError
 from app.database import pool
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
@@ -7,7 +7,10 @@ from app.utils.affiliation import (
     affiliation_fields,
     sender_affiliation_columns,
 )
+from app.utils import redis_client
 from app.utils.storage import public_file_url
+
+SUPPLIER_NEW_CHATS_PER_DAY = 30
 
 
 def _sender_display_name(first_name, last_name, email, sender_id: int) -> str:
@@ -79,6 +82,24 @@ class DirectChatService:
         async with self.connection() as conn:
             await self._assert_side(conn, buyer_actor_id, "buyer")
             await self._assert_side(conn, supplier_actor_id, "supplier")
+            existing = await conn.fetchval(
+                """
+                SELECT id FROM direct_conversations
+                WHERE buyer_actor_id = $1 AND supplier_actor_id = $2
+                """,
+                buyer_actor_id,
+                supplier_actor_id,
+            )
+            # Buyer actor ids are easy to enumerate: cap how many new conversations a
+            # supplier may start a day so the chat cannot be used for mass mailing.
+            if existing is None and not await redis_client.check_rate_limit(
+                f"direct_chat_new:{supplier_actor_id}",
+                SUPPLIER_NEW_CHATS_PER_DAY,
+                24 * 3600,
+            ):
+                raise RateLimitError(
+                    "Слишком много новых диалогов за сутки. Напишите покупателю через его заявку"
+                )
             chat_id = await self._get_or_create(conn, buyer_actor_id, supplier_actor_id)
             return await self._load_thread(conn, chat_id, user_id, as_buyer=False)
 

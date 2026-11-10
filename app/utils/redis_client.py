@@ -48,9 +48,12 @@ async def check_rate_limit(key: str, limit: int, window_seconds: int = 60) -> bo
 
     if redis:
         try:
+            # The window starts with the first hit and is never extended: refreshing
+            # the TTL on every request kept a busy IP (or an account someone keeps
+            # failing to log into) blocked for as long as requests kept coming.
             pipe = redis.pipeline()
             pipe.incr(key)
-            pipe.expire(key, window_seconds)
+            pipe.expire(key, window_seconds, nx=True)
             results = await pipe.execute()
             return int(results[0]) <= limit
         except Exception as exc:
@@ -61,6 +64,53 @@ async def check_rate_limit(key: str, limit: int, window_seconds: int = 60) -> bo
     if len(bucket) >= limit:
         return False
     bucket.append(now)
+    _prune_memory_rate_limit(now)
+    return True
+
+
+_MEMORY_PRUNE_AT = 50_000
+_MEMORY_MAX_WINDOW = 3600.0
+
+
+def _prune_memory_rate_limit(now: float) -> None:
+    """Keep the in-memory fallback bounded (one key per client IP otherwise piles up)."""
+    if len(_memory_rate_limit) < _MEMORY_PRUNE_AT:
+        return
+    for key in list(_memory_rate_limit):
+        if key.startswith(("bl:", "grace:", "once:")):
+            continue
+        times = _memory_rate_limit[key]
+        if not times or now - times[-1] > _MEMORY_MAX_WINDOW:
+            del _memory_rate_limit[key]
+
+
+async def rate_limit_reached(key: str, limit: int, window_seconds: int = 60) -> bool:
+    """True when `key` already used up its limit; counts nothing (see check_rate_limit)."""
+    redis = await get_redis()
+    if redis:
+        try:
+            value = await redis.get(key)
+            return int(value or 0) >= limit
+        except Exception as exc:
+            await _discard_redis(redis, exc)
+    now = datetime.now(timezone.utc).timestamp()
+    bucket = _memory_rate_limit.get(key) or []
+    return sum(1 for t in bucket if now - t < window_seconds) >= limit
+
+
+async def claim_once(key: str, ttl_seconds: int) -> bool:
+    """True the first time `key` is claimed within `ttl_seconds`, False on a repeat."""
+    redis = await get_redis()
+    if redis:
+        try:
+            return bool(await redis.set(key, "1", ex=ttl_seconds, nx=True))
+        except Exception as exc:
+            await _discard_redis(redis, exc)
+    now = datetime.now(timezone.utc).timestamp()
+    until = _memory_rate_limit.get(f"once:{key}")
+    if until and until[0] > now:
+        return False
+    _memory_rate_limit[f"once:{key}"] = [now + ttl_seconds]
     return True
 
 

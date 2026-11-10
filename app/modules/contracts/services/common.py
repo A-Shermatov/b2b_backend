@@ -488,6 +488,20 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
             ],
         }
 
+    # A closed deal whose dispute was decided may be appealed for 14 days
+    # (open_dispute enforces it); the parties need to know until when.
+    appeal_until = None
+    if dispute is None and contract["status"] in ("completed", "cancelled"):
+        appeal_until = await conn.fetchval(
+            """
+            SELECT MAX(resolved_at) + INTERVAL '14 days'
+            FROM disputes
+            WHERE contract_id = $1 AND resolved_at IS NOT NULL
+            HAVING MAX(resolved_at) > NOW() - INTERVAL '14 days'
+            """,
+            contract_id,
+        )
+
     return {
         "id": contract["id"],
         "rfq_id": contract["rfq_id"],
@@ -510,6 +524,7 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
         "payment_plan": payment_plan,
         "conversation": conversation,
         "dispute": dispute,
+        "appeal_until": appeal_until,
         "files": [
             shape_contract_file(
                 item,

@@ -37,10 +37,14 @@ async def _log_transition(conn, action, row, actor_id, after_status, **extra):
 
 class ProposalUpdateMixin:
     async def update_proposal(self, proposal_id: int, supplier_id: int, data: ProposalUpdate):
-        async with self.connection() as conn:
+        async with self.connection() as conn, conn.transaction():
             row = await load_proposal_row(conn, proposal_id)
             if row["supplier_actor_id"] != supplier_id:
                 raise ForbiddenError("Access denied")
+            # Same lock as accept(): a price change and the buyer's acceptance never
+            # interleave, so the buyer never accepts a price they did not see.
+            await conn.fetchval("SELECT id FROM rfqs WHERE id = $1 FOR UPDATE", row["rfq_id"])
+            row = await load_proposal_row(conn, proposal_id)
             if row["status"] != "submitted":
                 raise ConflictError("Proposal cannot be edited")
             if await rfq_deadline_passed(conn, row["rfq_id"]):
@@ -213,6 +217,12 @@ class ProposalUpdateMixin:
                 row = await load_proposal_context(conn, proposal_id)
                 if row["supplier_actor_id"] != supplier_id:
                     raise ForbiddenError("Access denied")
+                # A double click must not reach the contract insert twice (500 on the
+                # unique proposal_id): the second request waits and sees "accepted".
+                await conn.fetchval(
+                    "SELECT id FROM rfqs WHERE id = $1 FOR UPDATE", row["rfq_id"]
+                )
+                row = await load_proposal_context(conn, proposal_id)
                 if row["status"] != "pending_supplier":
                     raise ConflictError("Only pending catalog offers can be accepted")
                 await ensure_not_self_dealing(
@@ -284,6 +294,7 @@ class ProposalUpdateMixin:
         milestones: list[dict] | None = None,
         buyer_user_id: int | None = None,
         payment_mode: str | None = None,
+        expected_price: float | None = None,
     ):
         async with self.connection() as conn:
             async with conn.transaction():
@@ -294,6 +305,10 @@ class ProposalUpdateMixin:
                     "SELECT id FROM rfqs WHERE id = $1 FOR UPDATE", row["rfq_id"]
                 )
                 row = await load_proposal_context(conn, proposal_id)
+                if expected_price is not None and abs(float(row["price"]) - expected_price) > 0.005:
+                    raise ConflictError(
+                        "Поставщик изменил цену предложения. Обновите страницу и проверьте условия"
+                    )
                 if row["status"] == "pending_supplier":
                     raise ConflictError("Catalog offer must be accepted by the supplier")
                 if row["status"] not in BUYER_REVIEWABLE_PROPOSAL_STATUSES:

@@ -17,7 +17,6 @@ from app.core.middleware import (
     GlobalRateLimitMiddleware,
     HttpAuditMiddleware,
     RequestPublicOriginMiddleware,
-    TokenRefreshMiddleware,
 )
 from app.core.middleware.security_headers import SafeStaticFiles, SecurityHeadersMiddleware
 from app.database import pool
@@ -59,7 +58,7 @@ _app_log.propagate = False
 
 
 async def init_db_schema(retries: int = 5, delay_seconds: float = 2.0) -> None:
-    if settings.app_env != "development":
+    if not settings.is_dev_env:
         return
 
     last_error: Exception | None = None
@@ -117,7 +116,6 @@ app = FastAPI(
 
 app.add_middleware(HttpAuditMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(TokenRefreshMiddleware)
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestPublicOriginMiddleware)
 app.add_middleware(GlobalRateLimitMiddleware)
@@ -127,7 +125,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Authorization", "X-Access-Token"],
+    expose_headers=["Authorization"],
 )
 app.add_middleware(CollapseDuplicateSlashesMiddleware)
 

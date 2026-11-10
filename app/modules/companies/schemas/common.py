@@ -1,8 +1,9 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
-from app.utils.storage import FileUrlMixin, public_file_url
+from app.core.exceptions import ValidationError as AppValidationError
+from app.utils.storage import FileUrlMixin, public_file_url, stored_file_key
 
 
 class CompanyProfileSchema(BaseModel):
@@ -187,6 +188,14 @@ class CompanyWizardTeamMember(BaseModel):
     role: str
 
 
+def _own_logo(value: str | None) -> str | None:
+    """The logo must be a file uploaded to our storage (see stored_file_key)."""
+    try:
+        return stored_file_key(value)
+    except AppValidationError as exc:
+        raise ValueError("Загрузите логотип через форму загрузки") from exc
+
+
 class CompanyWizardInput(BaseModel):
     title: str = Field(min_length=2)
     legal_name: str = ""
@@ -207,6 +216,11 @@ class CompanyWizardInput(BaseModel):
     team: list[CompanyWizardTeamMember] = []
     actor_type: str = "buyer"
     actor_types: list[str] = []
+
+    @field_validator("logo")
+    @classmethod
+    def logo_is_ours(cls, value: str) -> str:
+        return _own_logo(value) or ""
 
 
 class CompanyUpdateRequest(BaseModel):
@@ -231,6 +245,11 @@ class CompanyUpdateRequest(BaseModel):
     brands: str | None = None
     notable_clients: str | None = None
     gallery: list[dict] | None = None
+
+    @field_validator("logo")
+    @classmethod
+    def logo_is_ours(cls, value: str | None) -> str | None:
+        return _own_logo(value)
 
 
 class AddTeamMemberRequest(BaseModel):

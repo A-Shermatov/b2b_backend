@@ -42,6 +42,13 @@ def test_audit_key_match_is_exact():
     assert out["nested"] == [{"KEY": "***", "title": "t"}]
 
 
+def test_audit_redacts_credential_like_fields():
+    data = {"bot_token": "123:abc", "api_key": "k", "client_secret": "s", "smtp_password": "p", "channel_id": "@c"}
+    out = redact_data(data)
+    assert out["channel_id"] == "@c"
+    assert {out[k] for k in ("bot_token", "api_key", "client_secret", "smtp_password")} == {"***"}
+
+
 def test_gateway_sanitize_headers_and_body():
     headers = {
         "Authorization": "Bearer abc",

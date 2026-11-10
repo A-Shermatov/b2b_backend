@@ -11,6 +11,7 @@ from app.modules.companies.schemas import (
 )
 from app.modules.companies.services.common import (
     COMPANY_ROLES,
+    ensure_can_change_member,
     ensure_can_manage,
     load_company_schema,
 )
@@ -251,6 +252,14 @@ class CompanyUpdateMixin:
                 raise NotFoundError("Team member not found")
             if membership["role"] == "director":
                 raise ForbiddenError("Cannot remove company director")
+            if target_user_id != user_id:  # leaving the team yourself is always allowed
+                await ensure_can_change_member(
+                    conn,
+                    company_id,
+                    user_id,
+                    target_user_id=target_user_id,
+                    target_role=membership["role"],
+                )
             await conn.execute("DELETE FROM company_users WHERE id = $1", membership["id"])
             await log_event(
                 conn,
@@ -305,6 +314,17 @@ class CompanyUpdateMixin:
                     raise ForbiddenError("Руководитель всегда имеет полный доступ к обеим сторонам")
                 if target_user_id == user_id and "none" in side_changes.values():
                     raise ForbiddenError("Нельзя закрыть доступ самому себе")
+                await ensure_can_change_member(
+                    conn,
+                    company_id,
+                    user_id,
+                    target_user_id=target_user_id,
+                    target_role=membership["role"],
+                    # An admin role on one side is still an admin role.
+                    new_role="admin"
+                    if role == "admin" and data.role is not None or "admin" in side_changes.values()
+                    else None,
+                )
                 row = await conn.fetchrow(
                     """
                     UPDATE company_users
