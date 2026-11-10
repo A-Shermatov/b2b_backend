@@ -246,3 +246,14 @@ async def test_private_files_need_a_signed_link(client, tmp_path, monkeypatch):
     expired = storage.signed_file_url("identity/7/passport.pdf", ttl_seconds=-10)
     exp_parts = urlsplit(expired)
     assert (await client.get(f"{exp_parts.path}?{exp_parts.query}")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_added_team_member_is_notified(client):
+    """M-01: the person added to a team learns about it right away."""
+    _, _, member, _ = await _company_with_member(client, "moderator")
+    rows = await client.get(f"{API}/buyer/notifications/", headers=member)
+    assert rows.status_code == 200
+    body = rows.json()
+    items = body.get("items", body) if isinstance(body, dict) else body
+    assert any("команду" in (n.get("title") or "") for n in items)
