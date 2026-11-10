@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, File, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, File, Request, Response, UploadFile
 
 from app.config import get_settings
 from app.core.exceptions import RateLimitError, ValidationError
@@ -19,6 +19,7 @@ from app.modules.auth.api.common import (
     UserPublic,
     UserUpdateRequest,
     check_rate_limit,
+    deliver_refresh_token,
     get_client_ip,
     get_current_user,
     router,
@@ -132,6 +133,7 @@ def _token_side(request: Request) -> str | None:
 async def change_password(
     data: ChangePasswordRequest,
     request: Request,
+    response: Response,
     background: BackgroundTasks,
     user: Annotated[CurrentUser, Depends(get_current_user)],
 ):
@@ -145,4 +147,4 @@ async def change_password(
         user.id, data, side=_token_side(request), ip=ip
     )
     background.add_task(email_utils.send_email, job.to, job.subject, job.text, job.html)
-    return tokens
+    return deliver_refresh_token(request, response, tokens)

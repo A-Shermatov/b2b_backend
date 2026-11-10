@@ -168,3 +168,41 @@ async def test_totp_code_cannot_be_replayed_at_login(client):
     assert first.status_code == 200, first.text
     again = await client.post(f"{API}/auth/2fa/verify", json={"challenge_token": await challenge(), "code": code})
     assert again.status_code == 422, again.text
+
+
+# ---------------------------------------------------------------- M-15
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_lives_in_an_httponly_cookie(client):
+    email, _, _ = await _register(client, "buyer")
+    res = await client.post(
+        f"{API}/auth/login",
+        json={"email": email, "password": "Passw0rd!"},
+        headers={"X-Refresh-Cookie": "1"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["refresh_token"] in ("", None)
+    cookie = res.headers.get("set-cookie", "")
+    assert "bm_refresh=" in cookie and "HttpOnly" in cookie and "/api/v1/auth" in cookie
+
+    # The cookie alone refreshes; the new refresh token again stays out of the body.
+    refreshed = await client.post(f"{API}/auth/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["access_token"]
+    assert refreshed.json()["refresh_token"] in ("", None)
+
+    out = await client.post(f"{API}/auth/logout")
+    assert out.status_code == 204, out.text
+    assert 'bm_refresh=""' in out.headers.get("set-cookie", "") or "Max-Age=0" in out.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_body_refresh_token_still_works_for_other_clients(client):
+    email, _, _ = await _register(client, "buyer")
+    res = await client.post(f"{API}/auth/login", json={"email": email, "password": "Passw0rd!"})
+    refresh_token = res.json()["refresh_token"]
+    assert refresh_token
+    res = await client.post(f"{API}/auth/refresh", json={"refresh_token": refresh_token})
+    assert res.status_code == 200, res.text
+    assert res.json()["refresh_token"]

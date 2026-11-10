@@ -82,11 +82,12 @@ class MessageResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # Omitted when the browser sends the refresh token as an httpOnly cookie.
+    refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 class UserPublic(BaseModel):
