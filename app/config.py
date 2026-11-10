@@ -13,8 +13,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "BrandMarket API"
-    app_env: str = "development"
-    debug: bool = True
+    # Safe by default: a server started without APP_ENV must not run with mock
+    # payments, open /docs and the public default SECRET_KEY. Local work sets
+    # APP_ENV=development in .env (see .env.example).
+    app_env: str = "production"
+    debug: bool = False
     api_v1_prefix: str = "/api/v1"
 
     secret_key: str = DEFAULT_SECRET_KEY

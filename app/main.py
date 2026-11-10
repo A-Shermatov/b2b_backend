@@ -59,7 +59,7 @@ _app_log.propagate = False
 
 
 async def init_db_schema(retries: int = 5, delay_seconds: float = 2.0) -> None:
-    if settings.app_env != "development":
+    if not settings.is_dev_env:
         return
 
     last_error: Exception | None = None

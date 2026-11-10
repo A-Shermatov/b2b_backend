@@ -14,6 +14,10 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+# Settings are safe-by-default (production); tests run as a dev environment unless
+# the developer chose otherwise.
+os.environ.setdefault("APP_ENV", "development")
+
 TEST_DB_SUFFIX = "_test"
 DB_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
