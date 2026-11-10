@@ -1,9 +1,13 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote, unquote, urlencode
 
 from fastapi import UploadFile
 from pydantic import BaseModel, field_serializer
@@ -36,7 +40,52 @@ def _files_base() -> str:
     return "http://localhost:8000"
 
 
+# Files that only the people involved may open: identity documents, deal files,
+# dispute evidence and support attachments. They are never served from the public /uploads mount or a public
+# bucket; links to them are short-lived signed URLs to GET /api/v1/files/<key>.
+PRIVATE_PREFIXES = ("identity/", "contracts/", "disputes/", "support/")
+PRIVATE_URL_TTL_SECONDS = 6 * 3600
+FILES_ROUTE = "/files"
+
+
+def is_private_key(key: str) -> bool:
+    return key.startswith(PRIVATE_PREFIXES)
+
+
+def _file_signature(key: str, expires: int) -> str:
+    message = f"{key}\n{expires}".encode()
+    secret = f"files:{settings.secret_key}".encode()
+    return hmac.new(secret, message, hashlib.sha256).hexdigest()[:40]
+
+
+def signed_file_url(key: str, ttl_seconds: int = PRIVATE_URL_TTL_SECONDS) -> str:
+    expires = int(time.time()) + ttl_seconds
+    query = urlencode({"exp": expires, "sig": _file_signature(key, expires)})
+    api = settings.public_api_url.rstrip("/")
+    return f"{api}{settings.api_v1_prefix}{FILES_ROUTE}/{quote(key)}?{query}"
+
+
+def verify_file_signature(key: str, expires: str | None, signature: str | None) -> bool:
+    try:
+        expires_at = int(expires or "")
+    except ValueError:
+        return False
+    if expires_at < time.time() or not signature:
+        return False
+    return hmac.compare_digest(_file_signature(key, expires_at), signature)
+
+
 def public_file_url(stored: str | None) -> str:
+    url = _public_file_url(stored)
+    if not url or url.startswith(("blob:", "data:")):
+        return url
+    key = storage_key_from_url(url)
+    if key and not key.startswith(("http://", "https://")) and is_private_key(key):
+        return signed_file_url(key)
+    return url
+
+
+def _public_file_url(stored: str | None) -> str:
     if stored is None:
         return ""
     value = stored.strip()
@@ -89,11 +138,22 @@ def storage_key_from_url(value: str | None) -> str:
     if not url or url == "#" or url.startswith(("blob:", "data:")):
         return url
 
-    prefixes = [_files_base()]
+    files_route = f"{settings.api_v1_prefix}{FILES_ROUTE}"
+    prefixes = [
+        f"{settings.public_api_url.rstrip('/')}{files_route}",
+        files_route,
+        _files_base(),
+    ]
     endpoint = _trim(settings.s3_endpoint_url or "")
     if endpoint:
         prefixes.append(f"{endpoint}/{settings.s3_bucket}")
     prefixes.append(f"http://minio:9000/{settings.s3_bucket}")
+
+    for prefix in prefixes:
+        if prefix and url.startswith(prefix + "/"):
+            # Our own links may carry a signature or cache-buster: the key has none.
+            url = unquote(url.split("?", 1)[0].split("#", 1)[0])
+            break
 
     for prefix in prefixes:
         if prefix and url.startswith(prefix + "/"):
@@ -165,7 +225,9 @@ class StorageService:
                         "Effect": "Allow",
                         "Principal": {"AWS": ["*"]},
                         "Action": ["s3:GetObject"],
-                        "Resource": [f"arn:aws:s3:::{bucket}/*"],
+                        # Only public media; private prefixes (PRIVATE_PREFIXES) are
+                        # read by the API after a signature check.
+                        "Resource": [f"arn:aws:s3:::{bucket}/{prefix}*" for prefix in PUBLIC_PREFIXES],
                     }
                 ],
             }
@@ -270,6 +332,28 @@ class StorageService:
         local_path = self._local_dir / key.replace("/", os.sep)
         await asyncio.to_thread(_write_local, local_path, content)
         return key, public_file_url(key)
+
+
+PUBLIC_PREFIXES = ("logos/", "catalog/", "certificates/", "avatars/", "reviews/", "rfqs/", "uploads/")
+
+
+async def read_stored_file(key: str) -> bytes | None:
+    """Bytes of a stored file (local folder first, then S3); None if absent."""
+    root = Path(settings.local_upload_dir).resolve()
+    local = (root / key).resolve()
+    if local.is_relative_to(root) and await asyncio.to_thread(local.is_file):
+        return await asyncio.to_thread(local.read_bytes)
+    s3 = await asyncio.to_thread(storage_service._get_s3)
+    if not s3:
+        return None
+
+    def _get() -> bytes | None:
+        try:
+            return s3.get_object(Bucket=settings.s3_bucket, Key=key)["Body"].read()
+        except Exception:  # missing key or S3 error: the caller answers 404
+            return None
+
+    return await asyncio.to_thread(_get)
 
 
 def _write_local(path: Path, content: bytes) -> None:

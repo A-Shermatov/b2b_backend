@@ -1,7 +1,8 @@
+from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
-from app.utils.storage import INLINE_EXTENSIONS
+from app.utils.storage import INLINE_EXTENSIONS, is_private_key
 
 _DOCS_PREFIXES = ("/docs", "/redoc", "/openapi.json")
 
@@ -30,6 +31,10 @@ class SafeStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path, scope):
+        # Identity documents, deal files and dispute evidence are only served
+        # through signed links (GET /api/v1/files/...), never from this mount.
+        if is_private_key(path.replace("\\", "/").lstrip("/")):
+            raise HTTPException(status_code=404)
         response = await super().get_response(path, scope)
         response.headers["X-Content-Type-Options"] = "nosniff"
         dot = path.rfind(".")

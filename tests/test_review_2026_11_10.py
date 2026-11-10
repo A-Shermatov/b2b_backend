@@ -206,3 +206,43 @@ async def test_body_refresh_token_still_works_for_other_clients(client):
     res = await client.post(f"{API}/auth/refresh", json={"refresh_token": refresh_token})
     assert res.status_code == 200, res.text
     assert res.json()["refresh_token"]
+
+
+async def test_private_files_need_a_signed_link(client, tmp_path, monkeypatch):
+    """H-02: identity/deal/dispute files are not public; links are signed and expire."""
+    from urllib.parse import urlsplit
+
+    from app.utils import storage
+
+    monkeypatch.setattr(storage.settings, "local_upload_dir", str(tmp_path))
+    monkeypatch.setattr(storage.storage_service, "_get_s3", lambda: None)
+    (tmp_path / "identity" / "7").mkdir(parents=True)
+    (tmp_path / "identity" / "7" / "passport.pdf").write_bytes(b"%PDF-1.4 secret")
+    (tmp_path / "logos" / "7").mkdir(parents=True)
+    (tmp_path / "logos" / "7" / "logo.png").write_bytes(b"png")
+
+    url = storage.public_file_url("identity/7/passport.pdf")
+    parts = urlsplit(url)
+    assert parts.path == f"{API}/files/identity/7/passport.pdf"
+    assert "sig=" in parts.query and "exp=" in parts.query
+    # Signed links still map back to the stored key (e.g. when echoed by the client).
+    assert storage.storage_key_from_url(url) == "identity/7/passport.pdf"
+    assert storage.public_file_url(url).startswith(url.split("?")[0])
+    assert "sig=" not in storage.public_file_url("logos/7/logo.png")
+
+    ok = await client.get(f"{parts.path}?{parts.query}")
+    assert ok.status_code == 200
+    assert ok.content == b"%PDF-1.4 secret"
+    assert "sandbox" in ok.headers["content-security-policy"]
+
+    assert (await client.get(parts.path)).status_code == 404
+    tampered = parts.query.replace("sig=", "sig=0")
+    assert (await client.get(f"{parts.path}?{tampered}")).status_code == 404
+    other = f"{API}/files/identity/8/passport.pdf?{parts.query}"
+    assert (await client.get(other)).status_code == 404
+    public = f"{API}/files/logos/7/logo.png?{parts.query}"
+    assert (await client.get(public)).status_code == 404
+
+    expired = storage.signed_file_url("identity/7/passport.pdf", ttl_seconds=-10)
+    exp_parts = urlsplit(expired)
+    assert (await client.get(f"{exp_parts.path}?{exp_parts.query}")).status_code == 404
