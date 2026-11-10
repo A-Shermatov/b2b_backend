@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Iterable
 
 from app.config import get_settings
@@ -17,8 +18,21 @@ class CommissionQuote:
     minimum: float
 
 
-def _money(value: float) -> float:
-    return round(float(value), 2)
+_CENT = Decimal("0.01")
+
+
+def _dec(value) -> Decimal:
+    # str() first: Decimal(0.1) would carry the binary error of the float.
+    return value if isinstance(value, Decimal) else Decimal(str(value or 0))
+
+
+def _cents(value) -> Decimal:
+    return _dec(value).quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def _money(value) -> float:
+    """Round to cents, half up (round(2.675, 2) gives 2.67 on floats)."""
+    return float(_cents(value))
 
 
 def is_settings_currency(currency) -> bool:
@@ -38,9 +52,11 @@ def calculate_commission(
     minimum = float(settings.commission_min) if is_settings_currency(currency) else 0.0
     if amount <= 0:
         return CommissionQuote(amount=0.0, percent=percent, minimum=minimum)
-    commission = min(max(minimum, amount * percent / 100), amount)
+    total = _dec(amount)
+    commission = min(max(_dec(minimum), total * _dec(percent) / 100), total)
+    commission = _cents(commission)
     if bank_split and is_settings_currency(currency):
-        commission = float(marketplace_commission(amount, commission))
+        commission = marketplace_commission(total, commission)
     return CommissionQuote(
         amount=_money(commission),
         percent=percent,
@@ -72,11 +88,14 @@ def split_commission(
 ) -> list[float]:
     if not milestone_amounts:
         return []
-    base = sum(milestone_amounts)
-    if total <= 0 or base <= 0:
+    amounts = [_dec(amount) for amount in milestone_amounts]
+    base = sum(amounts, Decimal(0))
+    total_dec = _cents(total)
+    if total_dec <= 0 or base <= 0:
         return [0.0 for _ in milestone_amounts]
-    parts = [_money(total * amount / base) for amount in milestone_amounts[:-1]]
-    parts.append(max(0.0, _money(total - sum(parts))))
+    cents = [_cents(total_dec * amount / base) for amount in amounts[:-1]]
+    cents.append(max(Decimal(0), total_dec - sum(cents, Decimal(0))))
+    parts = [float(part) for part in cents]
     if not bank_split:
         return parts
     return _merge_small_parts(parts)
@@ -84,23 +103,23 @@ def split_commission(
 
 def _merge_small_parts(parts: list[float]) -> list[float]:
     """Move commission parts below the bank minimum onto other milestones (total kept)."""
-    minimum = float(MIN_MARKETPLACE_PART)
-    merged: list[float] = []
-    carry = 0.0
-    for part in parts[:-1]:
-        part = _money(part + carry)
-        carry = 0.0
+    minimum = MIN_MARKETPLACE_PART
+    merged: list[Decimal] = []
+    carry = Decimal(0)
+    for raw in parts[:-1]:
+        part = _cents(_dec(raw) + carry)
+        carry = Decimal(0)
         if 0 < part < minimum:
-            carry, part = part, 0.0
+            carry, part = part, Decimal(0)
         merged.append(part)
-    last = _money(parts[-1] + carry)
+    last = _cents(_dec(parts[-1]) + carry)
     if 0 < last < minimum:
         previous = next((i for i in range(len(merged) - 1, -1, -1) if merged[i] > 0), None)
         if previous is not None:
-            merged[previous] = _money(merged[previous] + last)
-            last = 0.0
+            merged[previous] = merged[previous] + last
+            last = Decimal(0)
     merged.append(last)
-    return merged
+    return [float(part) for part in merged]
 
 
 def format_commission_terms(percent: float | None, minimum: float | None, currency: str) -> str:

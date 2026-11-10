@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.core.pagination import build_page, fetch_page
@@ -196,8 +197,13 @@ class ApprovalService:
                     "В корзине позиции в разных валютах — оформите их отдельными заказами"
                 )
             currency = line_currency
-            line_total = round(float(unit_price) * entry.qty, 2)
-            total += line_total
+            line_total = float(
+                (Decimal(str(unit_price)) * entry.qty).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+            )
+            # Sum in cents: adding floats drifts (0.1 + 0.2 != 0.3).
+            total = float(Decimal(str(total)) + Decimal(str(line_total)))
             lines.append(
                 {
                     "item_id": entry.item_id,
