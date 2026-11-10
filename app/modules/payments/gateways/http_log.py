@@ -48,7 +48,8 @@ def sanitize_for_log(payload: Any) -> Any:
     if isinstance(payload, dict):
         out = {}
         for key, value in payload.items():
-            if str(key).lower() in _REDACT_KEYS:
+            name = str(key).lower()
+            if name in _REDACT_KEYS or name.endswith(("_token", "_secret", "_password", "_key")):
                 out[key] = "***"
             else:
                 out[key] = sanitize_for_log(value)

@@ -75,10 +75,20 @@ def decode_access_payload(authorization: str) -> dict | None:
     return payload
 
 
+# Any field named like a credential (bot_token, api_key, client_secret, ...) is
+# hidden too: an exact list alone missed new fields such as the Telegram bot token.
+REDACT_SUFFIXES = ("_token", "_secret", "_password", "_key")
+
+
+def is_sensitive_key(key) -> bool:
+    name = str(key).lower()
+    return name in REDACT_KEYS or name.endswith(REDACT_SUFFIXES)
+
+
 def redact_data(value):
     if isinstance(value, dict):
         return {
-            key: "***" if str(key).lower() in REDACT_KEYS else redact_data(item)
+            key: "***" if is_sensitive_key(key) else redact_data(item)
             for key, item in value.items()
         }
     if isinstance(value, list):

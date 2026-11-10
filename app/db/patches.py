@@ -816,4 +816,12 @@ COMPAT_PATCHES = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS ix_telegram_posts_created ON telegram_posts (created_at DESC);",
+    # The HTTP audit used to store the Telegram bot token from PUT /admin/telegram in
+    # plain text; hide it in rows written before the redaction covered *_token.
+    """
+    UPDATE audit_logs
+    SET details = jsonb_set(details, '{request_body,bot_token}', '"***"'::jsonb)
+    WHERE details #>> '{request_body,bot_token}' IS NOT NULL
+      AND details #>> '{request_body,bot_token}' <> '***';
+    """,
 ]
