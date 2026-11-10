@@ -13,7 +13,7 @@ from fastapi import UploadFile
 from pydantic import BaseModel, field_serializer
 
 from app.config import get_settings
-from app.core.exceptions import ValidationError
+from app.core.exceptions import AppError, ValidationError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -204,6 +204,11 @@ class FileUrlMixin(BaseModel):
         return public_file_url(value)
 
 
+class StorageUnavailableError(AppError):
+    def __init__(self) -> None:
+        super().__init__(503, "Хранилище файлов недоступно, попробуйте позже", "storage_unavailable")
+
+
 class StorageService:
     def __init__(self) -> None:
         self._s3 = None
@@ -241,6 +246,9 @@ class StorageService:
         global _using_local
         if self._s3 is not None:
             return self._s3
+        if settings.storage_backend == "local":
+            _using_local = True
+            return None
         try:
             import boto3
             from botocore.client import Config
@@ -259,7 +267,14 @@ class StorageService:
             _using_local = False
             return self._s3
         except Exception as exc:
-            logger.warning("S3 unavailable, using local storage: %s", exc)
+            if settings.storage_backend == "s3":
+                logger.error("S3 unavailable and STORAGE_BACKEND=s3: %s", exc)
+                raise StorageUnavailableError() from exc
+            # Files written now land on this container's disk only; they disappear
+            # with it and are not in the bucket once S3 is back. Say so loudly.
+            logger.error(
+                "S3 unavailable, writing to the local folder (STORAGE_BACKEND=auto): %s", exc
+            )
             _using_local = True
             return None
 

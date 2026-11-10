@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import List
+from typing import List, Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     s3_bucket: str = "brandmarket"
     s3_region: str = "us-east-1"
     s3_use_ssl: bool = False
+    # auto: S3, and the local folder while S3 is unreachable (old behaviour);
+    # s3: S3 only, an upload fails if S3 is down; local: the local folder only.
+    storage_backend: Literal["auto", "s3", "local"] = "auto"
     files_base_url: str = "http://localhost:9000/brandmarket"
     local_upload_dir: str = "./uploads"
 
