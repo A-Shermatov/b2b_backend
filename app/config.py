@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     trust_proxy_headers: bool = True
+    # CF-Connecting-IP is set by Cloudflare and cannot be forged through it. Behind
+    # any other proxy (nginx, a load balancer) a client can send it: turn this off.
+    trust_cf_connecting_ip: bool = True
 
     database_url: str
     redis_url: str | None = None

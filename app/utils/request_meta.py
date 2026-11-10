@@ -27,15 +27,17 @@ def client_ip(request: Request) -> str:
     """
     from app.config import get_settings
 
+    settings = get_settings()
     peer = request.client.host if request.client and request.client.host else None
     peer_ip = _parse_ip(peer)
-    trust_headers = get_settings().trust_proxy_headers and (
+    trust_headers = settings.trust_proxy_headers and (
         peer_ip is None or _is_internal(peer_ip)
     )
     if trust_headers:
-        cf_ip = _parse_ip(request.headers.get("cf-connecting-ip"))
-        if cf_ip is not None:
-            return str(cf_ip)
+        if settings.trust_cf_connecting_ip:
+            cf_ip = _parse_ip(request.headers.get("cf-connecting-ip"))
+            if cf_ip is not None:
+                return str(cf_ip)
         forwarded = request.headers.get("x-forwarded-for") or ""
         hops = [_parse_ip(part) for part in forwarded.split(",")]
         hops = [hop for hop in hops if hop is not None]
