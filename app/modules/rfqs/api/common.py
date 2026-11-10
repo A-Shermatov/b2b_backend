@@ -1,8 +1,6 @@
 from fastapi import APIRouter
 
 from app.deps import (
-    RFQ_ROLES,
-    require_buyer_company_roles,
     require_buyer_ctx,
     require_supplier_ctx,
 )

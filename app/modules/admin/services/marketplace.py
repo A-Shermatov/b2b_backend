@@ -1,8 +1,7 @@
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
-    actor_role_of,
     file_url,
     load_audit_history,
     load_owners,

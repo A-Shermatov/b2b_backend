@@ -1,12 +1,11 @@
 from fastapi import APIRouter
 
-from app.deps import raw_db_dependency, require_buyer_ctx, require_supplier_ctx
+from app.deps import require_buyer_ctx, require_supplier_ctx
 from app.modules.companies.schemas import (
     AddTeamMemberRequest,
     CertificateCreateRequest,
     CertificateUpdateRequest,
     CompanyCertificateSchema,
-    CompanyCertificateUploadResponse,
     CompanyChangeRequestCreate,
     CompanyChangeRequestSchema,
     CompanyUpdateRequest,

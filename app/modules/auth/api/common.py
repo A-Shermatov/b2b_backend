@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, Response
 
-from app.deps import get_auth_context, get_current_user, raw_db_dependency
+from app.deps import get_auth_context, get_current_user
 from app.modules.auth.schemas import (
     ActivateRoleRequest,
     ChangePasswordRequest,
@@ -24,7 +24,7 @@ from app.modules.auth.schemas import (
     UserUpdateRequest,
 )
 from app.modules.auth.services import AuthService
-from app.deps import AuthContext, get_client_ip
+from app.deps import get_client_ip
 from app.utils.redis_client import check_rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])

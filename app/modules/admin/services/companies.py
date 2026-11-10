@@ -1,10 +1,9 @@
-from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.pagination import build_page, fetch_page
 from app.core.permissions import ensure_permission
 from app.modules.actors.services.common import trust_level_for_company
 from app.modules.admin.services.common import (
     actor_id_of,
-    actor_role_of,
     company_status_sql,
     file_url,
     log_admin,
