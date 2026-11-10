@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -252,9 +253,12 @@ class StorageService:
         content, content_type, ext = await self.validate_upload(file)
         key = f"{prefix}/{uuid.uuid4().hex}{ext}"
 
-        s3 = self._get_s3()
+        # boto3 and disk writes block: run them off the event loop, otherwise one
+        # 50 MB upload stalls every request of the (single-process) API.
+        s3 = await asyncio.to_thread(self._get_s3)
         if s3:
-            s3.put_object(
+            await asyncio.to_thread(
+                s3.put_object,
                 Bucket=settings.s3_bucket,
                 Key=key,
                 Body=content,
@@ -264,9 +268,13 @@ class StorageService:
             return key, public_file_url(key)
 
         local_path = self._local_dir / key.replace("/", os.sep)
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(content)
+        await asyncio.to_thread(_write_local, local_path, content)
         return key, public_file_url(key)
+
+
+def _write_local(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
 
 
 UNSUPPORTED_FILE_MESSAGE = (
