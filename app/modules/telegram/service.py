@@ -1,8 +1,9 @@
 """Posting new requests to a Telegram channel through the platform's bot.
 
 The admin sets the bot token and the channel in the admin panel. Every public
-request, once published, becomes one short post with a button that opens it on
-the site. The token is stored encrypted and never sent back to the browser.
+request, once published, becomes one post: a picture card (buyer's logo,
+Brend Market, the title and key facts) with a short caption and a button that
+opens it on the site. The token is stored encrypted and never sent back.
 """
 
 from __future__ import annotations
@@ -11,10 +12,13 @@ import asyncio
 import base64
 import hashlib
 import html
+import json
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -22,7 +26,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.config import get_settings
 from app.core.exceptions import ValidationError
 from app.database import pool
+from app.modules.telegram.card import CardData, CardUnavailable, render_request_card
 from app.utils.audit import log_event
+from app.utils.storage import public_file_url, storage_key_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +36,12 @@ API_BASE = "https://api.telegram.org"
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 TOKEN_RE = re.compile(r"^\d{5,12}:[A-Za-z0-9_-]{30,64}$")
 CHANNEL_RE = re.compile(r"^(@[A-Za-z][A-Za-z0-9_]{3,31}|-100\d{6,16}|-?\d{5,16})$")
-MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+MONTHS = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+# A logo bigger than this is not worth waiting for: the card uses initials.
+MAX_LOGO_BYTES = 3 * 1024 * 1024
 
 
 class TelegramError(Exception):
@@ -69,11 +80,28 @@ def mask_token(token: str | None) -> str | None:
 # --- the Telegram Bot API ----------------------------------------------------
 
 
-async def call_bot(token: str, method: str, payload: dict[str, Any] | None = None) -> Any:
-    """One Bot API call. Tests replace this function; nothing else talks to Telegram."""
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+async def call_bot(
+    token: str,
+    method: str,
+    payload: dict[str, Any] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
+) -> Any:
+    """One Bot API call. Tests replace this function; nothing else talks to Telegram.
+
+    With `files` the call goes as a form upload (a photo); nested values such
+    as the button keyboard are then sent as JSON text, as Telegram expects.
+    """
+    url = f"{API_BASE}/bot{token}/{method}"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0) if files else TIMEOUT) as client:
         try:
-            response = await client.post(f"{API_BASE}/bot{token}/{method}", json=payload or {})
+            if files:
+                form = {
+                    key: json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                    for key, value in (payload or {}).items()
+                }
+                response = await client.post(url, data=form, files=files)
+            else:
+                response = await client.post(url, json=payload or {})
         except httpx.HTTPError as exc:
             raise TelegramError("Telegram не отвечает, попробуйте позже") from exc
     try:
@@ -118,42 +146,144 @@ def request_url(site_url: str, rfq_id: str) -> str:
     return f"{site_url.rstrip('/')}/supplier/rfqs/{rfq_id}"
 
 
-def format_post(row, site_url: str) -> str:
-    """Five short lines: what kind, the title, money and amount, place and term, the link."""
-    kind = "Товары" if row["type"] == "product" else "Услуги"
-    head = f"🆕 <b>Новая заявка</b> · {html.escape(row['category_name'] or kind)}"
-    facts = [f"💰 {_budget(row)}"]
+def request_number(rfq_id: str) -> str:
+    """The short number the site shows for a request, from its id's digits."""
+    digits = re.sub(r"\D", "", rfq_id)
+    return f"№ {(digits or rfq_id)[-4:]}"
+
+
+def buyer_name(row) -> str:
+    """A company is named; a private person is not, in a public channel."""
+    if row["buyer_kind"] == "company" and (row["company_title"] or "").strip():
+        return row["company_title"].strip()
+    return "Частный заказчик"
+
+
+def _due(row) -> tuple[str, str] | None:
+    """The second date: delivery for goods, start of work for services."""
+    if row["type"] == "product":
+        day = _deadline(row["delivery_date"])
+        return ("Дедлайн", f"до {day}") if day else None
+    day = _deadline(row["start_date"])
+    if not day:
+        return None
+    duration = (row["project_duration"] or "").strip()
+    return ("Начало работ", f"с {day}" + (f", {duration}" if duration else ""))
+
+
+def card_facts(row) -> list[tuple[str, str]]:
+    facts = [("Бюджет", _budget(row))]
     if row["type"] == "product" and row["quantity"]:
-        facts.append(f"📦 {row['quantity']} шт")
-    if row["payment_mode"] == "direct":
-        facts.append("⚡ оплата сразу")
-    else:
-        facts.append("🛡 с гарантией")
-    place = row["delivery_city"] if row["type"] == "product" else None
+        facts.append(("Количество", f"{row['quantity']} шт"))
     term = _deadline(row["deadline"])
-    where_when = []
-    if place:
-        where_when.append(f"📍 {html.escape(place)}")
     if term:
-        where_when.append(f"⏳ КП до {term}")
-    lines = [head, f"<b>{html.escape(row['title'])}</b>", " · ".join(facts)]
-    if where_when:
-        lines.append(" · ".join(where_when))
-    lines.append(f'<a href="{html.escape(request_url(site_url, row["id"]), quote=True)}">Открыть заявку →</a>')
+        facts.append(("Приём КП до", term))
+    due = _due(row)
+    if due:
+        facts.append((due[0], due[1].split(",")[0]))
+    return facts
+
+
+def format_post(row, site_url: str) -> str:
+    """The caption under the picture, in the shape of a job post:
+
+    the title, the category and who asks; amount and money; the two dates;
+    the link. Everything the buyer typed is escaped.
+    """
+    e = html.escape
+    lines = [f"🆕 <b>{e(row['title'])}</b>"]
+    if row["category_name"]:
+        lines.append(e(row["category_name"]))
+    lines.append(f"Заказчик: {e(buyer_name(row))}")
+    lines.append("")
+    if row["type"] == "product" and row["quantity"]:
+        lines.append(f"📦 Количество: {row['quantity']} шт")
+    lines.append(f"💰 Бюджет: {_budget(row)}")
+    if row["payment_mode"] == "direct":
+        lines.append("⚡ Оплата сразу поставщику")
+    else:
+        lines.append("🛡 Оплата с гарантией площадки")
+    term = _deadline(row["deadline"])
+    due = _due(row)
+    if term or due:
+        lines.append("")
+    if term:
+        lines.append(f"⏳ Приём КП до {term}")
+    if due:
+        lines.append(f"{due[0]}: {e(due[1])}")
+    lines.append("")
+    url = e(request_url(site_url, row["id"]), quote=True)
+    # A short, readable link text instead of the long address with the request id.
+    host = urlparse(site_url).netloc or site_url
+    label = e(f"{host} · заявка {request_number(row['id'])}")
+    lines.append(f'Откликнуться: → <a href="{url}">{label}</a>')
     return "\n".join(lines)
+
+
+def _logo_bytes(stored: str | None) -> bytes | None:
+    """The buyer's logo from storage: the local folder, or its public link."""
+    if not stored:
+        return None
+    key = storage_key_from_url(stored)
+    if key and not key.startswith(("http://", "https://")):
+        local = Path(get_settings().local_upload_dir) / key
+        if local.is_file() and local.stat().st_size <= MAX_LOGO_BYTES:
+            return local.read_bytes()
+    url = public_file_url(stored)
+    if not url.startswith(("http://", "https://")):
+        return None
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+            response = client.get(url)
+        if response.status_code == 200 and len(response.content) <= MAX_LOGO_BYTES:
+            return response.content
+    except httpx.HTTPError:
+        return None
+    return None
+
+
+def _render_card(row, site_url: str) -> bytes:
+    return render_request_card(
+        CardData(
+            title=row["title"],
+            category=row["category_name"],
+            buyer_name=buyer_name(row),
+            buyer_logo=_logo_bytes(row["company_logo"]) if row["buyer_kind"] == "company" else None,
+            facts=card_facts(row),
+            number=request_number(row["id"]),
+            site_host=urlparse(site_url).netloc or site_url,
+        )
+    )
+
+
+async def build_card(row, site_url: str) -> bytes | None:
+    """The picture for a post, or None when this server cannot draw one."""
+    try:
+        return await asyncio.to_thread(_render_card, row, site_url)
+    except CardUnavailable:
+        logger.warning("No Cyrillic font for Telegram cards: posting text only")
+    except Exception:
+        logger.exception("Telegram card for rfq %s could not be drawn", row["id"])
+    return None
 
 
 POST_ROW_SQL = """
     SELECT r.id, r.title, r.type::text AS type, r.status::text AS status,
            r.visibility::text AS visibility, r.budget_type::text AS budget_type,
            r.budget_from, r.budget_to, r.currency, r.deadline, r.quantity,
-           r.delivery_city, r.payment_mode,
+           r.delivery_city, r.delivery_date, r.start_date, r.project_duration,
+           r.payment_mode,
            (
                SELECT c.name FROM categories c
                WHERE c.slug = r.category_id OR c.id::text = r.category_id
                LIMIT 1
-           ) AS category_name
+           ) AS category_name,
+           a.kind::text AS buyer_kind,
+           co.title AS company_title,
+           co.logo AS company_logo
     FROM rfqs r
+    LEFT JOIN actors a ON a.id = r.actor_id
+    LEFT JOIN companies co ON co.id = a.company_id
     WHERE r.id = $1
 """
 
@@ -336,18 +466,35 @@ async def post_request(rfq_id: str, *, force: bool = False) -> str:
             return "duplicate"
         site_url = _site_url(current)
 
-    payload = {
-        "chat_id": channel,
-        "text": format_post(row, site_url),
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-        "reply_markup": {
-            "inline_keyboard": [[{"text": "Открыть заявку", "url": request_url(site_url, rfq_id)}]]
-        },
-    }
+    caption = format_post(row, site_url)
+    keyboard = {"inline_keyboard": [[{"text": "Открыть заявку", "url": request_url(site_url, rfq_id)}]]}
+    card = await build_card(row, site_url)
     status, error, message_id = "sent", None, None
     try:
-        result = await call_bot(token, "sendMessage", payload)
+        result = None
+        if card:
+            try:
+                result = await call_bot(
+                    token,
+                    "sendPhoto",
+                    {"chat_id": channel, "caption": caption, "parse_mode": "HTML", "reply_markup": keyboard},
+                    files={"photo": ("request.png", card, "image/png")},
+                )
+            except TelegramError as exc:
+                # A picture Telegram does not take must not cost the post: send the text.
+                logger.warning("Telegram photo for rfq %s refused, sending text: %s", rfq_id, exc)
+        if result is None:
+            result = await call_bot(
+                token,
+                "sendMessage",
+                {
+                    "chat_id": channel,
+                    "text": caption,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                    "reply_markup": keyboard,
+                },
+            )
         message_id = result.get("message_id") if isinstance(result, dict) else None
     except TelegramError as exc:
         status, error = "failed", str(exc)[:500]
@@ -372,6 +519,54 @@ async def post_request(rfq_id: str, *, force: bool = False) -> str:
             error,
         )
     return status
+
+
+SAMPLE_ROW = {
+    "id": "00000000-0000-0000-0000-000000004821",
+    "title": "Ноутбуки для отдела продаж",
+    "type": "product",
+    "budget_type": "range",
+    "budget_from": 120000,
+    "budget_to": 150000,
+    "currency": "TJS",
+    "deadline": None,
+    "quantity": 20,
+    "delivery_city": "Душанбе",
+    "delivery_date": None,
+    "start_date": None,
+    "project_duration": None,
+    "payment_mode": "escrow",
+    "category_name": "Компьютеры и оргтехника",
+    "buyer_kind": "company",
+    "company_title": "ООО «Пример»",
+    "company_logo": None,
+}
+
+
+async def preview() -> dict:
+    """What the next post looks like: the newest open public request, or a sample."""
+    async with pool.connection() as conn:
+        current = await _load(conn)
+        rfq_id = await conn.fetchval(
+            """
+            SELECT id FROM rfqs
+            WHERE visibility::text = 'public'
+              AND status::text IN ('published', 'receiving_proposals')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        )
+        row = await conn.fetchrow(POST_ROW_SQL, rfq_id) if rfq_id else None
+    site_url = _site_url(current)
+    if row is None:
+        soon = date.today() + timedelta(days=12)
+        row = {**SAMPLE_ROW, "deadline": soon.isoformat(), "delivery_date": (soon + timedelta(days=13)).isoformat()}
+    card = await build_card(row, site_url)
+    return {
+        "caption": format_post(row, site_url),
+        "image": f"data:image/png;base64,{base64.b64encode(card).decode()}" if card else None,
+        "sample": rfq_id is None,
+    }
 
 
 async def post_request_safely(rfq_id: str) -> None:

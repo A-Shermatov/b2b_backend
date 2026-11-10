@@ -1,10 +1,13 @@
 """Cancelling and archiving requests, profile photos in chats, and the Telegram channel bot."""
 
 import asyncio
+import io
 from datetime import date, timedelta
 
 import pytest
+from PIL import Image
 
+from app.modules.telegram import card as telegram_card
 from app.modules.telegram import service as telegram
 from tests.sql import execute, fetchrow, fetchval
 
@@ -152,9 +155,9 @@ async def test_profile_photo_is_saved_and_shown_next_to_messages(client, buyer_a
 def telegram_calls(monkeypatch):
     calls: list[tuple[str, dict]] = []
 
-    async def fake_call(token, method, payload=None):
+    async def fake_call(token, method, payload=None, files=None):
         assert token == TOKEN
-        calls.append((method, payload or {}))
+        calls.append((method, {**(payload or {}), **({"_files": files} if files else {})}))
         if method == "getMe":
             return {"username": "brendmarket_bot"}
         if method == "getChat":
@@ -201,15 +204,23 @@ async def test_admin_connects_the_bot_and_new_requests_are_posted(
 
     rfq_id = await _request(client, buyer_auth, "Ноутбуки для отдела продаж")
     await asyncio.gather(*list(telegram._background))
-    sends = [p for m, p in telegram_calls if m == "sendMessage"]
-    assert len(sends) == 1
-    text = sends[0]["text"]
-    assert "Ноутбуки для отдела продаж" in text
-    assert "12 500 TJS" in text
-    assert "40 шт" in text
-    assert f"https://brendmarket.tj/supplier/rfqs/{rfq_id}" in text
-    assert sends[0]["reply_markup"]["inline_keyboard"][0][0]["url"].endswith(rfq_id)
-    assert len(text.splitlines()) <= 5
+    posts = [(m, p) for m, p in telegram_calls if m in ("sendPhoto", "sendMessage")]
+    assert len(posts) == 1
+    method, sent = posts[0]
+    # The post is a picture card with a caption, or text alone where no font is installed.
+    if telegram_card.fonts_available():
+        assert method == "sendPhoto"
+        _name, picture, mime = sent["_files"]["photo"]
+        assert mime == "image/png" and picture[1:4] == b"PNG"
+    text = sent.get("caption") or sent["text"]
+    assert text.startswith("🆕 <b>Ноутбуки для отдела продаж</b>")
+    assert "Заказчик: " in text
+    assert "📦 Количество: 40 шт" in text
+    assert "💰 Бюджет: 12" in text and "500 TJS" in text
+    assert "⏳ Приём КП до " in text
+    assert "Дедлайн: до " in text
+    assert f'<a href="https://brendmarket.tj/supplier/rfqs/{rfq_id}">brendmarket.tj · заявка №' in text
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["url"].endswith(rfq_id)
     post = await fetchrow("SELECT status FROM telegram_posts WHERE rfq_id = $1", rfq_id)
     assert post["status"] == "sent"
 
@@ -264,3 +275,63 @@ async def test_private_requests_and_a_switched_off_bot_post_nothing(
     await asyncio.gather(*list(telegram._background))
     assert await telegram.post_request(public_id) == "skipped"
     assert not [p for m, p in telegram_calls if m == "sendMessage"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_picture_still_posts_the_text(
+    client, admin_auth, buyer_auth, telegram_calls, monkeypatch
+):
+    await execute("DELETE FROM telegram_settings")
+    await client.put(
+        f"{API}/admin/telegram",
+        headers=admin_auth["headers"],
+        json={"enabled": True, "bot_token": TOKEN, "channel_id": "@brend_zayavki"},
+    )
+
+    async def card(row, site_url):
+        return b"\x89PNG not really"
+
+    original = telegram.call_bot
+
+    async def refuse_photos(token, method, payload=None, files=None):
+        if method == "sendPhoto":
+            raise telegram.TelegramError("Bad Request: IMAGE_PROCESS_FAILED")
+        return await original(token, method, payload, files)
+
+    monkeypatch.setattr(telegram, "build_card", card)
+    monkeypatch.setattr(telegram, "call_bot", refuse_photos)
+    rfq_id = await _request(client, buyer_auth, "Заявка с непринятой картинкой")
+    await asyncio.gather(*list(telegram._background))
+    texts = [p for m, p in telegram_calls if m == "sendMessage"]
+    assert len(texts) == 1 and "Заявка с непринятой картинкой" in texts[0]["text"]
+    post = await fetchrow("SELECT status FROM telegram_posts WHERE rfq_id = $1", rfq_id)
+    assert post["status"] == "sent"
+
+
+def test_the_card_draws_with_initials_and_cuts_long_text():
+    if not telegram_card.fonts_available():
+        pytest.skip("No Cyrillic font on this machine")
+    png = telegram_card.render_request_card(
+        telegram_card.CardData(
+            title="Очень длинное название заявки " * 6,
+            category="Мобильные приложения",
+            buyer_name="ООО «Сомон Трейд»",
+            buyer_logo=b"not an image",
+            facts=[("Бюджет", "12 000–24 600 TJS"), ("Количество", "40 шт"), ("Приём КП до", "22 ноября")],
+            number="№ 4821",
+            site_host="brendmarket.tj",
+        )
+    )
+    image = Image.open(io.BytesIO(png))
+    assert image.size == (1200, 750)
+
+
+@pytest.mark.asyncio
+async def test_the_admin_sees_a_preview_of_the_next_post(client, admin_auth, telegram_calls):
+    res = await client.get(f"{API}/admin/telegram/preview", headers=admin_auth["headers"])
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "Заказчик: " in body["caption"]
+    assert "Откликнуться" in body["caption"]
+    if telegram_card.fonts_available():
+        assert body["image"].startswith("data:image/png;base64,")

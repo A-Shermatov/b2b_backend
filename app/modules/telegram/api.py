@@ -40,6 +40,13 @@ async def update_telegram_settings(
     return await _view(user)
 
 
+@admin_router.get("/preview")
+async def preview_telegram_post(user: Annotated[CurrentUser, Depends(require_admin)]):
+    """The picture and caption the next post would get."""
+    ensure_permission(user, VIEW_PERMISSION)
+    return await service.preview()
+
+
 @admin_router.post("/test", response_model=TelegramActionResult)
 async def send_telegram_test(user: Annotated[CurrentUser, Depends(require_admin)]):
     ensure_permission(user, UPDATE_PERMISSION)
