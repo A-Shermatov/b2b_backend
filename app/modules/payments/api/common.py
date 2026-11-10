@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.deps import FINANCE_ROLES, require_buyer_company_roles, require_buyer_ctx, require_supplier_ctx
+from app.deps import require_buyer_ctx, require_supplier_ctx
 from app.modules.payments.services import PaymentService
 from app.deps import BuyerContext, SupplierContext
 

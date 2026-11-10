@@ -3,7 +3,6 @@ from fastapi import APIRouter
 from app.deps import require_buyer_ctx, require_supplier_ctx
 from app.modules.proposals.schemas import (
     ProposalAcceptRequest,
-    ProposalCreate,
     ProposalMessageCreate,
     ProposalUpdate,
 )

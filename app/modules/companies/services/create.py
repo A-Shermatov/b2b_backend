@@ -1,4 +1,9 @@
-from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    RateLimitError,
+    ValidationError,
+)
 from app.modules.actors.services import ActorService
 from app.modules.companies.schemas import (
     AddTeamMemberRequest,
@@ -15,7 +20,12 @@ from app.modules.companies.services.common import (
     parse_actor_types,
     user_as_dict,
 )
+from app.modules.notifications.services import NotificationService
+from app.utils import redis_client
 from app.utils.audit import log_event
+
+
+TEAM_ADDS_PER_HOUR = 20
 
 
 class CompanyCreateMixin:
@@ -229,6 +239,12 @@ class CompanyCreateMixin:
         async with self.connection() as conn:
             await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
             await ensure_can_change_member(conn, company_id, user_id, new_role=data.role)
+            # The lookup by email tells whether an account exists: cap how many
+            # addresses one manager can try, so the form is no enumeration tool.
+            if not await redis_client.check_rate_limit(
+                f"team_add:{user_id}", TEAM_ADDS_PER_HOUR, 3600
+            ):
+                raise RateLimitError("Слишком много попыток добавить сотрудника. Попробуйте через час")
             member = await conn.fetchrow(
                 "SELECT id FROM users WHERE email = $1",
                 data.email.lower(),
@@ -264,4 +280,17 @@ class CompanyCreateMixin:
                 company_id=company_id,
                 details={"member_user_id": member["id"], "role": data.role},
             )
+            company_name = await conn.fetchval(
+                "SELECT title FROM companies WHERE id = $1", company_id
+            )
+        # The added person learns about it at once and can leave the team
+        # (self-removal is allowed) if they did not expect it.
+        await NotificationService().notify_user(
+            member["id"],
+            "system",
+            "Вас добавили в команду компании",
+            f"Вас добавили в «{company_name or 'компанию'}» с ролью «{data.role}». "
+            "Если вы не ожидали этого, выйдите из команды в профиле.",
+            company_id=company_id,
+        )
         return row

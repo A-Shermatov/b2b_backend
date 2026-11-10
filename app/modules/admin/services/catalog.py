@@ -1,10 +1,9 @@
 from datetime import datetime, timezone
 
-from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     actor_id_of,
-    actor_role_of,
     catalog_view_sql,
     file_url,
     load_audit_history,

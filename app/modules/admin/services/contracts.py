@@ -1,10 +1,9 @@
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import (
     ESCROW_AWAITING_STATUSES,
     ESCROW_LOCKED_STATUSES,
     actor_id_of,
-    actor_role_of,
     apply_partial_refund,
     contract_view_sql,
     dispute_view_sql,

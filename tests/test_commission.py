@@ -62,3 +62,16 @@ def test_contract_limit_blocks_only_tjs_above_cap():
     with pytest.raises(ValidationError) as exc:
         ensure_contract_amount_allowed(10_000.01, "TJS", settings)
     assert "не может превышать" in exc.value.detail
+
+
+def test_commission_rounds_half_up_in_cents():
+    """M-09: 53.50 * 5% = 2.675 must be 2.68 (float round() gave 2.67)."""
+    assert calculate_commission(53.5, "USD", _settings(percent=5)).amount == 2.68
+    assert split_commission(10, [1, 1, 1]) == [3.33, 3.33, 3.34]
+    assert split_commission(0.03, [1, 1, 1]) == [0.01, 0.01, 0.01]
+
+
+def test_bank_split_parts_keep_total_and_minimum():
+    parts = split_commission(3, [1, 1, 1, 1], bank_split=True)
+    assert round(sum(parts), 2) == 3
+    assert all(part == 0 or part >= 1 for part in parts)

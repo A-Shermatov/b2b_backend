@@ -44,3 +44,10 @@ pythonpath = ["."]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.ruff.lint.per-file-ignores]
+# Shared import hubs: endpoint modules do `from .common import X`.
+"app/modules/*/api/common.py" = ["F401"]
+"app/core/middleware/_common.py" = ["F401"]
+"app/modules/admin/services/common.py" = ["F401"]
+"app/modules/admin/api/common.py" = ["F401"]

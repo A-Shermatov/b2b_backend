@@ -18,7 +18,6 @@ from app.modules.contracts.services.common import (
     enum_value,
     load_contract_row,
     load_contract_schema,
-    message_to_dict,
     message_ws_payload,
     proposal_fields,
     resolve_actor_user_ids,
