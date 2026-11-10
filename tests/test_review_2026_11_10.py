@@ -141,3 +141,30 @@ def test_telegram_logo_never_leaves_own_storage(monkeypatch):
     monkeypatch.setattr(telegram.httpx, "Client", no_network)
     assert telegram._logo_bytes("http://169.254.169.254/latest/meta-data/") is None
     assert telegram._logo_bytes("../../etc/passwd") is None
+
+
+# ---------------------------------------------------------------- H-07
+
+
+@pytest.mark.asyncio
+async def test_totp_code_cannot_be_replayed_at_login(client):
+    import pyotp
+
+    email, token, _ = await _register(client, "buyer")
+    headers = {"Authorization": f"Bearer {token}"}
+    secret = (await client.post(f"{API}/auth/2fa/setup", headers=headers)).json()["secret"]
+    res = await client.post(
+        f"{API}/auth/2fa/confirm", headers=headers, json={"code": pyotp.TOTP(secret).now()}
+    )
+    assert res.status_code == 200, res.text
+
+    async def challenge():
+        res = await client.post(f"{API}/auth/login", json={"email": email, "password": "Passw0rd!"})
+        assert res.status_code == 200, res.text
+        return res.json()["challenge_token"]
+
+    code = pyotp.TOTP(secret).now()
+    first = await client.post(f"{API}/auth/2fa/verify", json={"challenge_token": await challenge(), "code": code})
+    assert first.status_code == 200, first.text
+    again = await client.post(f"{API}/auth/2fa/verify", json={"challenge_token": await challenge(), "code": code})
+    assert again.status_code == 422, again.text

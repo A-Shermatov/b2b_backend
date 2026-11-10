@@ -77,7 +77,7 @@ def _prune_memory_rate_limit(now: float) -> None:
     if len(_memory_rate_limit) < _MEMORY_PRUNE_AT:
         return
     for key in list(_memory_rate_limit):
-        if key.startswith(("bl:", "grace:")):
+        if key.startswith(("bl:", "grace:", "once:")):
             continue
         times = _memory_rate_limit[key]
         if not times or now - times[-1] > _MEMORY_MAX_WINDOW:
@@ -96,6 +96,22 @@ async def rate_limit_reached(key: str, limit: int, window_seconds: int = 60) -> 
     now = datetime.now(timezone.utc).timestamp()
     bucket = _memory_rate_limit.get(key) or []
     return sum(1 for t in bucket if now - t < window_seconds) >= limit
+
+
+async def claim_once(key: str, ttl_seconds: int) -> bool:
+    """True the first time `key` is claimed within `ttl_seconds`, False on a repeat."""
+    redis = await get_redis()
+    if redis:
+        try:
+            return bool(await redis.set(key, "1", ex=ttl_seconds, nx=True))
+        except Exception as exc:
+            await _discard_redis(redis, exc)
+    now = datetime.now(timezone.utc).timestamp()
+    until = _memory_rate_limit.get(f"once:{key}")
+    if until and until[0] > now:
+        return False
+    _memory_rate_limit[f"once:{key}"] = [now + ttl_seconds]
+    return True
 
 
 async def blacklist_refresh_token(jti_hash: str, expires_at: datetime) -> None:
