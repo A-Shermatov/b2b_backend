@@ -1,8 +1,9 @@
-"""The picture that goes with a request post: who asks, what for, for how much.
+"""The picture that goes with a request post, laid out like a job post.
 
-A white card like a job post: the buyer's logo top left, the Brend Market mark
-top right, the request title large, the key facts underneath and a blue strip
-with the site address. Drawn at double size and scaled down for smooth edges.
+A clean white card: the buyer's logo and name top left (a grey building or
+person when there is no logo), the Brend Market mark top right, the request
+title large and bold, then a few lines with an icon each — budget, amount,
+deadlines, city. Drawn at double size and scaled down for smooth edges.
 """
 
 from __future__ import annotations
@@ -15,17 +16,19 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ASSETS = Path(__file__).parent / "assets"
-WIDTH, HEIGHT = 1200, 750
+WIDTH = 1080
+# The card is as tall as its content: never shorter than this, at most five lines.
+MIN_HEIGHT = 560
+MAX_LINES = 5
+TITLE_TOP = 214
+TITLE_LINE = 80
+ROW = 58
 SCALE = 2
+PAD = 64
 
-INK = (11, 21, 48)
-MUTE = (100, 112, 138)
-LINE = (227, 232, 242)
-BRAND = (26, 95, 216)
-BRAND_DEEP = (10, 58, 160)
-BRAND_50 = (238, 244, 255)
-VOLT = (217, 245, 70)
-VOLT_INK = (28, 36, 0)
+INK = (10, 10, 12)
+TEXT = (24, 26, 32)
+LINE = (226, 230, 238)
 WHITE = (255, 255, 255)
 
 # Fonts in the order they are tried: the server image installs Inter and
@@ -44,6 +47,9 @@ FONT_NAMES = {
     "regular": ["Inter-Regular.otf", "Inter-Regular.ttf", "DejaVuSans.ttf", "segoeui.ttf", "arial.ttf"],
 }
 
+# Line icons, drawn from the same set the site uses.
+ICONS = {"budget", "quantity", "proposals", "deadline", "place", "payment"}
+
 
 class CardUnavailable(Exception):
     """No font with Cyrillic letters on this machine: the post goes out as text."""
@@ -52,12 +58,11 @@ class CardUnavailable(Exception):
 @dataclass
 class CardData:
     title: str
-    category: str | None
     buyer_name: str
     buyer_logo: bytes | None = None
-    facts: list[tuple[str, str]] = field(default_factory=list)
-    number: str = ""
-    site_host: str = ""
+    buyer_is_company: bool = True
+    # (icon, text) in order of importance; the card keeps as many as fit.
+    lines: list[tuple[str, str]] = field(default_factory=list)
 
 
 @lru_cache(maxsize=8)
@@ -92,6 +97,12 @@ def _s(value: float) -> int:
     return round(value * SCALE)
 
 
+@lru_cache(maxsize=16)
+def _asset(name: str, size: int) -> Image.Image:
+    image = Image.open(ASSETS / f"{name}.png").convert("RGBA")
+    return image.resize((_s(size), _s(size)), Image.LANCZOS)
+
+
 def _fit(draw: ImageDraw.ImageDraw, text: str, font, max_width: float) -> str:
     """The text, cut with an ellipsis so it fits the width."""
     if draw.textlength(text, font=font) <= _s(max_width):
@@ -122,16 +133,9 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: float, lines: i
     return result[:lines]
 
 
-def _initials(name: str) -> str:
-    letters = [part[0].upper() for part in name.replace("«", " ").replace("»", " ").split() if part[:1].isalnum()]
-    return "".join(letters[:2]) or "?"
-
-
-def _rounded_paste(base: Image.Image, picture: Image.Image, box: tuple[int, int, int], radius: int) -> None:
-    """Paste a square picture with rounded corners at (x, y) of the given size."""
-    x, y, size = box
+def _rounded_paste(base: Image.Image, picture: Image.Image, x: int, y: int, size: int, radius: int) -> None:
+    """Paste a picture as a rounded square, cropped from its middle like object-fit: cover."""
     picture = picture.convert("RGBA")
-    # Fill the square, cropping the middle, like object-fit: cover.
     w, h = picture.size
     side = min(w, h)
     picture = picture.crop(((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2))
@@ -141,134 +145,84 @@ def _rounded_paste(base: Image.Image, picture: Image.Image, box: tuple[int, int,
     base.paste(picture, (x, y), mask)
 
 
+def _open_logo(data: bytes | None) -> Image.Image | None:
+    if not data:
+        return None
+    try:
+        picture = Image.open(io.BytesIO(data))
+        picture.load()
+        return picture
+    except Exception:  # noqa: BLE001 - a broken logo falls back to the grey icon
+        return None
+
+
 def render_request_card(data: CardData) -> bytes:
     """The card as PNG bytes."""
-    canvas = Image.new("RGB", (_s(WIDTH), _s(HEIGHT)), WHITE)
-    draw = ImageDraw.Draw(canvas)
-    pad = 64
+    # Measure first: the height follows the title and the number of lines.
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    title_font = _font("bold", 66)
+    title_lines = _wrap(measure, data.title, title_font, WIDTH - 2 * PAD, 2)
+    rows = data.lines[:MAX_LINES]
+    rows_top = TITLE_TOP + TITLE_LINE * len(title_lines) + 46
+    height = max(MIN_HEIGHT, int(rows_top + ROW * len(rows) + 48))
 
-    # Who asks: the buyer's logo, or their initials on a soft blue tile.
-    logo_size = 96
-    tile = (_s(pad), _s(56), _s(logo_size))
-    picture = None
-    if data.buyer_logo:
-        try:
-            picture = Image.open(io.BytesIO(data.buyer_logo))
-            picture.load()
-        except Exception:  # noqa: BLE001 - a broken logo falls back to initials
-            picture = None
+    canvas = Image.new("RGB", (_s(WIDTH), _s(height)), WHITE)
+    draw = ImageDraw.Draw(canvas)
+
+    # Who asks: their logo and name, top left.
+    logo = 92
+    top = 56
+    picture = _open_logo(data.buyer_logo)
     if picture is not None:
-        _rounded_paste(canvas, picture, tile, _s(24))
+        _rounded_paste(canvas, picture, _s(PAD), _s(top), _s(logo), _s(20))
         draw.rounded_rectangle(
-            (tile[0], tile[1], tile[0] + tile[2], tile[1] + tile[2]),
-            radius=_s(24),
-            outline=LINE,
-            width=_s(2),
+            (_s(PAD), _s(top), _s(PAD + logo), _s(top + logo)), radius=_s(20), outline=LINE, width=_s(2)
         )
     else:
-        draw.rounded_rectangle(
-            (tile[0], tile[1], tile[0] + tile[2], tile[1] + tile[2]), radius=_s(24), fill=BRAND_50
-        )
-        draw.text(
-            (tile[0] + tile[2] / 2, tile[1] + tile[2] / 2),
-            _initials(data.buyer_name),
-            font=_font("bold", 36),
-            fill=BRAND,
-            anchor="mm",
-        )
-    text_x = pad + logo_size + 22
-    draw.text((_s(text_x), _s(70)), "Заказчик", font=_font("regular", 22), fill=MUTE)
-    draw.text(
-        (_s(text_x), _s(100)),
-        _fit(draw, data.buyer_name, _font("semibold", 30), 470),
-        font=_font("semibold", 30),
-        fill=INK,
-    )
+        icon = _asset("icon-company" if data.buyer_is_company else "icon-person", logo)
+        canvas.paste(icon, (_s(PAD), _s(top)), icon)
+    name_x = PAD + logo + 20
+    name_font = _font("bold", 32)
+    name_lines = _wrap(draw, data.buyer_name, name_font, 380, 2)
+    name_top = top + logo / 2 - 20 * len(name_lines)
+    for i, line in enumerate(name_lines):
+        draw.text((_s(name_x), _s(name_top + 40 * i)), line, font=name_font, fill=INK)
 
     # Who publishes: the Brend Market mark and name, top right.
-    word_font = _font("bold", 34)
+    word_font = _font("bold", 42)
     word = "Brend Market"
     word_w = draw.textlength(word, font=word_font) / SCALE
-    mark_size = 64
-    word_x = WIDTH - pad - word_w
+    mark_size = 68
+    word_x = WIDTH - PAD - word_w
     mark_x = word_x - 14 - mark_size
-    mark = Image.open(ASSETS / "brand-mark.png").convert("RGBA").resize((_s(mark_size), _s(mark_size)), Image.LANCZOS)
-    canvas.paste(mark, (_s(mark_x), _s(72)), mark)
-    draw.text((_s(word_x), _s(72 + mark_size / 2)), word, font=word_font, fill=INK, anchor="lm")
+    mark = _asset("brand-mark", mark_size)
+    mark_top = top + (logo - mark_size) / 2
+    canvas.paste(mark, (_s(mark_x), _s(mark_top)), mark)
+    draw.text((_s(word_x), _s(top + logo / 2)), word, font=word_font, fill=INK, anchor="lm")
 
-    # The middle block — chip, title, facts — sits centred between the header
-    # and the strip, whether the title takes one line or two.
-    title_font = _font("bold", 58)
-    title_lines = _wrap(draw, data.title, title_font, WIDTH - 2 * pad, 2)
-    facts = data.facts[:4]
-    block = (66 if data.category else 0) + 70 * len(title_lines) + (28 + 80 if facts else 0)
-    top, bottom = 176, HEIGHT - 92 - 24
-    y = top + max(0, (bottom - top - block) / 2)
-
-    # What for: the category as a lime chip, then the title.
-    if data.category:
-        chip_font = _font("semibold", 24)
-        chip_text = _fit(draw, data.category, chip_font, 700)
-        chip_w = draw.textlength(chip_text, font=chip_font) / SCALE + 36
-        draw.rounded_rectangle((_s(pad), _s(y), _s(pad + chip_w), _s(y + 44)), radius=_s(22), fill=VOLT)
-        draw.text((_s(pad + 18), _s(y + 22)), chip_text, font=chip_font, fill=VOLT_INK, anchor="lm")
-        y += 66
+    # What for: the title, large, up to two lines.
+    y = TITLE_TOP
     for line in title_lines:
-        draw.text((_s(pad), _s(y)), line, font=title_font, fill=INK)
-        y += 70
+        draw.text((_s(PAD), _s(y)), line, font=title_font, fill=INK)
+        y += TITLE_LINE
 
-    # How much and by when: up to four facts side by side, each column as
-    # wide as its text needs, the spare room shared out evenly.
-    if facts:
-        y += 28
-        value_font = _font("bold", 32)
-        label_font = _font("regular", 22)
-        gap = 48
-        natural = [
-            max(draw.textlength(v, font=value_font), draw.textlength(lbl, font=label_font)) / SCALE
-            for lbl, v in facts
-        ]
-        room = WIDTH - 2 * pad - gap * (len(facts) - 1)
-        if sum(natural) <= room:
-            spare = (room - sum(natural)) / len(facts)
-            widths = [w + spare for w in natural]
-        else:
-            widths = [w * room / sum(natural) for w in natural]
-        x = pad
-        for i, ((label, value), width) in enumerate(zip(facts, widths)):
-            if i:
-                line_x = x - gap / 2
-                draw.line((_s(line_x), _s(y + 4), _s(line_x), _s(y + 78)), fill=LINE, width=_s(2))
-            draw.text((_s(x), _s(y)), label, font=label_font, fill=MUTE)
-            draw.text((_s(x), _s(y + 34)), _fit(draw, value, value_font, width), font=value_font, fill=INK)
-            x += width + gap
-
-    # Where to answer: a blue strip with the site and the request number.
-    strip_top = HEIGHT - 92
-    for row in range(_s(92)):
-        t = row / _s(92)
-        color = tuple(int(BRAND[c] + (BRAND_DEEP[c] - BRAND[c]) * t) for c in range(3))
-        draw.line((0, _s(strip_top) + row, _s(WIDTH), _s(strip_top) + row), fill=color)
-    draw.ellipse(
-        (_s(pad), _s(strip_top + 38), _s(pad + 16), _s(strip_top + 54)), fill=VOLT
-    )
-    draw.text(
-        (_s(pad + 30), _s(strip_top + 46)),
-        f"Откликнитесь на {data.site_host}" if data.site_host else "Откликнитесь на Brend Market",
-        font=_font("semibold", 28),
-        fill=WHITE,
-        anchor="lm",
-    )
-    if data.number:
+    # The facts, one per line with its icon.
+    y = rows_top
+    text_font = _font("regular", 34)
+    for icon_name, text in rows:
+        if icon_name in ICONS:
+            icon = _asset(f"icon-{icon_name}", 38)
+            canvas.paste(icon, (_s(PAD), _s(y + 2)), icon)
         draw.text(
-            (_s(WIDTH - pad), _s(strip_top + 46)),
-            f"Заявка {data.number}",
-            font=_font("regular", 24),
-            fill=(214, 226, 255),
-            anchor="rm",
+            (_s(PAD + 60), _s(y + 21)),
+            _fit(draw, text, text_font, WIDTH - 2 * PAD - 60),
+            font=text_font,
+            fill=TEXT,
+            anchor="lm",
         )
+        y += ROW
 
-    out = canvas.resize((WIDTH, HEIGHT), Image.LANCZOS)
+    out = canvas.resize((WIDTH, height), Image.LANCZOS)
     buffer = io.BytesIO()
     out.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()

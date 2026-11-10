@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -214,13 +215,18 @@ async def test_admin_connects_the_bot_and_new_requests_are_posted(
         assert mime == "image/png" and picture[1:4] == b"PNG"
     text = sent.get("caption") or sent["text"]
     assert text.startswith("🆕 <b>Ноутбуки для отдела продаж</b>")
-    assert "Заказчик: " in text
+    assert "🏢 Заказчик: <b>" in text
     assert "📦 Количество: 40 шт" in text
     assert "💰 Бюджет: 12" in text and "500 TJS" in text
-    assert "⏳ Приём КП до " in text
-    assert "Дедлайн: до " in text
-    assert f'<a href="https://brendmarket.tj/supplier/rfqs/{rfq_id}">brendmarket.tj · заявка №' in text
-    assert sent["reply_markup"]["inline_keyboard"][0][0]["url"].endswith(rfq_id)
+    assert "📍 Город: Душанбе" in text
+    # Both dates in bold, as day.month.year and time to the minute.
+    assert re.search(r"⏳ <b>Приём КП до \d\d\.\d\d\.\d{4}, 23:59</b>", text)
+    assert re.search(r"📅 <b>Дедлайн: до \d\d\.\d\d\.\d{4}, 23:59</b>", text)
+    # No link line in the text: the request opens with the button under the post.
+    assert "Откликнуться" not in text and "<a " not in text
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["url"] == (
+        f"https://brendmarket.tj/supplier/rfqs/{rfq_id}"
+    )
     post = await fetchrow("SELECT status FROM telegram_posts WHERE rfq_id = $1", rfq_id)
     assert post["status"] == "sent"
 
@@ -308,22 +314,29 @@ async def test_a_refused_picture_still_posts_the_text(
     assert post["status"] == "sent"
 
 
-def test_the_card_draws_with_initials_and_cuts_long_text():
+def test_the_card_draws_without_a_logo_and_cuts_long_text():
     if not telegram_card.fonts_available():
         pytest.skip("No Cyrillic font on this machine")
-    png = telegram_card.render_request_card(
-        telegram_card.CardData(
-            title="Очень длинное название заявки " * 6,
-            category="Мобильные приложения",
-            buyer_name="ООО «Сомон Трейд»",
-            buyer_logo=b"not an image",
-            facts=[("Бюджет", "12 000–24 600 TJS"), ("Количество", "40 шт"), ("Приём КП до", "22 ноября")],
-            number="№ 4821",
-            site_host="brendmarket.tj",
+    lines = [
+        ("budget", "12 000–24 600 TJS"),
+        ("quantity", "40 шт"),
+        ("proposals", "Приём КП до 22.11.2026, 23:59"),
+        ("deadline", "Дедлайн до 05.12.2026, 23:59"),
+        ("place", "Душанбе"),
+    ]
+    for logo, company in ((b"not an image", True), (None, False)):
+        png = telegram_card.render_request_card(
+            telegram_card.CardData(
+                title="Очень длинное название заявки " * 6,
+                buyer_name="Общество с ограниченной ответственностью «Сомон Трейд»",
+                buyer_logo=logo,
+                buyer_is_company=company,
+                lines=lines,
+            )
         )
-    )
-    image = Image.open(io.BytesIO(png))
-    assert image.size == (1200, 750)
+        image = Image.open(io.BytesIO(png))
+        # Two title lines and five facts is the tallest card.
+        assert image.width == 1080 and 560 <= image.height <= 760
 
 
 @pytest.mark.asyncio
@@ -331,7 +344,8 @@ async def test_the_admin_sees_a_preview_of_the_next_post(client, admin_auth, tel
     res = await client.get(f"{API}/admin/telegram/preview", headers=admin_auth["headers"])
     assert res.status_code == 200, res.text
     body = res.json()
-    assert "Заказчик: " in body["caption"]
-    assert "Откликнуться" in body["caption"]
+    assert "🏢 Заказчик: " in body["caption"]
+    assert "⏳ <b>Приём КП до " in body["caption"]
+    assert "Откликнуться" not in body["caption"]
     if telegram_card.fonts_available():
         assert body["image"].startswith("data:image/png;base64,")

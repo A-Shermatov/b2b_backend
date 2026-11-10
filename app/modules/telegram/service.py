@@ -15,10 +15,9 @@ import html
 import json
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -36,11 +35,7 @@ API_BASE = "https://api.telegram.org"
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 TOKEN_RE = re.compile(r"^\d{5,12}:[A-Za-z0-9_-]{30,64}$")
 CHANNEL_RE = re.compile(r"^(@[A-Za-z][A-Za-z0-9_]{3,31}|-100\d{6,16}|-?\d{5,16})$")
-MONTHS = [
-    "января", "февраля", "марта", "апреля", "мая", "июня",
-    "июля", "августа", "сентября", "октября", "ноября", "декабря",
-]
-# A logo bigger than this is not worth waiting for: the card uses initials.
+# A logo bigger than this is not worth waiting for: the card shows a grey icon.
 MAX_LOGO_BYTES = 3 * 1024 * 1024
 
 
@@ -132,24 +127,8 @@ def _budget(row) -> str:
     return "цена по предложениям"
 
 
-def _deadline(value: Any) -> str | None:
-    if not value:
-        return None
-    try:
-        day = value if isinstance(value, date) else datetime.fromisoformat(str(value)[:10]).date()
-    except ValueError:
-        return None
-    return f"{day.day} {MONTHS[day.month - 1]}"
-
-
 def request_url(site_url: str, rfq_id: str) -> str:
     return f"{site_url.rstrip('/')}/supplier/rfqs/{rfq_id}"
-
-
-def request_number(rfq_id: str) -> str:
-    """The short number the site shows for a request, from its id's digits."""
-    digits = re.sub(r"\D", "", rfq_id)
-    return f"№ {(digits or rfq_id)[-4:]}"
 
 
 def buyer_name(row) -> str:
@@ -159,42 +138,73 @@ def buyer_name(row) -> str:
     return "Частный заказчик"
 
 
-def _due(row) -> tuple[str, str] | None:
-    """The second date: delivery for goods, start of work for services."""
-    if row["type"] == "product":
-        day = _deadline(row["delivery_date"])
-        return ("Дедлайн", f"до {day}") if day else None
-    day = _deadline(row["start_date"])
-    if not day:
+def _moment(value: Any) -> datetime | None:
+    """A request date as stored: '2026-11-11', or with a time ('2026-11-11T18:00').
+
+    A date without a time lasts to the end of that day: the request expires
+    only when the next day starts.
+    """
+    if not value:
         return None
-    duration = (row["project_duration"] or "").strip()
-    return ("Начало работ", f"с {day}" + (f", {duration}" if duration else ""))
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, time(23, 59))
+    text = str(value).strip().replace(" ", "T", 1)
+    try:
+        if len(text) > 10:
+            return datetime.fromisoformat(text[:16])
+        return datetime.combine(date.fromisoformat(text[:10]), time(23, 59))
+    except ValueError:
+        return None
 
 
-def card_facts(row) -> list[tuple[str, str]]:
-    facts = [("Бюджет", _budget(row))]
+def _until(value: Any) -> str | None:
+    """'11.11.2026, 23:59'."""
+    moment = _moment(value)
+    return f"{moment:%d.%m.%Y, %H:%M}" if moment else None
+
+
+def _from(value: Any) -> str | None:
+    """'25.11.2026': a start has no time of day."""
+    moment = _moment(value)
+    return f"{moment:%d.%m.%Y}" if moment else None
+
+
+def card_lines(row) -> list[tuple[str, str]]:
+    """The lines under the title on the picture, most important first."""
+    budget = _budget(row)
+    lines = [("budget", budget[:1].upper() + budget[1:])]
     if row["type"] == "product" and row["quantity"]:
-        facts.append(("Количество", f"{row['quantity']} шт"))
-    term = _deadline(row["deadline"])
-    if term:
-        facts.append(("Приём КП до", term))
-    due = _due(row)
-    if due:
-        facts.append((due[0], due[1].split(",")[0]))
-    return facts
+        lines.append(("quantity", f"{row['quantity']} шт"))
+    proposals = _until(row["deadline"])
+    if proposals:
+        lines.append(("proposals", f"Приём КП до {proposals}"))
+    if row["type"] == "product":
+        due = _until(row["delivery_date"])
+        if due:
+            lines.append(("deadline", f"Дедлайн до {due}"))
+        if row["delivery_city"]:
+            lines.append(("place", row["delivery_city"]))
+    else:
+        start = _from(row["start_date"])
+        if start:
+            lines.append(("deadline", f"Начало работ с {start}"))
+    return lines
 
 
 def format_post(row, site_url: str) -> str:
-    """The caption under the picture, in the shape of a job post:
+    """The caption under the picture, in the shape of a job post.
 
-    the title, the category and who asks; amount and money; the two dates;
-    the link. Everything the buyer typed is escaped.
+    Title, category and who asks; amount, money and how it is paid; the two
+    dates in bold. The request opens with the button under the post, so the
+    caption carries no link. Everything the buyer typed is escaped.
     """
     e = html.escape
     lines = [f"🆕 <b>{e(row['title'])}</b>"]
     if row["category_name"]:
-        lines.append(e(row["category_name"]))
-    lines.append(f"Заказчик: {e(buyer_name(row))}")
+        lines.append(f"🗂 {e(row['category_name'])}")
+    lines.append(f"🏢 Заказчик: <b>{e(buyer_name(row))}</b>")
     lines.append("")
     if row["type"] == "product" and row["quantity"]:
         lines.append(f"📦 Количество: {row['quantity']} шт")
@@ -203,20 +213,26 @@ def format_post(row, site_url: str) -> str:
         lines.append("⚡ Оплата сразу поставщику")
     else:
         lines.append("🛡 Оплата с гарантией площадки")
-    term = _deadline(row["deadline"])
-    due = _due(row)
-    if term or due:
+    if row["type"] == "product" and row["delivery_city"]:
+        lines.append(f"📍 Город: {e(row['delivery_city'])}")
+    dates = []
+    proposals = _until(row["deadline"])
+    if proposals:
+        dates.append(f"⏳ <b>Приём КП до {proposals}</b>")
+    if row["type"] == "product":
+        due = _until(row["delivery_date"])
+        if due:
+            dates.append(f"📅 <b>Дедлайн: до {due}</b>")
+    else:
+        start = _from(row["start_date"])
+        if start:
+            dates.append(f"📅 <b>Начало работ: с {start}</b>")
+        duration = (row["project_duration"] or "").strip()
+        if duration:
+            dates.append(f"⏱ Срок работ: {e(duration)}")
+    if dates:
         lines.append("")
-    if term:
-        lines.append(f"⏳ Приём КП до {term}")
-    if due:
-        lines.append(f"{due[0]}: {e(due[1])}")
-    lines.append("")
-    url = e(request_url(site_url, row["id"]), quote=True)
-    # A short, readable link text instead of the long address with the request id.
-    host = urlparse(site_url).netloc or site_url
-    label = e(f"{host} · заявка {request_number(row['id'])}")
-    lines.append(f'Откликнуться: → <a href="{url}">{label}</a>')
+        lines.extend(dates)
     return "\n".join(lines)
 
 
@@ -243,15 +259,14 @@ def _logo_bytes(stored: str | None) -> bytes | None:
 
 
 def _render_card(row, site_url: str) -> bytes:
+    company = row["buyer_kind"] == "company"
     return render_request_card(
         CardData(
             title=row["title"],
-            category=row["category_name"],
             buyer_name=buyer_name(row),
-            buyer_logo=_logo_bytes(row["company_logo"]) if row["buyer_kind"] == "company" else None,
-            facts=card_facts(row),
-            number=request_number(row["id"]),
-            site_host=urlparse(site_url).netloc or site_url,
+            buyer_logo=_logo_bytes(row["company_logo"]) if company else None,
+            buyer_is_company=company,
+            lines=card_lines(row),
         )
     )
 
