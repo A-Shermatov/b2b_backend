@@ -4,12 +4,6 @@ from app.utils.request_meta import parse_optional_int
 API_PREFIX = "/api/v1"
 MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 SKIP_LOG_PREFIXES = ("/health", "/uploads", "/docs", "/redoc", "/openapi.json")
-SKIP_TOKEN_REFRESH_PATHS = {
-    f"{API_PREFIX}/auth/login",
-    f"{API_PREFIX}/auth/register",
-    f"{API_PREFIX}/auth/refresh",
-    f"{API_PREFIX}/auth/logout",
-}
 SKIP_AUDIT_PATHS = {
     f"{API_PREFIX}/auth/refresh",
     f"{API_PREFIX}/auth/logout",

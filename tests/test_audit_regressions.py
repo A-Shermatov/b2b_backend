@@ -400,11 +400,14 @@ async def test_refresh_token_is_single_use(raw_client):
     assert newest.status_code == 200, newest.text
 
 
-async def test_error_response_does_not_extend_session(raw_client):
+async def test_no_response_extends_the_session(raw_client):
     res = await raw_client.post(f"{API}/auth/login", json={"email": "supplier@example.com", "password": "Supplier123!"})
     token = res.json()["access_token"]
     res = await raw_client.post(f"{API}/does-not-exist", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 404
+    assert "X-Access-Token" not in res.headers
+    # Sessions are extended only by /auth/refresh (rotated, single use).
+    res = await raw_client.post(f"{API}/auth/logout", json={"refresh_token": "x"}, headers={"Authorization": f"Bearer {token}"})
     assert "X-Access-Token" not in res.headers
 
 
