@@ -1,7 +1,8 @@
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.utils.storage import FileUrlMixin, public_file_url
 
@@ -139,11 +140,26 @@ class MessageCreate(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
 
 
+_URL_SCHEME = re.compile(r"^\s*([a-zA-Z][a-zA-Z0-9+.-]*):")
+
+
 class SubmissionAssetCreate(BaseModel):
     kind: str = Field(pattern="^(image|video|file|link)$")
     name: str = Field(min_length=1, max_length=255)
     url: str = Field(min_length=1, max_length=2000)
     file_type: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def url_is_web_or_ours(cls, value: str) -> str:
+        """The other party opens this link: only http(s) or a path to our own file.
+
+        javascript:, data:, file: and similar schemes are refused.
+        """
+        match = _URL_SCHEME.match(value)
+        if match and match.group(1).lower() not in ("http", "https"):
+            raise ValueError("Ссылка должна начинаться с http:// или https://")
+        return value.strip()
 
 
 class WorkSubmissionCreate(BaseModel):
