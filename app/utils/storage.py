@@ -108,6 +108,35 @@ def storage_key_from_url(value: str | None) -> str:
     return url
 
 
+def stored_file_key(value: str | None) -> str | None:
+    """A file reference sent by a client, reduced to a key in our own storage.
+
+    Logos and similar fields must point at files uploaded through our upload
+    endpoints. Anything else (a foreign URL, an internal address, ``../`` paths)
+    is refused: the server later reads these files itself (Telegram cards).
+    """
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return ""
+    key = storage_key_from_url(raw)
+    if (
+        not key
+        or key.startswith(("http://", "https://", "blob:", "data:", "/", "\\"))
+        or ".." in key.replace("\\", "/").split("/")
+        or "://" in key
+    ):
+        raise ValidationError("Загрузите файл через форму загрузки")
+    return key
+
+
+def files_base_url() -> str:
+    """Public base of our stored files (S3 bucket or the local /uploads mount)."""
+    base = _files_base()
+    return f"{base}/uploads" if _using_local and not base.endswith("/uploads") else base
+
+
 class FileUrlMixin(BaseModel):
     @field_serializer("file_url", check_fields=False)
     def serialize_file_url(self, value: str) -> str:

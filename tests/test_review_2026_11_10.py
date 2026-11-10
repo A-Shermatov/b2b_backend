@@ -113,3 +113,31 @@ async def test_admin_cannot_lift_own_side_restriction_or_touch_admins(client):
         json={"buyer_role": "accountant"},
     )
     assert res.status_code == 200, res.text
+
+
+# ---------------------------------------------------------------- N-06
+
+
+@pytest.mark.asyncio
+async def test_company_logo_must_be_our_upload(client):
+    company_id, director, _, _ = await _company_with_member(client, "moderator")
+    for logo in ("http://169.254.169.254/latest/meta-data/", "http://minio:9000@evil.example/x", "../../app/.env"):
+        res = await client.patch(
+            f"{API}/buyer/companies/{company_id}", headers=director, json={"logo": logo}
+        )
+        assert res.status_code == 422, (logo, res.text)
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}", headers=director, json={"logo": "logos/1/x.png"}
+    )
+    assert res.status_code == 200, res.text
+
+
+def test_telegram_logo_never_leaves_own_storage(monkeypatch):
+    from app.modules.telegram import service as telegram
+
+    def no_network(*_args, **_kwargs):
+        raise AssertionError("must not fetch a foreign address")
+
+    monkeypatch.setattr(telegram.httpx, "Client", no_network)
+    assert telegram._logo_bytes("http://169.254.169.254/latest/meta-data/") is None
+    assert telegram._logo_bytes("../../etc/passwd") is None
