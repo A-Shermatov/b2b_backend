@@ -6,8 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# Fonts with Cyrillic letters for the Telegram request cards: DejaVu always,
+# Inter where the distribution has it.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl fonts-dejavu-core \
+    && (apt-get install -y --no-install-recommends fonts-inter || true) \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
