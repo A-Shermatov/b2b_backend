@@ -114,6 +114,8 @@ class ProposalAcceptRequest(BaseModel):
     milestones: list[MilestoneInput] | None = Field(default=None, max_length=20)
     # None keeps what the buyer chose in the request.
     payment_mode: Literal["escrow", "direct"] | None = None
+    # The price the buyer saw; the accept is refused if the supplier changed it.
+    expected_price: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_milestones(self) -> "ProposalAcceptRequest":
