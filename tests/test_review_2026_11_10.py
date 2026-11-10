@@ -64,3 +64,52 @@ async def test_moderator_cannot_commit_company_with_negotiate_offer(
         json={"kind": "negotiate", "price": 900, "message": "Торг от директора"},
     )
     assert res.status_code == 200, res.text
+
+
+# ---------------------------------------------------------------- N-04
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_lift_own_side_restriction_or_touch_admins(client):
+    company_id, director, admin, admin_user_id = await _company_with_member(client, "admin")
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{admin_user_id}",
+        headers=director,
+        json={"supplier_role": "none"},
+    )
+    assert res.status_code == 200, res.text
+
+    # The restricted admin cannot open the side again for himself.
+    for body in ({"supplier_role": None}, {"supplier_role": "admin"}, {"role": "moderator"}):
+        res = await client.patch(
+            f"{API}/buyer/companies/{company_id}/team/{admin_user_id}", headers=admin, json=body
+        )
+        assert res.status_code == 403, (body, res.text)
+
+    # Nor make, change or remove other admins.
+    other_email, _, other_me = await _register(client, "buyer")
+    res = await client.post(
+        f"{API}/buyer/companies/{company_id}/team",
+        headers=admin,
+        json={"email": other_email, "role": "admin"},
+    )
+    assert res.status_code == 403, res.text
+    res = await client.post(
+        f"{API}/buyer/companies/{company_id}/team",
+        headers=admin,
+        json={"email": other_email, "role": "moderator"},
+    )
+    assert res.status_code == 200, res.text
+    other_id = other_me["user"]["id"]
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{other_id}",
+        headers=admin,
+        json={"buyer_role": "admin"},
+    )
+    assert res.status_code == 403, res.text
+    res = await client.patch(
+        f"{API}/buyer/companies/{company_id}/team/{other_id}",
+        headers=admin,
+        json={"buyer_role": "accountant"},
+    )
+    assert res.status_code == 200, res.text

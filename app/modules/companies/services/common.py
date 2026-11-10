@@ -92,6 +92,40 @@ async def ensure_can_manage(
     ensure_permission({"role": user["role"], "permissions": names}, permission)
 
 
+async def ensure_can_change_member(
+    conn,
+    company_id: int,
+    user_id: int,
+    *,
+    target_user_id: int | None = None,
+    target_role: str | None = None,
+    new_role: str | None = None,
+) -> None:
+    """Hierarchy inside the team, on top of ensure_can_manage.
+
+    The director may change anyone. An admin manages moderators and accountants
+    only: never their own roles (an admin whose side was closed by the director
+    could otherwise open it again), never another admin, and never makes an admin.
+    """
+    acting_role = await conn.fetchval(
+        "SELECT role::text FROM company_users WHERE company_id = $1 AND user_id = $2",
+        company_id,
+        user_id,
+    )
+    if acting_role == "director":
+        return
+    if target_user_id is not None and target_user_id == user_id:
+        raise ForbiddenError(
+            "Свои роли может изменить только руководитель компании",
+            code="company_role_forbidden",
+        )
+    if target_role == "admin" or new_role == "admin":
+        raise ForbiddenError(
+            "Администраторов назначает и меняет только руководитель компании",
+            code="company_role_forbidden",
+        )
+
+
 async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
     company = await conn.fetchrow(
         f"SELECT {COMPANY_COLUMNS} FROM companies WHERE id = $1",

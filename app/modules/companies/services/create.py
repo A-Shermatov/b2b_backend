@@ -9,6 +9,7 @@ from app.modules.companies.schemas import (
 from app.modules.companies.services.common import (
     COMPANY_COLUMNS,
     COMPANY_ROLES,
+    ensure_can_change_member,
     ensure_can_manage,
     load_company_schema,
     parse_actor_types,
@@ -227,6 +228,7 @@ class CompanyCreateMixin:
             raise ValidationError("Cannot assign director role")
         async with self.connection() as conn:
             await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
+            await ensure_can_change_member(conn, company_id, user_id, new_role=data.role)
             member = await conn.fetchrow(
                 "SELECT id FROM users WHERE email = $1",
                 data.email.lower(),
