@@ -15,9 +15,10 @@ class SubscriptionUpdateMixin:
                 """
                 UPDATE supplier_subscriptions
                 SET plan = 'none'::subscription_plan, active_until = NULL
-                WHERE user_id = $1
+                WHERE user_id = $1 AND side = $2
                 """,
                 user_id,
+                self.side,
             )
         return await self.get_subscription(user_id)
 

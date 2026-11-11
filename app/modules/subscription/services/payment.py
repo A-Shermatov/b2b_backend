@@ -23,7 +23,7 @@ from app.modules.subscription.schemas import (
     SubscriptionPaymentConfig,
     SubscriptionResponse,
 )
-from app.modules.subscription.services.common import shape_subscription
+from app.modules.subscription.services.common import clean_side, shape_subscription
 from app.utils.audit import log_event
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ class SubscriptionPaymentMixin:
                   AND status = 'pending'
                   AND payment_url IS NOT NULL
                   AND created_at > NOW() - make_interval(mins => $4)
+                  AND side = $5
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -128,6 +129,7 @@ class SubscriptionPaymentMixin:
                 plan,
                 GATEWAY_ALIF,
                 PENDING_REUSE_MINUTES,
+                self.side,
             )
             if existing:
                 return SubscriptionCheckoutResponse(
@@ -156,8 +158,8 @@ class SubscriptionPaymentMixin:
             await conn.execute(
                 """
                 INSERT INTO subscription_payment_orders
-                    (order_id, gateway, user_id, plan, amount, currency, status, marketplace_meta)
-                VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7::jsonb)
+                    (order_id, gateway, user_id, plan, amount, currency, status, marketplace_meta, side)
+                VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7::jsonb, $8)
                 """,
                 order_id,
                 GATEWAY_ALIF,
@@ -166,12 +168,15 @@ class SubscriptionPaymentMixin:
                 amount_dec,
                 settings.alif_currency,
                 json.dumps(marketplace_meta) if marketplace_meta else None,
+                self.side,
             )
 
         api_base = settings.public_api_url.rstrip("/")
         callback_url = f"{api_base}{settings.api_v1_prefix}/payments/alif/callback"
         query = urlencode({"order_id": order_id})
-        return_url = f"{settings.frontend_url.rstrip('/')}/supplier/subscription/return?{query}"
+        # Back to the tariff page of the cabinet the plan was bought in.
+        return_path = "/customer/plan/return" if self.side == "buyer" else "/supplier/subscription/return"
+        return_url = f"{settings.frontend_url.rstrip('/')}{return_path}?{query}"
 
         try:
             payment_url = await AlifClient(settings).create_payment(
@@ -281,7 +286,7 @@ class SubscriptionPaymentMixin:
             async with conn.transaction():
                 tx = await conn.fetchrow(
                     """
-                    SELECT id, order_id, user_id, plan, amount, status, currency, marketplace_meta
+                    SELECT id, order_id, user_id, plan, amount, status, currency, marketplace_meta, side
                     FROM subscription_payment_orders
                     WHERE order_id = $1
                     FOR UPDATE
@@ -356,6 +361,8 @@ class SubscriptionPaymentMixin:
                         gateway=GATEWAY_ALIF,
                         external_id=external_id or order_id,
                         amount=float(tx["amount"]),
+                        # The cabinet the order was made in, whoever reports the payment.
+                        side=tx["side"],
                     )
                     confirm_meta = meta
                     confirm_amount = tx["amount"]
@@ -431,14 +438,14 @@ class SubscriptionPaymentMixin:
         async with self.connection() as conn:
             tx = await conn.fetchrow(
                 """
-                SELECT id, order_id, user_id, plan, amount, status
+                SELECT id, order_id, user_id, plan, amount, status, side
                 FROM subscription_payment_orders
                 WHERE order_id = $1 AND gateway = $2
                 """,
                 order_id,
                 GATEWAY_ALIF,
             )
-            if not tx or tx["user_id"] != user_id:
+            if not tx or tx["user_id"] != user_id or tx["side"] != self.side:
                 raise NotFoundError("Payment order not found")
             if tx["status"] in FINAL_STATUSES or not get_settings().alif_enabled:
                 sub = await self.get_subscription(user_id)
@@ -489,11 +496,12 @@ class SubscriptionPaymentMixin:
         gateway: str,
         external_id: str | None,
         amount: float,
+        side: str | None = None,
     ) -> SubscriptionResponse:
         async with self.connection() as conn:
             async with conn.transaction():
                 return await self._activate_paid_conn(
-                    conn, user_id, plan, gateway=gateway, external_id=external_id, amount=amount
+                    conn, user_id, plan, gateway=gateway, external_id=external_id, amount=amount, side=side
                 )
 
     async def _activate_paid_conn(
@@ -505,11 +513,14 @@ class SubscriptionPaymentMixin:
         gateway: str,
         external_id: str | None,
         amount: float,
+        side: str | None = None,
     ) -> SubscriptionResponse:
+        side = clean_side(side or self.side)
         now = datetime.now(timezone.utc)
         current = await conn.fetchrow(
-            "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1",
+            "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1 AND side = $2",
             user_id,
+            side,
         )
         start = now
         if current and current["plan"] == plan and current["active_until"]:
@@ -523,20 +534,22 @@ class SubscriptionPaymentMixin:
             """
             UPDATE supplier_subscriptions
             SET plan = $1::subscription_plan, active_until = $2
-            WHERE user_id = $3
+            WHERE user_id = $3 AND side = $4
             RETURNING id
             """,
             plan,
             active_until,
             user_id,
+            side,
         )
         if not updated:
             await conn.execute(
                 """
-                INSERT INTO supplier_subscriptions (user_id, plan, active_until, created_at)
-                VALUES ($1, $2::subscription_plan, $3, NOW())
+                INSERT INTO supplier_subscriptions (user_id, side, plan, active_until, created_at)
+                VALUES ($1, $2, $3::subscription_plan, $4, NOW())
                 """,
                 user_id,
+                side,
                 plan,
                 active_until,
             )
@@ -554,7 +567,7 @@ class SubscriptionPaymentMixin:
                 gateway=gateway if gateway in ("mock", "alif", "manual") else "mock",
                 subscription_user_id=user_id,
                 external_id=external_id,
-                metadata={"plan": plan},
+                metadata={"plan": plan, "side": side},
             )
         await log_event(
             conn,
@@ -564,6 +577,7 @@ class SubscriptionPaymentMixin:
             user_id=user_id,
             details={
                 "plan": plan,
+                "side": side,
                 "amount": amount,
                 "gateway": gateway,
                 "active_until": active_until,
@@ -572,8 +586,9 @@ class SubscriptionPaymentMixin:
         row = await conn.fetchrow(
             """
             SELECT plan::text AS plan, active_until
-            FROM supplier_subscriptions WHERE user_id = $1
+            FROM supplier_subscriptions WHERE user_id = $1 AND side = $2
             """,
             user_id,
+            side,
         )
         return shape_subscription(row["plan"], row["active_until"])

@@ -1,12 +1,16 @@
 from app.config import get_settings
 from app.core.exceptions import NotFoundError
 from app.modules.notifications.services import NotificationService
-from app.modules.subscription.services.common import active_plan_sql
+from app.modules.subscription.services.common import (
+    active_plan_sql,
+    actor_owner_sql,
+    plan_rank_sql,
+)
 from app.modules.trust.party import party_tier, party_reputation_columns
 from app.modules.verification.common import actor_verification_sql
 from app.utils.storage import public_file_url
 
-RFQ_COLUMNS = """
+RFQ_COLUMNS = f"""
     r.id,
     r.actor_id,
     r.created_by,
@@ -46,8 +50,13 @@ RFQ_COLUMNS = """
         JOIN actors rca ON rca.company_id = rcu.company_id
         WHERE rca.id = r.actor_id AND rca.kind::text = 'company'
           AND rcu.user_id = r.created_by_user_id
-    ) AS contact_role
+    ) AS contact_role,
+    -- The buyer's paid plan for the buying cabinet: such a request is shown first and highlighted.
+    {active_plan_sql(actor_owner_sql("r.actor_id"), "buyer")} AS promotion_plan
 """
+
+# Requests of buyers with a paid plan come first, a higher plan above a lower one.
+RFQ_PROMOTION_ORDER = plan_rank_sql(actor_owner_sql("r.actor_id"), "buyer")
 
 BUYER_COLUMNS = f"""
     a.id AS buyer_id,
@@ -61,7 +70,7 @@ BUYER_COLUMNS = f"""
     c.description AS buyer_description,
     c.website AS buyer_website,
     cs.completed_contracts AS buyer_completed_contracts,
-    {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS buyer_subscription_plan,
+    {active_plan_sql("COALESCE(c.owner_id, a.user_id)", "buyer")} AS buyer_subscription_plan,
     {party_reputation_columns("a")}
 """
 
@@ -219,6 +228,8 @@ def rfq_to_response(
         "is_catalog_offer": row.get("catalog_item_id") is not None,
         "moderation_reason": row.get("moderation_reason"),
         "moderated_at": row.get("moderated_at"),
+        "promoted": row.get("promotion_plan") is not None,
+        "promotion_plan": row.get("promotion_plan"),
     }
     if include_buyer:
         base["buyer"] = buyer_summary_from_row(row)

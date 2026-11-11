@@ -11,7 +11,7 @@ from app.core.permissions import ensure_permission
 from app.modules.admin.services.common import actor_id_of, log_admin
 from app.modules.companies.services.common import row_to_public_buyer, row_to_public_supplier
 from app.modules.companies.services.read import BUYER_SELECT, SUPPLIER_SELECT
-from app.modules.subscription.services.common import PAID_PLANS, is_active_plan
+from app.modules.subscription.services.common import PAID_PLANS, SIDES, is_active_plan
 from app.modules.trust.levels import TIER_LABELS_RU, TIER_ORDER
 from app.modules.trust.party import party_actor_ids_sql, party_owner_sql
 
@@ -24,10 +24,11 @@ def _clean(reason: str | None) -> str | None:
 
 
 class AdminMarksMixin:
-    async def _subscription_of(self, conn, user_id: int) -> dict:
+    async def _subscription_of(self, conn, user_id: int, side: str = "supplier") -> dict:
         row = await conn.fetchrow(
-            "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1",
+            "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1 AND side = $2",
             user_id,
+            side,
         )
         plan = row["plan"] if row else "none"
         until = row["active_until"] if row else None
@@ -105,6 +106,7 @@ class AdminMarksMixin:
             return {
                 "user_id": user_id,
                 "subscription": await self._subscription_of(conn, user_id),
+                "subscriptions": {side: await self._subscription_of(conn, user_id, side) for side in SIDES},
                 "suppliers": await self._party_marks(conn, user_id),
             }
 
@@ -117,31 +119,45 @@ class AdminMarksMixin:
             return {
                 "user_id": owner_id,
                 "subscription": await self._subscription_of(conn, owner_id),
+                "subscriptions": {side: await self._subscription_of(conn, owner_id, side) for side in SIDES},
                 "suppliers": await self._party_marks(conn, owner_id),
             }
 
     async def set_user_subscription(
-        self, user_id: int, plan: str, current_user, *, months: int = 1, reason: str | None = None
+        self,
+        user_id: int,
+        plan: str,
+        current_user,
+        *,
+        months: int = 1,
+        reason: str | None = None,
+        side: str = "supplier",
     ) -> dict:
-        """Grant a paid plan for `months` (from today) or remove it with plan='none'."""
+        """Grant a paid plan for `months` (from today) or remove it with plan='none'.
+
+        A plan belongs to one cabinet: `side` says whether it is the selling or the buying one.
+        """
         ensure_permission(current_user, "admin_users.update")
         if plan not in PLAN_CHOICES:
             raise ValidationError("Неизвестный тариф")
+        if side not in SIDES:
+            raise ValidationError("Неизвестный кабинет")
         if plan != "none" and not 1 <= months <= 24:
             raise ValidationError("Срок от 1 до 24 месяцев")
         active_until = None if plan == "none" else datetime.now(timezone.utc) + timedelta(days=30 * months)
         async with self.connection() as conn:
             if not await conn.fetchval("SELECT 1 FROM users WHERE id = $1", user_id):
                 raise NotFoundError("User not found")
-            previous = await self._subscription_of(conn, user_id)
+            previous = await self._subscription_of(conn, user_id, side)
             await conn.execute(
                 """
-                INSERT INTO supplier_subscriptions (user_id, plan, active_until, created_at)
-                VALUES ($1, $2::subscription_plan, $3, NOW())
-                ON CONFLICT (user_id) DO UPDATE
+                INSERT INTO supplier_subscriptions (user_id, side, plan, active_until, created_at)
+                VALUES ($1, $2, $3::subscription_plan, $4, NOW())
+                ON CONFLICT (user_id, side) DO UPDATE
                 SET plan = EXCLUDED.plan, active_until = EXCLUDED.active_until
                 """,
                 user_id,
+                side,
                 plan,
                 active_until,
             )
@@ -153,13 +169,14 @@ class AdminMarksMixin:
                 user_id,
                 {
                     "plan": plan,
+                    "side": side,
                     "months": None if plan == "none" else months,
                     "active_until": active_until.isoformat() if active_until else None,
                     "previous_plan": previous["plan"] if previous["is_active"] else "none",
                     "reason": _clean(reason),
                 },
             )
-            return await self._subscription_of(conn, user_id)
+            return await self._subscription_of(conn, user_id, side)
 
     async def set_supplier_reputation(
         self, actor_id: int, tier: str, current_user, *, reason: str | None = None

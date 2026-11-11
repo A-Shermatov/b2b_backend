@@ -38,12 +38,16 @@ class AdminSupplierMark(BaseModel):
 
 class AdminMarks(BaseModel):
     user_id: int
+    # The selling cabinet's plan (kept for older screens); both cabinets are in `subscriptions`.
     subscription: AdminSubscriptionState
+    subscriptions: dict[str, AdminSubscriptionState] = {}
     suppliers: list[AdminSupplierMark]
 
 
 class AdminSubscriptionGrant(BaseModel):
     plan: Literal["start", "pro", "business", "none"]
+    # The cabinet the plan is for; each one is granted (and paid) on its own.
+    side: Literal["supplier", "buyer"] = "supplier"
     months: int = Field(default=1, ge=1, le=24)
     reason: str | None = Field(default=None, max_length=2000)
 
@@ -70,7 +74,7 @@ async def admin_set_subscription(
     current_user: Annotated[CurrentUser, Depends(require_admin)],
 ):
     return await AdminService().set_user_subscription(
-        user_id, data.plan, current_user, months=data.months, reason=data.reason
+        user_id, data.plan, current_user, months=data.months, reason=data.reason, side=data.side
     )
 
 

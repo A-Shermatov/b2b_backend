@@ -65,16 +65,20 @@ async def _clear_marks(actor_ids):
 
 
 @pytest.mark.asyncio
-async def test_mark_and_plan_show_on_every_profile_of_the_owner(client, admin_auth, both_auth):
-    """The seed owner buys through one company and sells through another, and has own profiles."""
+async def test_mark_shows_on_every_profile_and_a_plan_only_in_its_cabinet(client, admin_auth, both_auth):
+    """The seed owner buys through one company and sells through another, and has own profiles.
+
+    The reliability mark is one for all of them. A paid plan is bought per cabinet:
+    the selling one and the buying one each have their own.
+    """
     me = both_auth["me"]
     user_id = me["user"]["id"]
     profiles = {a["id"]: a["side"] for a in me["actors"]}
     if set(profiles.values()) < {"supplier", "buyer"}:
         pytest.skip("The seed account has no buying and selling profile pair")
     supplier_id = next(i for i, side in profiles.items() if side == "supplier")
-    previous = await fetchrow(
-        "SELECT plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1", user_id
+    previous = await fetch(
+        "SELECT side, plan::text AS plan, active_until FROM supplier_subscriptions WHERE user_id = $1", user_id
     )
     try:
         res = await client.put(
@@ -93,13 +97,33 @@ async def test_mark_and_plan_show_on_every_profile_of_the_owner(client, admin_au
         )
         assert res.status_code == 200, res.text
 
-        for actor_id, side in profiles.items():
-            path = "suppliers" if side == "supplier" else "buyers"
-            public = await client.get(f"{API}/public/{path}/{actor_id}")
-            if public.status_code == 404:
-                continue  # an inactive or hidden profile
-            assert public.json()["reputation_tier"] == "gold", (actor_id, side)
-            assert public.json()["subscription_plan"] == "pro", (actor_id, side)
+        async def shown() -> dict:
+            seen = {}
+            for actor_id, side in profiles.items():
+                path = "suppliers" if side == "supplier" else "buyers"
+                public = await client.get(f"{API}/public/{path}/{actor_id}")
+                if public.status_code == 404:
+                    continue  # an inactive or hidden profile
+                assert public.json()["reputation_tier"] == "gold", (actor_id, side)
+                seen.setdefault(side, set()).add(public.json()["subscription_plan"])
+            return seen
+
+        # The plan was granted to the selling cabinet (the default): the buying one has none.
+        seen = await shown()
+        assert seen.get("supplier") == {"pro"}
+        assert seen.get("buyer", {None}) == {None}
+
+        # The buying cabinet gets its own plan; the selling one keeps its own.
+        res = await client.put(
+            f"{API}/admin/users/{user_id}/subscription",
+            json={"plan": "start", "months": 1, "side": "buyer"},
+            headers=admin_auth["headers"],
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["plan"] == "start"
+        seen = await shown()
+        assert seen.get("supplier") == {"pro"}
+        assert seen.get("buyer", {"start"}) == {"start"}
 
         # Removing the mark from the buying side removes it everywhere.
         buyer_id = next(i for i, side in profiles.items() if side == "buyer")
@@ -115,17 +139,23 @@ async def test_mark_and_plan_show_on_every_profile_of_the_owner(client, admin_au
 
         marks = (await client.get(f"{API}/admin/users/{user_id}/marks", headers=admin_auth["headers"])).json()
         assert len(marks["suppliers"]) == 1
+        assert marks["subscription"]["plan"] == "pro"
+        assert {side: sub["plan"] for side, sub in marks["subscriptions"].items()} == {
+            "supplier": "pro",
+            "buyer": "start",
+        }
     finally:
         await _clear_marks(profiles)
-        if previous:
+        await execute("DELETE FROM supplier_subscriptions WHERE user_id = $1", user_id)
+        for row in previous:
             await execute(
-                "UPDATE supplier_subscriptions SET plan = $2::subscription_plan, active_until = $3 WHERE user_id = $1",
+                "INSERT INTO supplier_subscriptions (user_id, side, plan, active_until, created_at) "
+                "VALUES ($1, $2, $3::subscription_plan, $4, NOW())",
                 user_id,
-                previous["plan"],
-                previous["active_until"],
+                row["side"],
+                row["plan"],
+                row["active_until"],
             )
-        else:
-            await execute("DELETE FROM supplier_subscriptions WHERE user_id = $1", user_id)
 
 
 @pytest.mark.asyncio

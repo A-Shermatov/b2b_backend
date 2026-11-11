@@ -97,6 +97,9 @@ class RfqBaseSchema(BaseModel):
     # Set when a moderator hid or closed the RFQ.
     moderation_reason: str | None = None
     moderated_at: datetime | None = None
+    # The buyer holds a paid plan: the request stands first in lists and is highlighted.
+    promoted: bool = False
+    promotion_plan: str | None = None
     created_at: datetime
     updated_at: datetime
 
