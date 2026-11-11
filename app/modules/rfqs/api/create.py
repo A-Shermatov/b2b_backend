@@ -26,7 +26,7 @@ async def create_rfq(
     ],
 ):
     created_by = f"{ctx.user.first_name} {ctx.user.last_name}".strip()
-    return await RfqService().create(ctx.actor.id, created_by, data)
+    return await RfqService().create(ctx.actor.id, created_by, data, ctx.user.id)
 
 
 @buyer_router.post("/{rfq_id}/attachments")
@@ -53,4 +53,4 @@ async def submit_proposal(
     data: ProposalCreate,
     ctx: Annotated[SupplierContext, Depends(supplier_perm("proposals.create"))],
 ):
-    return await ProposalService().submit(rfq_id, ctx.actor.id, data)
+    return await ProposalService().submit(rfq_id, ctx.actor.id, data, ctx.user.id)

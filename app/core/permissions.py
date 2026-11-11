@@ -110,8 +110,22 @@ COMPANY_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "subscription.update",
         "contracts.update",
     },
+    # Viewer: sees everything the team sees and changes nothing.
+    "viewer": _COMPANY_VIEW,
 }
-COMPANY_FORBIDDEN_MESSAGE = "Недостаточно прав в компании для этого действия"
+COMPANY_ROLE_LABELS_RU: dict[str, str] = {
+    "director": "Руководитель",
+    "admin": "Администратор",
+    "moderator": "Менеджер",
+    "accountant": "Бухгалтер",
+    "viewer": "Наблюдатель",
+}
+COMPANY_FORBIDDEN_MESSAGE = (
+    "Недостаточно прав в компании для этого действия. Обратитесь к руководителю компании"
+)
+VIEWER_FORBIDDEN_MESSAGE = (
+    "У вас доступ только для просмотра. Обратитесь к руководителю компании"
+)
 
 
 def ensure_company_role_permission(

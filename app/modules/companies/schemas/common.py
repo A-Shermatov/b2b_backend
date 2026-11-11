@@ -92,6 +92,8 @@ class CompanySchema(BaseModel):
     website: str | None
     description: str | None
     logo: str | None
+    # The wide picture at the top of the company page.
+    cover: str | None = None
     country: str | None
     city: str | None
     address: str | None
@@ -100,7 +102,7 @@ class CompanySchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    @field_serializer("logo")
+    @field_serializer("logo", "cover")
     def serialize_logo(self, value: str | None) -> str | None:
         if not value:
             return value
@@ -140,6 +142,7 @@ class PublicCompanyDetail(BaseModel):
     website: str | None = None
     description: str | None = None
     logo: str | None = None
+    cover: str | None = None
     country: str | None = None
     city: str | None = None
     verification_status: str
@@ -152,7 +155,7 @@ class PublicCompanyDetail(BaseModel):
     certificates: list[CompanyCertificateSchema] = []
     reputation: list[SideReputationSchema] = []
 
-    @field_serializer("logo")
+    @field_serializer("logo", "cover")
     def serialize_logo(self, value: str | None) -> str | None:
         if not value:
             return value
@@ -230,6 +233,7 @@ class CompanyUpdateRequest(BaseModel):
     website: str | None = None
     description: str | None = None
     logo: str | None = None
+    cover: str | None = None
     country: str | None = None
     city: str | None = None
     address: str | None = None
@@ -246,7 +250,7 @@ class CompanyUpdateRequest(BaseModel):
     notable_clients: str | None = None
     gallery: list[dict] | None = None
 
-    @field_validator("logo")
+    @field_validator("logo", "cover")
     @classmethod
     def logo_is_ours(cls, value: str | None) -> str | None:
         return _own_logo(value)
@@ -257,10 +261,62 @@ class AddTeamMemberRequest(BaseModel):
     role: str
 
 
+class CompanyInvitationSchema(BaseModel):
+    """An invitation as the company's director or admin sees it."""
+
+    id: int
+    company_id: int
+    email: str
+    role: str
+    # pending, expired, declined (accepted ones are team members already)
+    status: str
+    invited_by_name: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    responded_at: datetime | None = None
+    # Only in the answer to "invite" and "send again": the link to hand over.
+    invite_url: str | None = None
+    # True when the platform's mail is set up and the letter was queued.
+    email_sent: bool = False
+
+
+class MyInvitationSchema(BaseModel):
+    """An invitation as the invited person sees it in their cabinet."""
+
+    id: int
+    company_id: int
+    company_title: str
+    company_logo: str | None = None
+    role: str
+    invited_by_name: str | None = None
+    created_at: datetime
+    expires_at: datetime
+
+
+class InvitationPreview(BaseModel):
+    """What the invitation link shows before the person signs in."""
+
+    status: str
+    company_title: str
+    company_logo: str | None = None
+    role: str
+    email: str
+    invited_by_name: str | None = None
+    expires_at: datetime
+
+
+class InvitationTokenRequest(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+class InvitationAccepted(BaseModel):
+    company_id: int
+
+
 class UpdateTeamMemberRequest(BaseModel):
     """Change the company role and/or the role on one side.
 
-    buyer_role / supplier_role: admin, moderator, accountant or none (no access);
+    buyer_role / supplier_role: admin, moderator, accountant, viewer or none (no access);
     null removes the override, so the company role applies again. A field that is
     not sent stays as it is.
     """
@@ -338,12 +394,28 @@ class PublicSupplier(BaseModel):
     promoted: bool = False
     # Active paid plan (start / pro / business) shown as a mark next to the name.
     subscription_plan: str | None = None
+    # Company: the wide picture at the top of its page.
+    cover: str | None = None
+    # A private person's page (kind == "individual"); logo is then their photo.
+    headline: str | None = None
+    skills: list[str] = []
+    rate_amount: float | None = None
+    rate_currency: str | None = None
+    rate_unit: str | None = None
+    portfolio: list[dict] = []
 
-    @field_serializer("logo")
+    @field_serializer("logo", "cover")
     def serialize_logo(self, value: str | None) -> str | None:
         if not value:
             return value
         return public_file_url(value)
+
+    @field_serializer("portfolio")
+    def serialize_portfolio(self, value: list[dict]) -> list[dict]:
+        return [
+            {**item, "image": public_file_url(item["image"]) if item.get("image") else None}
+            for item in value
+        ]
 
 
 class PublicBuyer(BaseModel):

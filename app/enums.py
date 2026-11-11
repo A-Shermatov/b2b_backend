@@ -21,6 +21,7 @@ class CompanyRole(str, enum.Enum):
     admin = "admin"
     moderator = "moderator"
     accountant = "accountant"
+    viewer = "viewer"
 
 
 class ActorType(str, enum.Enum):

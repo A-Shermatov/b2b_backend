@@ -9,7 +9,10 @@ from app.modules.auth.api.common import (
     ActivateRoleRequest,
     AuthService,
     ChangePasswordRequest,
+    IndividualPage,
+    IndividualPageUpdate,
     MeResponse,
+    PageImageUploadResponse,
     SwitchActorRequest,
     SwitchCompanyRequest,
     TokenResponse,
@@ -62,6 +65,36 @@ async def upload_avatar(
 @router.delete("/me/avatar", response_model=UserPublic)
 async def delete_avatar(user: Annotated[CurrentUser, Depends(get_current_user)]):
     return await AuthService().set_avatar(user.id, None)
+
+
+@router.get("/me/page", response_model=IndividualPage)
+async def get_my_page(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    """My page as a private person: what I do, skills, rate, portfolio."""
+    return await AuthService().get_page(user.id)
+
+
+@router.put("/me/page", response_model=IndividualPage)
+async def update_my_page(
+    data: IndividualPageUpdate,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    return await AuthService().update_page(user.id, data)
+
+
+@router.post("/me/page/image", response_model=PageImageUploadResponse)
+async def upload_page_image(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    file: UploadFile = File(...),
+):
+    """A picture for the portfolio: up to 5 MB, checked by its real type."""
+    content, mime, _ = await storage_service.validate_upload(file)
+    if mime not in AVATAR_TYPES:
+        raise ValidationError("Загрузите картинку в формате JPG, PNG, WEBP или GIF")
+    if len(content) > MAX_AVATAR_BYTES:
+        raise ValidationError("Картинка должна быть не больше 5 МБ")
+    await file.seek(0)
+    key, _ = await storage_service.upload(file, f"portfolio/{user.id}")
+    return PageImageUploadResponse(image=key)
 
 
 @router.post("/2fa/setup", response_model=TwoFactorSetupResponse)

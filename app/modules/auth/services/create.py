@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 import asyncpg
 
 from app.config import get_settings
-from app.core.exceptions import ConflictError, ForbiddenError, RateLimitError, UnauthorizedError
+from app.core.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    RateLimitError,
+    UnauthorizedError,
+    ValidationError,
+)
 from app.core.security_core import (
     create_2fa_challenge_token,
     create_access_token,
@@ -50,8 +56,42 @@ REFRESH_REUSE_GRACE_SECONDS = 30
 
 class AuthCreateMixin:
     async def register(self, data: RegisterRequest, ip: str | None = None) -> TokenResponse:
+        from app.modules.companies.schemas import CompanyWizardInput
+        from app.modules.companies.services import CompanyService
+        from app.modules.companies.services.invitations import (
+            GONE_MESSAGE,
+            OTHER_EMAIL_MESSAGE,
+            hash_invite_token,
+        )
+
+        company_title = (data.company_title or "").strip()
+        as_company = data.account_type == "company" and not data.invite_token
+        if as_company and len(company_title) < 2:
+            raise ValidationError("Укажите название компании")
+        invitation = None
+        inviter_note = None
         async with self.connection() as conn:
             async with conn.transaction():
+                if data.invite_token:
+                    invitation = await conn.fetchrow(
+                        """
+                        SELECT i.id, i.company_id, i.email, i.role, i.status, i.invited_by,
+                               i.expires_at, c.title AS company_title
+                        FROM company_invitations i
+                        JOIN companies c ON c.id = i.company_id
+                        WHERE i.token_hash = $1
+                        FOR UPDATE OF i
+                        """,
+                        hash_invite_token(data.invite_token),
+                    )
+                    if (
+                        not invitation
+                        or invitation["status"] != "pending"
+                        or invitation["expires_at"] <= datetime.now(timezone.utc)
+                    ):
+                        raise ConflictError(GONE_MESSAGE)
+                    if invitation["email"].lower() != data.email.lower():
+                        raise ForbiddenError(OTHER_EMAIL_MESSAGE, code="invitation_other_email")
                 existing = await conn.fetchrow(
                     "SELECT id FROM users WHERE email = $1",
                     data.email.lower(),
@@ -84,6 +124,42 @@ class AuthCreateMixin:
                     raise ConflictError("Email already registered") from exc
                 user_dict = dict(user)
                 await ActorService(conn).ensure_individual_actors_for_user(user_dict)
+                # Listed among suppliers as a private person only when registering as one.
+                private_supplier = (
+                    data.account_type == "individual"
+                    and not invitation
+                    and data.role in ("supplier", "both")
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO individual_profiles (
+                        user_id, headline, accepts_orders, prefers_company
+                    )
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (user_id) DO NOTHING
+                    """,
+                    user_dict["id"],
+                    (data.headline or "").strip() or None if private_supplier else None,
+                    private_supplier,
+                    bool(invitation) or as_company,
+                )
+                companies = CompanyService(conn)
+                if invitation:
+                    await companies.join_by_invitation(conn, dict(invitation), user_dict)
+                    inviter_note = dict(invitation)
+                elif as_company:
+                    sides = ["buyer", "supplier"] if data.role == "both" else [data.role]
+                    await companies.create_from_wizard(
+                        user_dict,
+                        CompanyWizardInput(title=company_title, actor_types=sides),
+                    )
+                if invitation:
+                    # join_by_invitation may have widened the role to the company's sides.
+                    user_dict = dict(
+                        await conn.fetchrow(
+                            f"SELECT {USER_COLUMNS} FROM users WHERE id = $1", user_dict["id"]
+                        )
+                    )
                 await AuditLogger(conn).log_action(
                     user_id=user_dict["id"],
                     actor_id=None,
@@ -92,7 +168,12 @@ class AuthCreateMixin:
                     resource_type="user",
                     resource_id=str(user_dict["id"]),
                     ip_address=ip,
+                    details={
+                        "account_type": "invited" if invitation else data.account_type,
+                    },
                 )
+        if inviter_note:
+            await CompanyService()._tell_inviter(inviter_note, user_dict, accepted=True)
         return self._issue_tokens(user_dict)
 
     async def login(self, data: LoginRequest, ip: str | None = None) -> LoginResult:

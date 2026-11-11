@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 import asyncpg
 
 from app.config import get_settings
+from app.core.exceptions import AppError
 from app.core.middleware import (
     AccessLogMiddleware,
     CollapseDuplicateSlashesMiddleware,
@@ -129,6 +130,18 @@ app.add_middleware(
     expose_headers=["Authorization"],
 )
 app.add_middleware(CollapseDuplicateSlashesMiddleware)
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(_request: Request, exc: AppError):
+    # Our own errors also carry a short code ("company_access_revoked",
+    # "company_role_forbidden", ...), so the site can react to the case itself
+    # and not to the wording.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "code": exc.code},
+        headers=getattr(exc, "headers", None),
+    )
 
 
 @app.exception_handler(RequestValidationError)

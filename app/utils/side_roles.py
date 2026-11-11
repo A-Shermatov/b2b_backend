@@ -6,7 +6,7 @@ close that side for them ("none"): a purchasing manager then never sees the
 company's sales. The director always has full access to both sides.
 """
 
-SIDE_ROLES = ("admin", "moderator", "accountant", "none")
+SIDE_ROLES = ("admin", "moderator", "accountant", "viewer", "none")
 SIDE_LABELS_RU = {"buyer": "закупкам", "supplier": "продажам"}
 
 

@@ -235,6 +235,22 @@ async def test_force_complete_refused_while_dispute_open(client, buyer_auth, sup
 # ------------------------------------------------- C-03 company roles, M-03, M-02, H-05
 
 
+async def _join_team(client, manager_headers, company_id, email, role, member_token, side="buyer"):
+    """Invite a person and accept for them: a member joins only after accepting."""
+    res = await client.post(
+        f"{API}/{side}/companies/{company_id}/team",
+        headers=manager_headers,
+        json={"email": email, "role": role},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "pending"
+    res = await client.post(
+        f"{API}/auth/invitations/{res.json()['id']}/accept",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert res.status_code == 200, res.text
+
+
 async def test_accountant_cannot_manage_company_or_commit_deals(client):
     # A fresh director: do not pile companies onto the shared demo accounts.
     _, director_token, director_me = await _register(client, "buyer")
@@ -244,12 +260,9 @@ async def test_accountant_cannot_manage_company_or_commit_deals(client):
     assert res.status_code == 200, res.text
     company_id = res.json()["id"]
     acc_email, acc_token, acc_me = await _register(client, "buyer")
-    res = await client.post(
-        f"{API}/buyer/companies/{company_id}/team",
-        headers=buyer_auth["headers"],
-        json={"email": acc_email, "role": "accountant"},
+    await _join_team(
+        client, buyer_auth["headers"], company_id, acc_email, "accountant", acc_token
     )
-    assert res.status_code == 200, res.text
     acc = _headers(acc_token, await _actor(client, acc_token, side="buyer", company_id=company_id))
 
     other_email, _, other_me = await _register(client, "buyer")
@@ -297,8 +310,7 @@ async def test_member_of_supplier_company_cannot_deal_with_himself(client):
     res = await client.post(f"{API}/supplier/companies/", headers=b_sup, json=payload)
     assert res.status_code == 200, res.text
     company_id = res.json()["id"]
-    res = await client.post(f"{API}/supplier/companies/{company_id}/team", headers=b_sup, json={"email": a_email, "role": "admin"})
-    assert res.status_code == 200, res.text
+    await _join_team(client, b_sup, company_id, a_email, "admin", a_token, side="supplier")
 
     a_buyer = _headers(a_token, await _actor(client, a_token, side="buyer"))
     a_supplier = _headers(a_token, await _actor(client, a_token, side="supplier", company_id=company_id))

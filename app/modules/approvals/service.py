@@ -19,6 +19,7 @@ ROLE_LABELS = {
     "admin": "Администратор",
     "moderator": "Модератор",
     "accountant": "Бухгалтер",
+    "viewer": "Наблюдатель",
 }
 
 # Roles that may create buy-offers / auto-approve without waiting.

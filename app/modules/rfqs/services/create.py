@@ -18,7 +18,13 @@ from app.modules.rfqs.services.subscriptions import notify_subscribers_safely
 
 
 class RfqCreateMixin:
-    async def create(self, actor_id: int, created_by: str, data: RfqCreate):
+    async def create(
+        self,
+        actor_id: int,
+        created_by: str,
+        data: RfqCreate,
+        created_by_user_id: int | None = None,
+    ):
         rfq_id = str(uuid.uuid4())
         is_product = isinstance(data, ProductRfqCreate) or data.type == "product"
         status = data.status or "draft"
@@ -79,6 +85,12 @@ class RfqCreateMixin:
                     None if is_product else data.experience_required,
                     data.payment_mode,
                 )
+                if created_by_user_id is not None:
+                    await conn.execute(
+                        "UPDATE rfqs SET created_by_user_id = $2 WHERE id = $1",
+                        rfq_id,
+                        created_by_user_id,
+                    )
                 await insert_invites(conn, rfq_id, invited)
                 await log_event(
                     conn,

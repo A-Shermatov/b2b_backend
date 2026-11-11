@@ -39,12 +39,29 @@ def _actor_brief(
     rating,
     photo_raw,
     default_name: str,
+    kind: str | None = None,
+    contact_name: str | None = None,
+    contact_role: str | None = None,
 ) -> dict:
+    is_company = kind == "company"
     return {
         "id": actor_id,
         "name": name or default_name,
         "rating": float(rating or 0),
         "photo": public_file_url(photo_raw) if photo_raw else None,
+        "kind": kind,
+        # The employee who speaks for the company in this request / offer.
+        "contact_name": contact_name if is_company else None,
+        "contact_role": contact_role if is_company else None,
+    }
+
+
+def _contact(row, prefix: str) -> dict:
+    keys = row.keys()
+    return {
+        "kind": row[f"{prefix}_kind"] if f"{prefix}_kind" in keys else None,
+        "contact_name": row[f"{prefix}_contact_name"] if f"{prefix}_contact_name" in keys else None,
+        "contact_role": row[f"{prefix}_contact_role"] if f"{prefix}_contact_role" in keys else None,
     }
 
 
@@ -59,6 +76,7 @@ def _actor_from_row(row, *, role: str = "supplier") -> dict | None:
             rating=row["buyer_rating"],
             photo_raw=row["buyer_photo"],
             default_name="Заказчик",
+            **_contact(row, "buyer"),
         )
     if "supplier_id" not in keys:
         return None
@@ -68,6 +86,7 @@ def _actor_from_row(row, *, role: str = "supplier") -> dict | None:
         rating=row["supplier_rating"],
         photo_raw=row["supplier_photo"],
         default_name="Исполнитель",
+        **_contact(row, "supplier"),
     )
 
 
@@ -133,6 +152,13 @@ PROPOSAL_SELECT = f"""
         ) AS supplier_name,
         COALESCE(scs.average_rating, sc.rating, 0) AS supplier_rating,
         sc.logo AS supplier_photo,
+        sa.kind::text AS supplier_kind,
+        NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), '') AS supplier_contact_name,
+        (
+            SELECT scu.role::text FROM company_users scu
+            WHERE scu.company_id = sa.company_id AND sa.kind::text = 'company'
+              AND scu.user_id = p.author_user_id
+        ) AS supplier_contact_role,
         ba.id AS buyer_id,
         COALESCE(
             NULLIF(bc.title, ''),
@@ -141,6 +167,13 @@ PROPOSAL_SELECT = f"""
         ) AS buyer_name,
         COALESCE(bcs.average_rating, bc.rating, 0) AS buyer_rating,
         bc.logo AS buyer_photo,
+        ba.kind::text AS buyer_kind,
+        NULLIF(r.created_by, '') AS buyer_contact_name,
+        (
+            SELECT bcu.role::text FROM company_users bcu
+            WHERE bcu.company_id = ba.company_id AND ba.kind::text = 'company'
+              AND bcu.user_id = r.created_by_user_id
+        ) AS buyer_contact_role,
         COALESCE(NULLIF(ci.title, ''), r.title) AS item_name,
         COALESCE(NULLIF(ci.description, ''), r.description) AS item_description,
         (
@@ -155,6 +188,7 @@ PROPOSAL_SELECT = f"""
     JOIN actors sa ON sa.id = p.supplier_actor_id
     LEFT JOIN companies sc ON sc.id = sa.company_id
     LEFT JOIN company_stats scs ON scs.company_id = sc.id
+    LEFT JOIN users pu ON pu.id = p.author_user_id
     JOIN rfqs r ON r.id = p.rfq_id
     JOIN actors ba ON ba.id = r.actor_id
     LEFT JOIN companies bc ON bc.id = ba.company_id

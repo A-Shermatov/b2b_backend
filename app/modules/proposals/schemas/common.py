@@ -36,6 +36,11 @@ class ProposalActorBrief(BaseModel):
     name: str
     rating: float = 0
     photo: str | None = None
+    # "company" or "individual" (a private person).
+    kind: str | None = None
+    # For a company: the employee who wrote the request / the offer, and their role.
+    contact_name: str | None = None
+    contact_role: str | None = None
 
 
 class ProposalItemBrief(BaseModel):

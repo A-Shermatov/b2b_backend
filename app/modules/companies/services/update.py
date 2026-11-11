@@ -13,8 +13,10 @@ from app.modules.companies.services.common import (
     COMPANY_ROLES,
     ensure_can_change_member,
     ensure_can_manage,
+    ensure_company_member,
     load_company_schema,
 )
+from app.modules.notifications.services import NotificationService
 from app.utils.audit import log_event
 from app.utils.side_roles import SIDE_ROLES
 
@@ -25,6 +27,7 @@ AUDITED_COMPANY_FIELDS = (
     "website",
     "description",
     "logo",
+    "cover",
     "country",
     "city",
     "address",
@@ -100,7 +103,7 @@ class CompanyUpdateMixin:
                 await ensure_can_manage(conn, company_id, user_id, "company_profile.update")
                 before_row = await conn.fetchrow(
                     """
-                    SELECT title, legal_name, tax_number, website, description, logo,
+                    SELECT title, legal_name, tax_number, website, description, logo, cover,
                            country, city, address
                     FROM companies WHERE id = $1
                     """,
@@ -113,6 +116,7 @@ class CompanyUpdateMixin:
                     "website",
                     "description",
                     "logo",
+                    "cover",
                     "country",
                     "city",
                     "address",
@@ -237,8 +241,13 @@ class CompanyUpdateMixin:
                 return await load_company_schema(conn, company_id)
 
     async def remove_team_member(self, company_id: int, user_id: int, target_user_id: int):
+        leaving = target_user_id == user_id
         async with self.connection() as conn:
-            await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
+            if leaving:
+                # Leaving the team yourself is allowed at any access level.
+                await ensure_company_member(conn, company_id, user_id)
+            else:
+                await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
             membership = await conn.fetchrow(
                 """
                 SELECT id, role::text AS role
@@ -251,8 +260,11 @@ class CompanyUpdateMixin:
             if not membership:
                 raise NotFoundError("Team member not found")
             if membership["role"] == "director":
-                raise ForbiddenError("Cannot remove company director")
-            if target_user_id != user_id:  # leaving the team yourself is always allowed
+                raise ForbiddenError(
+                    "Руководителя нельзя убрать из компании. "
+                    "Чтобы передать компанию другому человеку, напишите в поддержку"
+                )
+            if not leaving:
                 await ensure_can_change_member(
                     conn,
                     company_id,
@@ -269,6 +281,18 @@ class CompanyUpdateMixin:
                 user_id=user_id,
                 company_id=company_id,
                 details={"member_user_id": target_user_id, "role": membership["role"]},
+            )
+            company_title = await conn.fetchval(
+                "SELECT title FROM companies WHERE id = $1", company_id
+            )
+        if not leaving:
+            # The person learns why the company disappeared from their cabinet.
+            await NotificationService().notify_user(
+                target_user_id,
+                "system",
+                f"Доступ к компании «{company_title or ''}» закрыт",
+                "Вас убрали из команды компании. Сделки, заявки и переписка остались "
+                "у компании; ваш личный профиль и вход на площадку сохранены.",
             )
 
     async def update_team_member(

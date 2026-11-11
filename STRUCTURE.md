@@ -100,6 +100,12 @@ Client → app/modules/*/api → app.deps → services (SQL) → PostgreSQL
 | POST | `/register`, `/login`, `/refresh`, `/logout` |
 | GET/PATCH | `/me` |
 | POST | `/switch-actor`, `/switch-company`, `/activate-role` |
+| GET/PUT | `/me/page` — страничка частного лица (чем занимается, навыки, ставка, портфолио); POST `/me/page/image` |
+| GET | `/invitations` — приглашения в компании, ждущие ответа |
+| POST | `/invitations/{id}/accept`, `/invitations/{id}/decline`; по ссылке: `/invitations/accept`, `/invitations/decline` |
+
+`POST /register` принимает `account_type` (`individual` / `company`), `company_title`,
+`headline` и `invite_token`: компания получает кабинет сразу, приглашённый попадает в команду.
 
 ### Public — `/public` ✅
 
@@ -108,6 +114,7 @@ Client → app/modules/*/api → app.deps → services (SQL) → PostgreSQL
 | GET | `/categories`, `/suppliers`, `/suppliers/{id}`, `.../catalog`, `.../reviews` |
 | GET | `/companies/{id}`, `.../reviews`, `.../catalog` |
 | GET | `/catalog`, `/catalog/items/{id}`, `/rfqs` |
+| GET | `/invitations/{token}` — что показывает ссылка-приглашение |
 
 ### Buyer — `/buyer` ✅
 
@@ -140,7 +147,8 @@ Dashboard, users, companies, catalog, rfqs, proposals, contracts, disputes, fina
 | Bearer + `get_current_user` | ✅ | `app/deps.py` |
 | Headers `X-Actor-Id`, `X-Company-Id` | ✅ | |
 | Buyer / Supplier context | ✅ | `app/deps.py` |
-| Роли в компании | ✅ | director / admin / moderator / accountant |
+| Роли в компании | ✅ | director / admin / moderator / accountant / viewer (только просмотр) |
+| Приглашения в команду | ✅ | `company_invitations`: человек входит в компанию после согласия, срок 14 дней |
 | Admin gate | ✅ | `require_admin` |
 | Login rate limit | ✅ | Redis или in-memory |
 | Refresh blacklist | ✅ | Redis |

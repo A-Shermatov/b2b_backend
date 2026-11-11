@@ -1,12 +1,5 @@
-from app.core.exceptions import (
-    ConflictError,
-    NotFoundError,
-    RateLimitError,
-    ValidationError,
-)
 from app.modules.actors.services import ActorService
 from app.modules.companies.schemas import (
-    AddTeamMemberRequest,
     CertificateCreateRequest,
     CompanyWizardInput,
     CompanyWithRelations,
@@ -14,18 +7,12 @@ from app.modules.companies.schemas import (
 from app.modules.companies.services.common import (
     COMPANY_COLUMNS,
     COMPANY_ROLES,
-    ensure_can_change_member,
     ensure_can_manage,
     load_company_schema,
     parse_actor_types,
     user_as_dict,
 )
-from app.modules.notifications.services import NotificationService
-from app.utils import redis_client
 from app.utils.audit import log_event
-
-
-TEAM_ADDS_PER_HOUR = 20
 
 
 class CompanyCreateMixin:
@@ -165,22 +152,6 @@ class CompanyCreateMixin:
                         cert.expiry_date or None,
                         cert.file_url,
                     )
-                for member in data.team:
-                    member_user = await conn.fetchrow(
-                        "SELECT id FROM users WHERE email = $1",
-                        member.email.lower(),
-                    )
-                    if member_user:
-                        await conn.execute(
-                            """
-                            INSERT INTO company_users (company_id, user_id, role)
-                            VALUES ($1, $2, $3::company_role)
-                            ON CONFLICT DO NOTHING
-                            """,
-                            company_id,
-                            member_user["id"],
-                            member.role,
-                        )
                 await ActorService(conn).sync_company_actors(
                     {
                         "id": company_id,
@@ -198,7 +169,27 @@ class CompanyCreateMixin:
                     company_id=company_id,
                     details={"title": data.title, "actor_types": actor_types},
                 )
-                return await load_company_schema(conn, company_id)
+                # Colleagues named in the form are invited; each joins after accepting.
+                invited: list[dict] = []
+                seen: set[str] = set()
+                for member in data.team:
+                    email = member.email.strip().lower()
+                    if (
+                        not email
+                        or email in seen
+                        or email == (user_dict.get("email") or "").lower()
+                        or member.role not in COMPANY_ROLES - {"director"}
+                    ):
+                        continue
+                    seen.add(email)
+                    row, _token = await self._create_invitation(
+                        conn, company_id, user_dict["id"], email, member.role
+                    )
+                    invited.append(row)
+                company = await load_company_schema(conn, company_id)
+        for row in invited:
+            await self._notify_invited(row)
+        return company
 
     async def add_certificate(
         self, company_id: int, user_id: int, data: CertificateCreateRequest
@@ -229,68 +220,4 @@ class CompanyCreateMixin:
                 company_id=company_id,
                 details={"certificate_id": row["id"], "title": data.title},
             )
-        return row
-
-    async def add_team_member(self, company_id: int, user_id: int, data: AddTeamMemberRequest):
-        if data.role not in COMPANY_ROLES:
-            raise ValidationError("Invalid company role")
-        if data.role == "director":
-            raise ValidationError("Cannot assign director role")
-        async with self.connection() as conn:
-            await ensure_can_manage(conn, company_id, user_id, "company_team.manage")
-            await ensure_can_change_member(conn, company_id, user_id, new_role=data.role)
-            # The lookup by email tells whether an account exists: cap how many
-            # addresses one manager can try, so the form is no enumeration tool.
-            if not await redis_client.check_rate_limit(
-                f"team_add:{user_id}", TEAM_ADDS_PER_HOUR, 3600
-            ):
-                raise RateLimitError("Слишком много попыток добавить сотрудника. Попробуйте через час")
-            member = await conn.fetchrow(
-                "SELECT id FROM users WHERE email = $1",
-                data.email.lower(),
-            )
-            if not member:
-                raise NotFoundError("User with this email not found")
-            existing = await conn.fetchrow(
-                """
-                SELECT id FROM company_users
-                WHERE company_id = $1 AND user_id = $2
-                """,
-                company_id,
-                member["id"],
-            )
-            if existing:
-                raise ConflictError("User already in team")
-            row = await conn.fetchrow(
-                """
-                INSERT INTO company_users (company_id, user_id, role)
-                VALUES ($1, $2, $3::company_role)
-                RETURNING id
-                """,
-                company_id,
-                member["id"],
-                data.role,
-            )
-            await log_event(
-                conn,
-                "company.member.invite",
-                "company",
-                company_id,
-                user_id=user_id,
-                company_id=company_id,
-                details={"member_user_id": member["id"], "role": data.role},
-            )
-            company_name = await conn.fetchval(
-                "SELECT title FROM companies WHERE id = $1", company_id
-            )
-        # The added person learns about it at once and can leave the team
-        # (self-removal is allowed) if they did not expect it.
-        await NotificationService().notify_user(
-            member["id"],
-            "system",
-            "Вас добавили в команду компании",
-            f"Вас добавили в «{company_name or 'компанию'}» с ролью «{data.role}». "
-            "Если вы не ожидали этого, выйдите из команды в профиле.",
-            company_id=company_id,
-        )
         return row

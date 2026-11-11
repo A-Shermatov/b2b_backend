@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -9,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.permissions import (
     STAFF_PLATFORM_ROLES,
+    VIEWER_FORBIDDEN_MESSAGE,
     ensure_company_role_permission,
     ensure_permission,
     fetch_permission_names,
@@ -26,6 +28,69 @@ FINANCE_ROLES = {"director", "admin", "accountant"}
 FULL_COMPANY_ROLES = {"director", "admin"}
 RFQ_ROLES = FULL_COMPANY_ROLES | {"moderator"}
 ADMIN_ROLES = STAFF_PLATFORM_ROLES
+
+# A viewer looks and changes nothing. Routes that only take the actor context
+# (no buyer_perm / supplier_perm) are closed for them here, except what a person
+# does for themselves: read marks, their own notifications, support, leaving the
+# team, creating a company of their own.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_VIEWER_WRITE_ALLOWED = re.compile(
+    r"/(?:buyer|supplier)/(?:"
+    r"notifications/.*"
+    r"|nav-seen"
+    r"|support/.*"
+    r"|(?:.*/)?messages/read"
+    r"|rfqs/subscriptions"
+    r"|companies/?"
+    r"|companies/\d+/team/\d+"
+    r")$"
+)
+
+
+def ensure_viewer_may_request(request: Request, company_role: str | None) -> None:
+    if company_role != "viewer" or request.method in _SAFE_METHODS:
+        return
+    if _VIEWER_WRITE_ALLOWED.search(request.url.path):
+        return
+    raise ForbiddenError(VIEWER_FORBIDDEN_MESSAGE, code="company_role_forbidden")
+
+
+async def _revoked_company_title(user_id: int, x_actor_id: int | None, x_company_id: int | None):
+    """The company named in the request headers, when the user is not (any longer) in it."""
+    if x_actor_id is None and x_company_id is None:
+        return None
+    async with pool.connection() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT c.id, c.title
+            FROM companies c
+            WHERE c.id = COALESCE(
+                $2::int,
+                (SELECT a.company_id FROM actors a
+                 WHERE a.id = $1::int AND a.kind::text = 'company')
+            )
+              AND NOT EXISTS (
+                  SELECT 1 FROM company_users cu
+                  WHERE cu.company_id = c.id AND cu.user_id = $3
+              )
+            """,
+            x_actor_id,
+            x_company_id,
+            user_id,
+        )
+    return row["title"] if row else None
+
+
+async def _no_actor_error(
+    user_id: int, x_actor_id: int | None, x_company_id: int | None, fallback: str
+) -> ForbiddenError:
+    title = await _revoked_company_title(user_id, x_actor_id, x_company_id)
+    if title is not None:
+        return ForbiddenError(
+            f"У вас больше нет доступа к компании «{title}»",
+            code="company_access_revoked",
+        )
+    return ForbiddenError(fallback, code="actor_required")
 
 
 @dataclass
@@ -301,6 +366,7 @@ def admin_perm(*codes: str):
 
 
 async def require_buyer_ctx(
+    request: Request,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     x_actor_id: Annotated[int | None, Header(alias="X-Actor-Id")] = None,
     x_company_id: Annotated[int | None, Header(alias="X-Company-Id")] = None,
@@ -309,7 +375,7 @@ async def require_buyer_ctx(
         user.id, x_actor_id, x_company_id, "buyer", strict=True
     )
     if not actor_row:
-        raise ForbiddenError("Buyer actor required", code="actor_required")
+        raise await _no_actor_error(user.id, x_actor_id, x_company_id, "Buyer actor required")
     actor = actor_from_row(actor_row)
     if actor.side != "buyer":
         raise ForbiddenError("Buyer actor required")
@@ -325,6 +391,7 @@ async def require_buyer_ctx(
         company, company_role = membership
         if not company_role:
             raise ForbiddenError("Company role required")
+        ensure_viewer_may_request(request, company_role)
 
     return BuyerContext(
         user=user,
@@ -355,6 +422,7 @@ def require_buyer_company_roles(*roles: str):
 
 
 async def require_supplier_ctx(
+    request: Request,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     x_actor_id: Annotated[int | None, Header(alias="X-Actor-Id")] = None,
     x_company_id: Annotated[int | None, Header(alias="X-Company-Id")] = None,
@@ -363,7 +431,7 @@ async def require_supplier_ctx(
         user.id, x_actor_id, x_company_id, "supplier", strict=True
     )
     if not actor_row:
-        raise ForbiddenError("Supplier actor required", code="actor_required")
+        raise await _no_actor_error(user.id, x_actor_id, x_company_id, "Supplier actor required")
     actor = actor_from_row(actor_row)
     if actor.side != "supplier":
         raise ForbiddenError("Supplier actor required")
@@ -379,6 +447,7 @@ async def require_supplier_ctx(
         company, company_role = membership
         if not company_role:
             raise ForbiddenError("Company role required")
+        ensure_viewer_may_request(request, company_role)
 
     return SupplierContext(
         user=user,

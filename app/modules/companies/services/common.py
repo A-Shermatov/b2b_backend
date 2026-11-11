@@ -21,11 +21,35 @@ from app.modules.companies.schemas import (
 
 COMPANY_COLUMNS = """
     id, title, actor_type::text AS actor_type, owner_id, legal_name, tax_number,
-    website, description, logo, country, city, address,
+    website, description, logo, cover, country, city, address,
     verification_status::text AS verification_status, rating, created_at, updated_at
 """
 
-COMPANY_ROLES = frozenset({"director", "admin", "moderator", "accountant"})
+# A private person's page, as SUPPLIER_SELECT names its columns.
+PAGE_KEYS = (
+    "user_avatar",
+    "page_headline",
+    "page_about",
+    "page_skills",
+    "page_city",
+    "page_website",
+    "page_rate_amount",
+    "page_rate_currency",
+    "page_rate_unit",
+    "page_portfolio",
+)
+
+
+def portfolio_from_db(value) -> list[dict]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return [item for item in (value or []) if isinstance(item, dict)]
+
+
+COMPANY_ROLES = frozenset({"director", "admin", "moderator", "accountant", "viewer"})
 
 
 def user_as_dict(user) -> dict:
@@ -225,6 +249,7 @@ async def load_company_schema(conn, company_id: int) -> CompanyWithRelations:
         website=company["website"],
         description=company["description"],
         logo=company["logo"],
+        cover=company["cover"],
         country=company["country"],
         city=company["city"],
         address=company["address"],
@@ -255,6 +280,7 @@ def to_public_company_detail(company: CompanyWithRelations) -> PublicCompanyDeta
         website=company.website,
         description=company.description,
         logo=company.logo,
+        cover=company.cover,
         country=company.country,
         city=company.city,
         verification_status=company.verification_status,
@@ -354,6 +380,7 @@ def row_to_public_supplier(row) -> PublicSupplier:
             description=row["description"],
             website=row["website"],
             logo=row["logo"],
+            cover=row["cover"] if "cover" in row.keys() else None,
             rating=rating,
             verification_status=verification,
             reviews_count=int(row["reviews_count"] or 0),
@@ -373,15 +400,25 @@ def row_to_public_supplier(row) -> PublicSupplier:
     if not display:
         name = f"{row['first_name'] or ''} {row['last_name'] or ''}".strip()
         display = name or f"Исполнитель #{row['id']}"
+    keys = row.keys()
+    page = {key: row[key] for key in PAGE_KEYS if key in keys}
+    rate = page.get("page_rate_amount")
     return PublicSupplier(
         actor_id=row["id"],
         kind=row["kind"],
         display_name=display,
         company_id=None,
-        city=None,
+        city=page.get("page_city"),
         country=None,
-        description=None,
-        website=None,
+        description=page.get("page_about"),
+        website=page.get("page_website"),
+        logo=page.get("user_avatar"),
+        headline=page.get("page_headline"),
+        skills=list(page.get("page_skills") or []),
+        rate_amount=float(rate) if rate is not None else None,
+        rate_currency=page.get("page_rate_currency") if rate is not None else None,
+        rate_unit=page.get("page_rate_unit") if rate is not None else None,
+        portfolio=portfolio_from_db(page.get("page_portfolio")),
         rating=rating,
         verification_status=verification,
         reviews_count=int(row["reviews_count"] or 0),

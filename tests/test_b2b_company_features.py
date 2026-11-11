@@ -14,7 +14,7 @@ from app.modules.proposals.services.common import normalize_tax_number
 from app.modules.rfqs.services.read import parse_category_ids
 from tests.buyer.test_companies import _wizard_payload
 from tests.sql import fetch, fetchval
-from tests.test_audit_regressions import _actor, _headers, _register
+from tests.test_audit_regressions import _actor, _headers, _join_team, _register
 
 API = "/api/v1"
 
@@ -226,12 +226,7 @@ async def test_side_roles_close_sales_and_narrow_purchases(client):
     director = _headers(d_token, await _actor(client, d_token, side="buyer", company_id=company_id))
 
     m_email, m_token, m_me = await _register(client, "both")
-    res = await client.post(
-        f"{API}/buyer/companies/{company_id}/team",
-        headers=director,
-        json={"email": m_email, "role": "moderator"},
-    )
-    assert res.status_code == 200, res.text
+    await _join_team(client, director, company_id, m_email, "moderator", m_token)
     member_id = m_me["user"]["id"]
     sales_actor = await _actor(client, m_token, side="supplier", company_id=company_id)
     purchases_actor = await _actor(client, m_token, side="buyer", company_id=company_id)
