@@ -453,6 +453,9 @@ async def test_viewer_role_on_one_side(client):
     )
     assert res.status_code == 200, res.text
     assert res.json()["buyer_role"] == "viewer"
+    me = (await client.get(f"{API}/auth/me", headers=_bearer(m_token))).json()
+    roles = {a["side"]: a["company_role"] for a in me["actors"] if a["company_id"] == company_id}
+    assert roles == {"buyer": "viewer", "supplier": "moderator"}
     purchases = _headers(m_token, await _actor(client, m_token, side="buyer", company_id=company_id))
     res = await client.post(f"{API}/buyer/rfqs/", headers=purchases, json=_rfq_body("Side viewer"))
     assert res.status_code == 403, res.text

@@ -19,6 +19,10 @@ class AuthReadMixin:
                 SELECT
                     cu.company_id,
                     cu.role::text AS role,
+                    (SELECT sr.role FROM company_user_side_roles sr
+                     WHERE sr.company_user_id = cu.id AND sr.side = 'buyer') AS buyer_role,
+                    (SELECT sr.role FROM company_user_side_roles sr
+                     WHERE sr.company_user_id = cu.id AND sr.side = 'supplier') AS supplier_role,
                     c.id,
                     c.title,
                     c.actor_type::text AS actor_type,

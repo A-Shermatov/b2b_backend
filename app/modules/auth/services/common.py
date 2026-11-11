@@ -86,6 +86,10 @@ def actor_to_summary(actor: dict, memberships: dict[int, dict]) -> ActorSummary:
         membership = memberships.get(actor["company_id"])
         if membership:
             company_role = membership.get("role")
+            # The role on this side when the director set a different one
+            # (a manager who only views purchases is a viewer there).
+            if company_role != "director":
+                company_role = membership.get(f"{actor['side']}_role") or company_role
     return ActorSummary(
         id=actor["id"],
         kind=actor["kind"],
