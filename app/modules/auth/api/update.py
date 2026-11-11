@@ -67,6 +67,12 @@ async def delete_avatar(user: Annotated[CurrentUser, Depends(get_current_user)])
     return await AuthService().set_avatar(user.id, None)
 
 
+@router.get("/me/changes")
+async def my_pending_changes(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    """Changes to my name, photo or page that wait for an admin (or null)."""
+    return await AuthService().my_pending_changes(user.id)
+
+
 @router.get("/me/page", response_model=IndividualPage)
 async def get_my_page(user: Annotated[CurrentUser, Depends(get_current_user)]):
     """My page as a private person: what I do, skills, rate, portfolio."""

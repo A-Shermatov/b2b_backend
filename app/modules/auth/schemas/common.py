@@ -116,6 +116,8 @@ class UserPublic(BaseModel):
     avatar_url: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Name, photo or page changes waiting for an admin.
+    pending_changes: list[str] = []
 
 
 class UserUpdateRequest(BaseModel):
@@ -271,6 +273,8 @@ class IndividualPageUpdate(BaseModel):
 class IndividualPage(IndividualPageUpdate):
     # The person's page among suppliers: /performers/{supplier_actor_id}.
     supplier_actor_id: int | None = None
+    # Edits wait for an admin; until then the public page shows the last approved one.
+    pending_review: bool = False
 
 
 class PageImageUploadResponse(BaseModel):

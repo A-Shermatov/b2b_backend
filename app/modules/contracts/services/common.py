@@ -359,6 +359,21 @@ async def resolve_actor_user_ids(conn, actor_id: int) -> list[int]:
     return []
 
 
+# A deal party as people know it: the company's title, or the person's name
+# for an individual account (the actor's display name).
+PARTY_NAME_SQL = """
+SELECT a.id, COALESCE(NULLIF(TRIM(co.title), ''), NULLIF(TRIM(a.display_name), '')) AS name
+FROM actors a
+LEFT JOIN companies co ON co.id = a.company_id
+WHERE a.id = ANY($1::int[])
+"""
+
+
+async def load_party_names(conn, actor_ids: list[int]) -> dict[int, str]:
+    rows = await conn.fetch(PARTY_NAME_SQL, list({i for i in actor_ids if i}))
+    return {row["id"]: row["name"] for row in rows if row["name"]}
+
+
 async def load_contract_schema(conn, contract_id: int) -> dict:
     contract = await load_contract_row(conn, contract_id)
     plan = await conn.fetchrow(
@@ -502,12 +517,18 @@ async def load_contract_schema(conn, contract_id: int) -> dict:
             contract_id,
         )
 
+    party_names = await load_party_names(
+        conn, [contract["buyer_actor_id"], contract["supplier_actor_id"]]
+    )
+
     return {
         "id": contract["id"],
         "rfq_id": contract["rfq_id"],
         "proposal_id": contract["proposal_id"],
         "buyer_actor_id": contract["buyer_actor_id"],
         "supplier_actor_id": contract["supplier_actor_id"],
+        "buyer_name": party_names.get(contract["buyer_actor_id"]),
+        "supplier_name": party_names.get(contract["supplier_actor_id"]),
         "title": contract["title"],
         "description": contract["description"],
         "agreed_amount": contract["agreed_amount"],

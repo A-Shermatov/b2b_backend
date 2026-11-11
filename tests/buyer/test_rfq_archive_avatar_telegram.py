@@ -107,7 +107,9 @@ async def test_archive_hides_a_closed_request_and_restores_it(client, buyer_auth
 
 
 @pytest.mark.asyncio
-async def test_profile_photo_is_saved_and_shown_next_to_messages(client, buyer_auth, supplier_auth):
+async def test_profile_photo_is_saved_and_shown_next_to_messages(
+    client, buyer_auth, supplier_auth, admin_auth
+):
     not_image = await client.post(
         f"{API}/auth/me/avatar",
         headers=buyer_auth["headers"],
@@ -121,11 +123,20 @@ async def test_profile_photo_is_saved_and_shown_next_to_messages(client, buyer_a
         files={"file": ("me.png", PNG, "image/png")},
     )
     assert res.status_code == 200, res.text
-    avatar = res.json()["avatar_url"]
-    assert avatar and avatar.endswith(".png")
+    # The photo waits for an admin before anyone sees it.
+    assert "avatar_url" in res.json()["pending_changes"]
+    pending = await client.get(f"{API}/auth/me/changes", headers=buyer_auth["headers"])
+    assert pending.status_code == 200, pending.text
+    approved = await client.post(
+        f"{API}/admin/companies/change-requests/{pending.json()['id']}/action",
+        headers=admin_auth["headers"],
+        json={"action": "approve"},
+    )
+    assert approved.status_code == 200, approved.text
 
     me = await client.get(f"{API}/auth/me", headers=buyer_auth["headers"])
-    assert me.json()["user"]["avatar_url"] == avatar
+    avatar = me.json()["user"]["avatar_url"]
+    assert avatar and avatar.endswith(".png")
 
     chat = await client.post(
         f"{API}/buyer/direct-chats/",

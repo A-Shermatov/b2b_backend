@@ -113,6 +113,9 @@ class ContractSchema(BaseModel):
     proposal_id: int
     buyer_actor_id: int
     supplier_actor_id: int
+    # Company title, or the person's name for an individual account.
+    buyer_name: str | None = None
+    supplier_name: str | None = None
     title: str
     description: str | None
     agreed_amount: float

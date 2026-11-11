@@ -52,6 +52,21 @@ class AuthPageMixin:
             """,
             user_id,
         )
+        proposed = await conn.fetchval(
+            """
+            SELECT proposed -> 'page' FROM company_change_requests
+            WHERE target_user_id = $1 AND status = 'pending'
+            """,
+            user_id,
+        )
+        if isinstance(proposed, str):
+            proposed = json.loads(proposed)
+        if isinstance(proposed, dict):
+            # The owner keeps editing what they sent, not the version others see.
+            merged = {**(dict(row) if row else {}), **proposed}
+            page = shape_page(merged, actor_id)
+            page.pending_review = True
+            return page
         return shape_page(row, actor_id)
 
     async def get_page(self, user_id: int) -> IndividualPage:
@@ -70,50 +85,42 @@ class AuthPageMixin:
                     raise ValidationError(
                         "Чтобы принимать заказы как частное лицо, сначала включите профиль поставщика"
                     )
+                # Taking orders is a switch and applies at once; what the page
+                # says and shows waits for an admin.
                 await conn.execute(
                     """
-                    INSERT INTO individual_profiles (
-                        user_id, headline, about, skills, city, website,
-                        rate_amount, rate_currency, rate_unit, portfolio, accepts_orders
-                    )
-                    VALUES ($1, $2, $3, $4::text[], $5, $6, $7, $8, $9, $10::jsonb, $11)
+                    INSERT INTO individual_profiles (user_id, accepts_orders)
+                    VALUES ($1, $2)
                     ON CONFLICT (user_id) DO UPDATE SET
-                        headline = EXCLUDED.headline,
-                        about = EXCLUDED.about,
-                        skills = EXCLUDED.skills,
-                        city = EXCLUDED.city,
-                        website = EXCLUDED.website,
-                        rate_amount = EXCLUDED.rate_amount,
-                        rate_currency = EXCLUDED.rate_currency,
-                        rate_unit = EXCLUDED.rate_unit,
-                        portfolio = EXCLUDED.portfolio,
                         accepts_orders = EXCLUDED.accepts_orders,
                         updated_at = NOW()
                     """,
                     user_id,
-                    data.headline,
-                    data.about,
-                    data.skills,
-                    data.city,
-                    data.website,
-                    data.rate_amount,
-                    data.rate_currency,
-                    data.rate_unit,
-                    # Pictures are stored as keys in our storage, never as links.
-                    json.dumps(
-                        [
-                            {
-                                "title": item.title,
-                                "description": item.description,
-                                "image": item.image,
-                                "link": item.link,
-                            }
-                            for item in data.portfolio
-                        ],
-                        ensure_ascii=False,
-                    ),
                     data.accepts_orders,
                 )
+                from app.modules.companies.services.changes import queue_user_changes
+
+                content = {
+                    "headline": data.headline,
+                    "about": data.about,
+                    "skills": list(data.skills),
+                    "city": data.city,
+                    "website": data.website,
+                    "rate_amount": data.rate_amount,
+                    "rate_currency": data.rate_currency,
+                    "rate_unit": data.rate_unit,
+                    # Pictures are stored as keys in our storage, never as links.
+                    "portfolio": [
+                        {
+                            "title": item.title,
+                            "description": item.description,
+                            "image": item.image,
+                            "link": item.link,
+                        }
+                        for item in data.portfolio
+                    ],
+                }
+                await queue_user_changes(conn, user_id, {"page": content})
                 await log_event(
                     conn,
                     "user.page.update",

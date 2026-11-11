@@ -20,180 +20,28 @@ from app.modules.notifications.services import NotificationService
 from app.utils.audit import log_event
 from app.utils.side_roles import SIDE_ROLES
 
-AUDITED_COMPANY_FIELDS = (
-    "title",
-    "legal_name",
-    "tax_number",
-    "website",
-    "description",
-    "logo",
-    "cover",
-    "country",
-    "city",
-    "address",
-)
-AUDITED_PROFILE_FIELDS = (
-    "founded_year",
-    "employees_count",
-    "annual_revenue_range",
-    "languages",
-    "industries",
-    "warehouse_area",
-    "markets",
-    "brands",
-    "notable_clients",
-    "gallery",
-    "category_ids",
-    "actor_types",
-)
-
-
-def _company_update_details(data: CompanyUpdateRequest, before_row, skip_moderated: bool) -> dict:
-    from app.modules.companies.services.changes import MODERATED_FIELDS
-
-    before: dict = {}
-    after: dict = {}
-    for field in AUDITED_COMPANY_FIELDS:
-        if skip_moderated and field in MODERATED_FIELDS:
-            continue
-        value = getattr(data, field, None)
-        if value is None or before_row is None or before_row[field] == value:
-            continue
-        before[field] = before_row[field]
-        after[field] = value
-    profile_fields = [field for field in AUDITED_PROFILE_FIELDS if getattr(data, field, None) is not None]
-    return {"before": before, "after": after, "profile_fields": profile_fields}
-
 
 class CompanyUpdateMixin:
     async def update_company(
         self, company_id: int, user_id: int, data: CompanyUpdateRequest
     ) -> CompanyWithRelations:
-        from app.modules.companies.services.changes import MODERATED_FIELDS
+        """Save the company page. What others see waits for an admin; only the
+        company's sides (buyer / supplier) change at once."""
+        from app.modules.companies.services.changes import (
+            COMPANY_REVIEWED_FIELDS,
+            queue_company_changes,
+        )
 
-        skip_moderated = False
-        async with self.connection() as conn:
-            company_row = await conn.fetchrow(
-                """
-                SELECT verification_status::text AS verification_status,
-                       title, legal_name, tax_number, address, city, country
-                FROM companies WHERE id = $1
-                """,
-                company_id,
-            )
-        if not company_row:
-            raise NotFoundError("Company not found")
-
-        if company_row["verification_status"] == "verified":
-            skip_moderated = True
-            changed = {}
-            for field in MODERATED_FIELDS:
-                val = getattr(data, field, None)
-                if val is None:
-                    continue
-                current = str(company_row[field] or "").strip()
-                if str(val).strip() != current:
-                    changed[field] = val
-            if changed:
-                await self.submit_change_request(company_id, user_id, changed)
-
+        proposed = {
+            field: getattr(data, field)
+            for field in COMPANY_REVIEWED_FIELDS
+            if getattr(data, field, None) is not None
+        }
         async with self.connection() as conn:
             async with conn.transaction():
                 await load_company_schema(conn, company_id)
                 await ensure_can_manage(conn, company_id, user_id, "company_profile.update")
-                before_row = await conn.fetchrow(
-                    """
-                    SELECT title, legal_name, tax_number, website, description, logo, cover,
-                           country, city, address
-                    FROM companies WHERE id = $1
-                    """,
-                    company_id,
-                )
-                fields = (
-                    "title",
-                    "legal_name",
-                    "tax_number",
-                    "website",
-                    "description",
-                    "logo",
-                    "cover",
-                    "country",
-                    "city",
-                    "address",
-                )
-                sets = []
-                params: list = []
-                for field in fields:
-                    if skip_moderated and field in MODERATED_FIELDS:
-                        continue
-                    val = getattr(data, field)
-                    if val is not None:
-                        params.append(val)
-                        sets.append(f"{field} = ${len(params)}")
-                if sets:
-                    params.append(company_id)
-                    await conn.execute(
-                        f"UPDATE companies SET {', '.join(sets)}, updated_at = NOW() WHERE id = ${len(params)}",
-                        *params,
-                    )
-                else:
-                    await conn.execute(
-                        "UPDATE companies SET updated_at = NOW() WHERE id = $1",
-                        company_id,
-                    )
-
-                profile_updates = []
-                profile_params: list = []
-                for field in (
-                    "founded_year",
-                    "employees_count",
-                    "annual_revenue_range",
-                    "languages",
-                    "industries",
-                    "warehouse_area",
-                    "markets",
-                    "brands",
-                    "notable_clients",
-                    "gallery",
-                ):
-                    val = getattr(data, field)
-                    if val is not None:
-                        if field == "gallery":
-                            profile_params.append(json.dumps(val))
-                            profile_updates.append(
-                                f"{field} = ${len(profile_params)}::jsonb"
-                            )
-                        else:
-                            profile_params.append(val)
-                            cast = "::text[]" if field in {"languages", "industries"} else ""
-                            profile_updates.append(
-                                f"{field} = ${len(profile_params)}{cast}"
-                            )
-                if profile_updates:
-                    profile_params.append(company_id)
-                    await conn.execute(
-                        f"""
-                        UPDATE company_profiles
-                        SET {', '.join(profile_updates)}
-                        WHERE company_id = ${len(profile_params)}
-                        """,
-                        *profile_params,
-                    )
-
-                if data.category_ids is not None:
-                    await conn.execute(
-                        "DELETE FROM company_categories WHERE company_id = $1",
-                        company_id,
-                    )
-                    for cat_id in data.category_ids:
-                        await conn.execute(
-                            """
-                            INSERT INTO company_categories (company_id, category_id)
-                            VALUES ($1, $2)
-                            """,
-                            company_id,
-                            cat_id,
-                        )
+                queued = await queue_company_changes(conn, company_id, user_id, proposed)
 
                 if data.actor_types is not None:
                     actor_types = list(data.actor_types)
@@ -229,6 +77,9 @@ class CompanyUpdateMixin:
                         company_id,
                     )
                     await ActorService(conn).sync_company_actors(dict(company), actor_types)
+                    await conn.execute(
+                        "UPDATE companies SET updated_at = NOW() WHERE id = $1", company_id
+                    )
                 await log_event(
                     conn,
                     "company.update",
@@ -236,9 +87,22 @@ class CompanyUpdateMixin:
                     company_id,
                     user_id=user_id,
                     company_id=company_id,
-                    details=_company_update_details(data, before_row, skip_moderated),
+                    details={
+                        "sent_for_review": sorted(proposed) if queued else [],
+                        "actor_types": list(data.actor_types) if data.actor_types is not None else None,
+                    },
                 )
-                return await load_company_schema(conn, company_id)
+                result = await load_company_schema(conn, company_id)
+                pending = await conn.fetchval(
+                    """
+                    SELECT proposed FROM company_change_requests
+                    WHERE company_id = $1 AND status = 'pending'
+                    """,
+                    company_id,
+                )
+                if pending:
+                    result.pending_changes = sorted(json.loads(pending) if isinstance(pending, str) else pending)
+                return result
 
     async def remove_team_member(self, company_id: int, user_id: int, target_user_id: int):
         leaving = target_user_id == user_id

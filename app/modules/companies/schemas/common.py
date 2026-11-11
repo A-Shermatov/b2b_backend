@@ -130,6 +130,8 @@ class CompanyWithRelations(CompanySchema):
     reputation: list[SideReputationSchema] = []
     reviews: list[ReviewSchema] = []
     company_users: list[CompanyUserSchema] = []
+    # Fields of the profile waiting for an admin (see company_change_requests).
+    pending_changes: list[str] = []
 
 
 class PublicCompanyDetail(BaseModel):
@@ -367,6 +369,8 @@ class CompanyChangeRequestSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
     field_labels: dict[str, str] = {}
+    # Pictures to compare: {"logo": {"before": url, "after": url}}.
+    media: dict = {}
 
 
 class PublicSupplier(BaseModel):

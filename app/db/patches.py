@@ -632,6 +632,15 @@ COMPAT_PATCHES = [
     WHERE status = 'pending';
     """,
     "CREATE INDEX IF NOT EXISTS ix_company_change_requests_status ON company_change_requests (status, created_at DESC);",
+    # Every change to a public profile waits for an admin: the company's whole
+    # profile, and a person's name, photo and personal page (target_user_id).
+    "ALTER TABLE company_change_requests ALTER COLUMN company_id DROP NOT NULL;",
+    "ALTER TABLE company_change_requests ADD COLUMN IF NOT EXISTS target_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;",
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_profile_change_requests_one_pending_user
+    ON company_change_requests (target_user_id)
+    WHERE status = 'pending' AND target_user_id IS NOT NULL;
+    """,
     """
     CREATE TABLE IF NOT EXISTS review_media (
         id SERIAL PRIMARY KEY,

@@ -32,51 +32,70 @@ logger = logging.getLogger(__name__)
 
 class AuthUpdateMixin:
     async def update_me(self, user_id: int, data: UserUpdateRequest) -> UserPublic:
-        async with self.connection() as conn:
-            user = await load_user(conn, user_id)
-            if not user:
-                from app.core.exceptions import UnauthorizedError
+        """The phone changes at once; the name others see waits for an admin."""
+        from app.modules.companies.services.changes import queue_user_changes
 
-                raise UnauthorizedError("User not found")
-            first_name = data.first_name if data.first_name is not None else user["first_name"]
-            last_name = data.last_name if data.last_name is not None else user["last_name"]
-            phone = data.phone if data.phone is not None else user["phone"]
-            row = await conn.fetchrow(
-                f"""
-                UPDATE users
-                SET first_name = $1, last_name = $2, phone = $3, updated_at = NOW()
-                WHERE id = $4
-                RETURNING {USER_COLUMNS}
-                """,
-                first_name,
-                last_name,
-                phone,
-                user_id,
-            )
-        return shape_user_public(dict(row))
+        async with self.connection() as conn:
+            async with conn.transaction():
+                user = await load_user(conn, user_id)
+                if not user:
+                    raise UnauthorizedError("User not found")
+                if data.phone is not None and data.phone != user["phone"]:
+                    await conn.execute(
+                        "UPDATE users SET phone = $1, updated_at = NOW() WHERE id = $2",
+                        data.phone,
+                        user_id,
+                    )
+                name = {
+                    field: value.strip()
+                    for field in ("first_name", "last_name")
+                    if (value := getattr(data, field)) is not None and value.strip()
+                }
+                await queue_user_changes(conn, user_id, name)
+                return await self._user_with_pending(conn, user_id)
 
     async def set_avatar(self, user_id: int, key: str | None) -> UserPublic:
-        """Store the key of the person's new photo, or clear it."""
+        """A new photo waits for an admin; removing the photo happens at once."""
+        from app.modules.companies.services.changes import queue_user_changes
+
         async with self.connection() as conn:
-            row = await conn.fetchrow(
-                f"""
-                UPDATE users SET avatar_url = $1, updated_at = NOW()
-                WHERE id = $2
-                RETURNING {USER_COLUMNS}
-                """,
-                key,
-                user_id,
-            )
-            if not row:
-                raise UnauthorizedError("User not found")
-            await log_event(
-                conn,
-                "user.avatar.update" if key else "user.avatar.remove",
-                "user",
-                user_id,
-                user_id=user_id,
-            )
-        return shape_user_public(dict(row))
+            async with conn.transaction():
+                if key:
+                    await queue_user_changes(conn, user_id, {"avatar_url": key})
+                else:
+                    row = await conn.fetchrow(
+                        "UPDATE users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1 RETURNING id",
+                        user_id,
+                    )
+                    if not row:
+                        raise UnauthorizedError("User not found")
+                    # A photo still waiting for review goes away with it.
+                    await queue_user_changes(conn, user_id, {"avatar_url": None})
+                await log_event(
+                    conn,
+                    "user.avatar.submit" if key else "user.avatar.remove",
+                    "user",
+                    user_id,
+                    user_id=user_id,
+                )
+                return await self._user_with_pending(conn, user_id)
+
+    async def _user_with_pending(self, conn, user_id: int) -> UserPublic:
+        from app.modules.companies.services.changes import pending_user_change_request
+
+        row = await conn.fetchrow(f"SELECT {USER_COLUMNS} FROM users WHERE id = $1", user_id)
+        if not row:
+            raise UnauthorizedError("User not found")
+        user = shape_user_public(dict(row))
+        pending = await pending_user_change_request(conn, user_id)
+        user.pending_changes = sorted(pending["proposed"]) if pending else []
+        return user
+
+    async def my_pending_changes(self, user_id: int) -> dict | None:
+        from app.modules.companies.services.changes import pending_user_change_request
+
+        async with self.connection() as conn:
+            return await pending_user_change_request(conn, user_id)
 
     async def switch_actor(self, user_id: int, actor_id: int) -> MeResponse:
         actor_svc = ActorService(self.conn)
