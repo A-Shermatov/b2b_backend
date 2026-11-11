@@ -266,7 +266,10 @@ class CompanyChangeRequestAction(BaseModel):
 
 class CompanyChangeRequestAdminSchema(BaseModel):
     id: int
-    company_id: int
+    # "company": a company's profile; "user": a person's name, photo or page.
+    kind: Literal["company", "user"] = "company"
+    company_id: int | None = None
+    target_user_id: int | None = None
     company_title: str | None = None
     requested_by_user_id: int
     status: str
@@ -279,6 +282,8 @@ class CompanyChangeRequestAdminSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
     field_labels: dict[str, str] = {}
+    # Pictures to compare: {"logo": {"before": url, "after": url}}, gallery as lists.
+    media: dict = {}
 
 
 class CompanyAdminActionResponse(BaseModel):

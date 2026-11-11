@@ -109,7 +109,7 @@ async def test_register_as_company_needs_a_name(client):
     assert res.status_code == 422, res.text
 
 
-async def test_private_supplier_page_is_public(client):
+async def test_private_supplier_page_is_public(client, admin_auth):
     surname = f"Фрилансов{secrets.token_hex(3)}"
     _, token, me = await _register_as(
         client,
@@ -151,6 +151,18 @@ async def test_private_supplier_page_is_public(client):
     assert saved["skills"] == ["Python", skill]
     assert saved["about"] == "Делаю серверную часть сайтов."
     assert saved["website"] == "https://example.com/rustam"
+    assert saved["pending_review"] is True
+
+    # The public page keeps the old text until an admin approves the edit.
+    public = (await client.get(f"{API}/public/suppliers/{actor_id}")).json()
+    assert public["headline"] == "Программист Python"
+    pending = (await client.get(f"{API}/auth/me/changes", headers=_bearer(token))).json()
+    approved = await client.post(
+        f"{API}/admin/companies/change-requests/{pending['id']}/action",
+        headers=admin_auth["headers"],
+        json={"action": "approve"},
+    )
+    assert approved.status_code == 200, approved.text
 
     public = (await client.get(f"{API}/public/suppliers/{actor_id}")).json()
     assert public["kind"] == "individual"
@@ -571,7 +583,7 @@ async def test_offer_shows_the_company_and_its_contact_person(client):
     assert (actor["contact_name"], actor["contact_role"]) == ("Алишер Продавцов", None)
 
 
-async def test_company_cover_is_shown_on_its_public_page(client):
+async def test_company_cover_is_shown_on_its_public_page(client, admin_auth):
     company_id, director, _, _ = await _company(client, side="supplier")
     res = await client.patch(
         f"{API}/supplier/companies/{company_id}",
@@ -585,6 +597,19 @@ async def test_company_cover_is_shown_on_its_public_page(client):
         json={"cover": "logos/1/cover.png", "description": "О компании"},
     )
     assert res.status_code == 200, res.text
+    assert res.json()["pending_changes"] == ["cover", "description"]
+    # The cover reaches the public page once an admin approves it.
+    pending = (
+        await client.get(
+            f"{API}/supplier/companies/{company_id}/change-requests/pending", headers=director
+        )
+    ).json()
+    approved = await client.post(
+        f"{API}/admin/companies/change-requests/{pending['id']}/action",
+        headers=admin_auth["headers"],
+        json={"action": "approve"},
+    )
+    assert approved.status_code == 200, approved.text
     public = (await client.get(f"{API}/public/companies/{company_id}")).json()
     assert public["cover"].endswith("logos/1/cover.png")
     row = await fetchrow("SELECT cover FROM companies WHERE id = $1", company_id)
