@@ -1,9 +1,64 @@
-from datetime import datetime
+import re
+from datetime import date, datetime, time
 from typing import Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.utils.storage import FileUrlMixin
+
+
+# A request date as the buyer set it: a day, or a day with hours and minutes.
+_REQUEST_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(?::\d{2})?)?$")
+REQUEST_DATE_HINT = "Дата: ГГГГ-ММ-ДД или ГГГГ-ММ-ДДTЧЧ:ММ"
+TITLE_MAX_LENGTH = 500
+
+
+def clean_request_date(value: str | None) -> str | None:
+    """'2026-11-20' stays as is; '2026-11-20 18:30:00' becomes '2026-11-20T18:30'.
+
+    The time is wall-clock time of the platform's market (see
+    settings.business_timezone), so the value carries no zone. A day without a
+    time means "through the end of that day".
+    """
+    if value is None:
+        return None
+    match = _REQUEST_DATE.match(str(value).strip())
+    if not match:
+        raise ValueError(REQUEST_DATE_HINT)
+    day, clock = match.groups()
+    try:
+        date.fromisoformat(day)
+        if clock:
+            time.fromisoformat(clock)
+    except ValueError as exc:
+        raise ValueError(REQUEST_DATE_HINT) from exc
+    return f"{day}T{clock}" if clock else day
+
+
+def clean_title(value: str | None) -> str | None:
+    """Any length the buyer likes, as long as there is something to read."""
+    if value is None:
+        return None
+    title = " ".join(str(value).split())
+    if not title:
+        raise ValueError("Напишите название заявки")
+    if len(title) > TITLE_MAX_LENGTH:
+        raise ValueError(f"Название длиннее {TITLE_MAX_LENGTH} символов")
+    return title
+
+
+class _RequestFieldsMixin(BaseModel):
+    """Shared cleaning for what the buyer types into a request."""
+
+    @field_validator("title", mode="before", check_fields=False)
+    @classmethod
+    def _title(cls, value):
+        return clean_title(value)
+
+    @field_validator("deadline", "delivery_date", "start_date", mode="before", check_fields=False)
+    @classmethod
+    def _dates(cls, value):
+        return clean_request_date(value)
 
 
 class RfqAttachmentSchema(FileUrlMixin):
@@ -59,6 +114,8 @@ class ServiceRfqSchema(RfqBaseSchema):
     type: Literal["service"]
     project_duration: str
     start_date: str
+    # When the work must be finished; requests made before this field have none.
+    delivery_date: str | None = None
     team_size_required: int | None
     experience_required: str | None
 
@@ -76,9 +133,9 @@ class ServiceRfqResponse(ServiceRfqSchema):
 RfqResponse = Union[ProductRfqResponse, ServiceRfqResponse]
 
 
-class ProductRfqCreate(BaseModel):
+class ProductRfqCreate(_RequestFieldsMixin):
     type: Literal["product"] = "product"
-    title: str = Field(min_length=5)
+    title: str
     description: str | None = None
     category_id: str
     budget_type: str
@@ -97,9 +154,9 @@ class ProductRfqCreate(BaseModel):
     delivery_date: str
 
 
-class ServiceRfqCreate(BaseModel):
+class ServiceRfqCreate(_RequestFieldsMixin):
     type: Literal["service"] = "service"
-    title: str = Field(min_length=5)
+    title: str
     description: str | None = None
     category_id: str
     budget_type: str
@@ -113,6 +170,8 @@ class ServiceRfqCreate(BaseModel):
     payment_mode: Literal["escrow", "direct"] = "escrow"
     project_duration: str
     start_date: str
+    # The work deadline: when the result must be ready.
+    delivery_date: str | None = None
     team_size_required: int | None = None
     experience_required: str | None = None
 
@@ -120,8 +179,8 @@ class ServiceRfqCreate(BaseModel):
 RfqCreate = Union[ProductRfqCreate, ServiceRfqCreate]
 
 
-class RfqUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=5)
+class RfqUpdate(_RequestFieldsMixin):
+    title: str | None = None
     description: str | None = None
     category_id: str | None = None
     budget_type: str | None = None

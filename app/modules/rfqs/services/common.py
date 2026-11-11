@@ -1,3 +1,4 @@
+from app.config import get_settings
 from app.core.exceptions import NotFoundError
 from app.modules.notifications.services import NotificationService
 from app.modules.subscription.services.common import active_plan_sql
@@ -130,6 +131,7 @@ RFQ_UPDATABLE_PRODUCT = {
 RFQ_UPDATABLE_SERVICE = {
     "project_duration",
     "start_date",
+    "delivery_date",
     "team_size_required",
     "experience_required",
 }
@@ -235,6 +237,7 @@ def rfq_to_response(
         "type": "service",
         "project_duration": row["project_duration"],
         "start_date": row["start_date"],
+        "delivery_date": row["delivery_date"],
         "team_size_required": row["team_size_required"],
         "experience_required": row["experience_required"],
     }
@@ -280,10 +283,23 @@ OPEN_RFQ_STATUSES = ["published", "receiving_proposals"]
 
 
 def deadline_passed_sql(alias: str = "r") -> str:
-    deadline = f"LEFT({alias}.deadline, 10)"
+    """SQL: the request no longer takes proposals.
+
+    A deadline is a day ('2026-11-20': open through the end of that day) or a
+    day with a time ('2026-11-20T18:30': open until that minute). Both are
+    wall-clock time of the platform's market, and both sort as text, so the
+    stored value is compared with "now" written the same way.
+    """
+    deadline = f"{alias}.deadline"
+    now = f"(NOW() AT TIME ZONE '{get_settings().business_timezone}')"
+    day = "[0-9]{4}-[0-9]{2}-[0-9]{2}"
     return (
-        f"({deadline} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' "
-        f"AND {deadline} < TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD'))"
+        "(CASE "
+        f"WHEN {deadline} ~ '^{day}[T ][0-9]{{2}}:[0-9]{{2}}' "
+        f"THEN REPLACE(LEFT({deadline}, 16), ' ', 'T') < TO_CHAR({now}, 'YYYY-MM-DD\"T\"HH24:MI') "
+        f"WHEN {deadline} ~ '^{day}' "
+        f"THEN LEFT({deadline}, 10) < TO_CHAR({now}, 'YYYY-MM-DD') "
+        "ELSE FALSE END)"
     )
 
 

@@ -78,7 +78,7 @@ class RfqCreateMixin:
                     data.delivery_country if is_product else None,
                     data.delivery_city if is_product else None,
                     data.delivery_address if is_product else None,
-                    data.delivery_date if is_product else None,
+                    data.delivery_date,
                     None if is_product else data.project_duration,
                     None if is_product else data.start_date,
                     None if is_product else data.team_size_required,
