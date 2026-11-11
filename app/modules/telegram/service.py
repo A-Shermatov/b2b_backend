@@ -80,14 +80,20 @@ async def call_bot(
     method: str,
     payload: dict[str, Any] | None = None,
     files: dict[str, tuple[str, bytes, str]] | None = None,
+    timeout: float | None = None,
 ) -> Any:
     """One Bot API call. Tests replace this function; nothing else talks to Telegram.
 
     With `files` the call goes as a form upload (a photo); nested values such
     as the button keyboard are then sent as JSON text, as Telegram expects.
+    `timeout` is for getUpdates, which Telegram holds open on purpose.
     """
     url = f"{API_BASE}/bot{token}/{method}"
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0) if files else TIMEOUT) as client:
+    if timeout is not None:
+        limits = httpx.Timeout(timeout, connect=5.0)
+    else:
+        limits = httpx.Timeout(30.0, connect=5.0) if files else TIMEOUT
+    async with httpx.AsyncClient(timeout=limits) as client:
         try:
             if files:
                 form = {
@@ -357,6 +363,7 @@ async def admin_view() -> dict:
     token = decrypt_token(row.get("bot_token_enc"))
     return {
         "enabled": bool(row.get("enabled")),
+        "assistant_enabled": bool(row.get("assistant_enabled")),
         "has_token": bool(token),
         "token_hint": mask_token(token),
         "bot_username": row.get("bot_username"),
@@ -379,6 +386,8 @@ async def update_settings(data: dict, user_id: int) -> dict:
     channel = (data.get("channel_id") or "").strip() or None
     site_url = (data.get("site_url") or "").strip().rstrip("/") or None
     enabled = bool(data.get("enabled"))
+    # Requests and answers in private chats with the bot; needs only the token.
+    assistant_enabled = bool(data.get("assistant_enabled"))
 
     if data.get("bot_token") and not TOKEN_RE.match(token or ""):
         raise ValidationError("Токен бота выглядит неверно: его выдаёт @BotFather, вид 123456:ABC…")
@@ -388,6 +397,8 @@ async def update_settings(data: dict, user_id: int) -> dict:
         raise ValidationError("Адрес сайта должен начинаться с http:// или https://")
     if enabled and not (token and channel):
         raise ValidationError("Чтобы включить отправку, укажите токен бота и канал")
+    if assistant_enabled and not token:
+        raise ValidationError("Чтобы включить заявки и ответы в боте, укажите токен бота")
 
     username = current.get("bot_username")
     channel_title = current.get("channel_title")
@@ -405,17 +416,34 @@ async def update_settings(data: dict, user_id: int) -> dict:
                 f"Канал не найден или бот не добавлен в него администратором: {exc}"
             ) from exc
         channel_title = chat.get("title") or chat.get("username") or channel
+    if token and assistant_enabled and not current.get("assistant_enabled"):
+        # The bot's menu in private chats; a refusal here is not a reason to fail the save.
+        try:
+            await call_bot(
+                token,
+                "setMyCommands",
+                {
+                    "commands": [
+                        {"command": "zayavki", "description": "Заявки покупателей: листать и отвечать"},
+                        {"command": "help", "description": "Что умеет бот"},
+                    ],
+                    "scope": {"type": "all_private_chats"},
+                },
+            )
+        except TelegramError as exc:
+            logger.warning("Telegram did not take the bot commands: %s", exc)
 
     async with pool.connection() as conn:
         await conn.execute(
             """
             INSERT INTO telegram_settings (
                 id, enabled, bot_token_enc, bot_username, channel_id, channel_title,
-                site_url, updated_by, updated_at
+                site_url, updated_by, updated_at, assistant_enabled
             )
-            VALUES (1, $1, $2, $3, $4, $5, $6, $7, NOW())
+            VALUES (1, $1, $2, $3, $4, $5, $6, $7, NOW(), $8)
             ON CONFLICT (id) DO UPDATE SET
                 enabled = EXCLUDED.enabled,
+                assistant_enabled = EXCLUDED.assistant_enabled,
                 bot_token_enc = EXCLUDED.bot_token_enc,
                 bot_username = EXCLUDED.bot_username,
                 channel_id = EXCLUDED.channel_id,
@@ -431,6 +459,7 @@ async def update_settings(data: dict, user_id: int) -> dict:
             channel_title if channel else None,
             site_url,
             user_id,
+            assistant_enabled,
         )
         await log_event(
             conn,
@@ -441,6 +470,7 @@ async def update_settings(data: dict, user_id: int) -> dict:
             # Never the token itself.
             details={
                 "enabled": enabled,
+                "assistant_enabled": assistant_enabled,
                 "channel_id": channel,
                 "token_changed": bool(data.get("bot_token")),
                 "site_url": site_url,

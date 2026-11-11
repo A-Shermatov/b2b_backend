@@ -851,4 +851,39 @@ COMPAT_PATCHES = [
     WHERE details #>> '{request_body,bot_token}' IS NOT NULL
       AND details #>> '{request_body,bot_token}' <> '***';
     """,
+    # The bot as an assistant in private chats: people link their account to it,
+    # then post requests and answer them inside Telegram (message widgets).
+    "ALTER TABLE telegram_settings ADD COLUMN IF NOT EXISTS assistant_enabled BOOLEAN NOT NULL DEFAULT FALSE;",
+    # Where the bot stopped reading its updates (getUpdates offset).
+    "ALTER TABLE telegram_settings ADD COLUMN IF NOT EXISTS update_offset BIGINT NOT NULL DEFAULT 0;",
+    """
+    CREATE TABLE IF NOT EXISTS telegram_accounts (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        telegram_id BIGINT NOT NULL UNIQUE,
+        chat_id BIGINT NOT NULL,
+        username VARCHAR(64),
+        first_name VARCHAR(128),
+        linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS telegram_link_codes (
+        code VARCHAR(64) PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_telegram_link_codes_user ON telegram_link_codes (user_id);",
+    # A request someone started by writing to the bot; the widget finishes it.
+    """
+    CREATE TABLE IF NOT EXISTS telegram_drafts (
+        id VARCHAR(16) PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        rfq_id VARCHAR(36),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_telegram_drafts_user ON telegram_drafts (user_id, created_at DESC);",
 ]
