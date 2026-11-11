@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from typing import List, Literal
 
@@ -19,6 +20,9 @@ class Settings(BaseSettings):
     app_env: str = "production"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
+    # Request deadlines are wall-clock time of the market the platform works in:
+    # "до 18:00" means 18:00 there, whatever zone the server or database runs in.
+    business_timezone: str = "Asia/Dushanbe"
 
     secret_key: str = DEFAULT_SECRET_KEY
     totp_encryption_key: str | None = None
@@ -95,6 +99,15 @@ class Settings(BaseSettings):
     password_reset_ttl_minutes: int = 60
     rate_limit_password_forgot_per_minute: int = 5
     rate_limit_password_reset_per_minute: int = 10
+
+    @field_validator("business_timezone")
+    @classmethod
+    def _timezone_name(cls, value: str) -> str:
+        # The name goes into SQL text (AT TIME ZONE), so only a plain zone name passes.
+        name = (value or "").strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+){0,2}", name):
+            raise ValueError("BUSINESS_TIMEZONE must be a zone name like Asia/Dushanbe")
+        return name
 
     @field_validator("cors_origins", mode="before")
     @classmethod

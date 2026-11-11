@@ -166,9 +166,12 @@ def _until(value: Any) -> str | None:
 
 
 def _from(value: Any) -> str | None:
-    """'25.11.2026': a start has no time of day."""
+    """'25.11.2026', or '25.11.2026, 09:00' when the buyer set the hour."""
     moment = _moment(value)
-    return f"{moment:%d.%m.%Y}" if moment else None
+    if not moment:
+        return None
+    has_time = isinstance(value, datetime) or len(str(value).strip()) > 10
+    return f"{moment:%d.%m.%Y, %H:%M}" if has_time else f"{moment:%d.%m.%Y}"
 
 
 def card_lines(row) -> list[tuple[str, str]]:
@@ -187,8 +190,12 @@ def card_lines(row) -> list[tuple[str, str]]:
         if row["delivery_city"]:
             lines.append(("place", row["delivery_city"]))
     else:
+        # One date line fits on the picture: the work deadline says more than the start.
+        due = _until(row["delivery_date"])
         start = _from(row["start_date"])
-        if start:
+        if due:
+            lines.append(("deadline", f"Дедлайн работы до {due}"))
+        elif start:
             lines.append(("deadline", f"Начало работ с {start}"))
     return lines
 
@@ -227,8 +234,12 @@ def format_post(row, site_url: str) -> str:
         start = _from(row["start_date"])
         if start:
             dates.append(f"📅 <b>Начало работ: с {start}</b>")
+        due = _until(row["delivery_date"])
+        if due:
+            dates.append(f"🏁 <b>Дедлайн работы: до {due}</b>")
         duration = (row["project_duration"] or "").strip()
-        if duration:
+        # With a deadline the length of the work is plain from the two dates.
+        if duration and not due:
             dates.append(f"⏱ Срок работ: {e(duration)}")
     if dates:
         lines.append("")
