@@ -1,7 +1,7 @@
 """The picture that goes with a request post, laid out like a job post.
 
 A clean white card: the buyer's logo and name top left (a grey building or
-person when there is no logo), the Brend Market mark top right, the request
+person when there is no logo), the Brand Market mark top right, the request
 title large and bold, then a few lines with an icon each — budget, amount,
 deadlines, city. Drawn at double size and scaled down for smooth edges.
 """
@@ -188,9 +188,9 @@ def render_request_card(data: CardData) -> bytes:
     for i, line in enumerate(name_lines):
         draw.text((_s(name_x), _s(name_top + 40 * i)), line, font=name_font, fill=INK)
 
-    # Who publishes: the Brend Market mark and name, top right.
+    # Who publishes: the deal mark and the name as the logo writes it, top right.
     word_font = _font("bold", 42)
-    word = "Brend Market"
+    word = "brand market"
     word_w = draw.textlength(word, font=word_font) / SCALE
     mark_size = 68
     word_x = WIDTH - PAD - word_w

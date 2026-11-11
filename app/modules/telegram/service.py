@@ -2,7 +2,7 @@
 
 The admin sets the bot token and the channel in the admin panel. Every public
 request, once published, becomes one post: a picture card (buyer's logo,
-Brend Market, the title and key facts) with a short caption and a button that
+Brand Market, the title and key facts) with a short caption and a button that
 opens it on the site. The token is stored encrypted and never sent back.
 """
 
@@ -457,7 +457,7 @@ async def send_test(user_id: int) -> dict:
     if not (token and channel):
         raise ValidationError("Сначала сохраните токен бота и канал")
     text = (
-        "✅ <b>Brend Market на связи</b>\n"
+        "✅ <b>Brand Market на связи</b>\n"
         "Сюда будут приходить новые заявки покупателей."
     )
     try:

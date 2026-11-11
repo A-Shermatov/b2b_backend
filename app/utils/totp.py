@@ -54,7 +54,7 @@ def generate_totp_secret() -> str:
 
 def _issuer_name() -> str:
     settings = get_settings()
-    return (settings.totp_issuer or "BrendMarket").replace(" ", "")
+    return (settings.totp_issuer or "BrandMarket").replace(" ", "")
 
 
 def build_otpauth_url(secret: str, email: str) -> str:
