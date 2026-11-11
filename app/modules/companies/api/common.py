@@ -22,3 +22,5 @@ from app.deps import BuyerContext, SupplierContext
 buyer_router = APIRouter(prefix="/companies", tags=["buyer-companies"])
 supplier_router = APIRouter(prefix="/companies", tags=["supplier-companies"])
 public_router = APIRouter(tags=["public"])
+# Invitations addressed to the signed-in person: /api/v1/auth/invitations
+invitations_router = APIRouter(prefix="/invitations", tags=["invitations"])

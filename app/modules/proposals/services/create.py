@@ -23,7 +23,13 @@ from app.utils.affiliation import PROPOSAL_MESSAGE_AFFILIATION
 
 
 class ProposalCreateMixin:
-    async def submit(self, rfq_id: str, supplier_id: int, data: ProposalCreate):
+    async def submit(
+        self,
+        rfq_id: str,
+        supplier_id: int,
+        data: ProposalCreate,
+        author_user_id: int | None = None,
+    ):
         async with self.connection() as conn:
             await expire_overdue_rfqs(conn)
             rfq = await load_rfq_row(conn, rfq_id)
@@ -56,10 +62,10 @@ class ProposalCreateMixin:
                 """
                 INSERT INTO proposals (
                     rfq_id, supplier_actor_id, price, currency, delivery_time,
-                    message, status, created_at
+                    message, status, created_at, author_user_id
                 )
                 VALUES (
-                    $1, $2, $3, $4::currency, $5, $6, 'submitted'::proposal_status, NOW()
+                    $1, $2, $3, $4::currency, $5, $6, 'submitted'::proposal_status, NOW(), $7
                 )
                 RETURNING id
                 """,
@@ -69,6 +75,7 @@ class ProposalCreateMixin:
                 data.currency,
                 data.delivery_time,
                 data.message,
+                author_user_id,
             )
             created = await load_proposal_row(conn, row["id"])
             await log_event(

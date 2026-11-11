@@ -471,9 +471,27 @@ COMPAT_PATCHES = [
     CREATE TABLE IF NOT EXISTS company_user_side_roles (
         company_user_id INTEGER NOT NULL REFERENCES company_users(id) ON DELETE CASCADE,
         side TEXT NOT NULL CHECK (side IN ('buyer', 'supplier')),
-        role TEXT NOT NULL CHECK (role IN ('admin', 'moderator', 'accountant', 'none')),
+        role TEXT NOT NULL CHECK (role IN ('admin', 'moderator', 'accountant', 'viewer', 'none')),
         PRIMARY KEY (company_user_id, side)
     );
+    """,
+    # "viewer" (look, change nothing) can be given per side as well.
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'company_user_side_roles_role_check'
+              AND pg_get_constraintdef(oid) LIKE '%viewer%'
+        ) THEN
+            ALTER TABLE company_user_side_roles
+                DROP CONSTRAINT IF EXISTS company_user_side_roles_role_check;
+            ALTER TABLE company_user_side_roles
+                ADD CONSTRAINT company_user_side_roles_role_check
+                CHECK (role IN ('admin', 'moderator', 'accountant', 'viewer', 'none'));
+        END IF;
+    END
+    $$;
     """,
     # Personal notifications about new requests by category (supplier side).
     """

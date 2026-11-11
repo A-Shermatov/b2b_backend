@@ -4,7 +4,7 @@ import pytest
 
 from tests.buyer.test_catalog_offers import _create_active_item
 from tests.buyer.test_companies import _wizard_payload
-from tests.test_audit_regressions import API, _actor, _headers, _register
+from tests.test_audit_regressions import API, _actor, _headers, _join_team, _register
 
 
 async def _company_with_member(client, member_role: str):
@@ -22,12 +22,7 @@ async def _company_with_member(client, member_role: str):
         director_token, await _actor(client, director_token, side="buyer", company_id=company_id)
     )
     member_email, member_token, member_me = await _register(client, "buyer")
-    res = await client.post(
-        f"{API}/buyer/companies/{company_id}/team",
-        headers=director,
-        json={"email": member_email, "role": member_role},
-    )
-    assert res.status_code == 200, res.text
+    await _join_team(client, director, company_id, member_email, member_role, member_token)
     member = _headers(
         member_token, await _actor(client, member_token, side="buyer", company_id=company_id)
     )
@@ -87,19 +82,14 @@ async def test_admin_cannot_lift_own_side_restriction_or_touch_admins(client):
         assert res.status_code == 403, (body, res.text)
 
     # Nor make, change or remove other admins.
-    other_email, _, other_me = await _register(client, "buyer")
+    other_email, other_token, other_me = await _register(client, "buyer")
     res = await client.post(
         f"{API}/buyer/companies/{company_id}/team",
         headers=admin,
         json={"email": other_email, "role": "admin"},
     )
     assert res.status_code == 403, res.text
-    res = await client.post(
-        f"{API}/buyer/companies/{company_id}/team",
-        headers=admin,
-        json={"email": other_email, "role": "moderator"},
-    )
-    assert res.status_code == 200, res.text
+    await _join_team(client, admin, company_id, other_email, "moderator", other_token)
     other_id = other_me["user"]["id"]
     res = await client.patch(
         f"{API}/buyer/companies/{company_id}/team/{other_id}",
@@ -250,10 +240,10 @@ async def test_private_files_need_a_signed_link(client, tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_added_team_member_is_notified(client):
-    """M-01: the person added to a team learns about it right away."""
+    """M-01: the person invited to a team learns about it right away."""
     _, _, member, _ = await _company_with_member(client, "moderator")
     rows = await client.get(f"{API}/buyer/notifications/", headers=member)
     assert rows.status_code == 200
     body = rows.json()
     items = body.get("items", body) if isinstance(body, dict) else body
-    assert any("команду" in (n.get("title") or "") for n in items)
+    assert any("пригласили в компанию" in (n.get("title") or "") for n in items)

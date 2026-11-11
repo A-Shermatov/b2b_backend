@@ -1,5 +1,9 @@
 from app.modules.auth.schemas.common import (
     ActivateRoleRequest,
+    PortfolioItem,
+    PageImageUploadResponse,
+    IndividualPageUpdate,
+    IndividualPage,
     ActorSummary,
     ChangePasswordRequest,
     CompanySummary,
@@ -26,6 +30,10 @@ from app.modules.auth.schemas.common import (
 
 __all__ = [
     "ActivateRoleRequest",
+    "PortfolioItem",
+    "PageImageUploadResponse",
+    "IndividualPageUpdate",
+    "IndividualPage",
     "ActorSummary",
     "ChangePasswordRequest",
     "CompanySummary",

@@ -295,6 +295,20 @@ class AuthUpdateMixin:
             )
             user = dict(row)
             actor = await ActorService(conn).ensure_individual_actor(user, side)
+            if side == "supplier":
+                # No company: the person sells as themselves and is listed among
+                # suppliers. A company employee switches that on in the profile.
+                await conn.execute(
+                    """
+                    INSERT INTO individual_profiles (user_id, accepts_orders)
+                    VALUES ($1, NOT EXISTS (SELECT 1 FROM company_users WHERE user_id = $1))
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET accepts_orders = individual_profiles.accepts_orders
+                        OR NOT EXISTS (SELECT 1 FROM company_users WHERE user_id = $1),
+                        updated_at = NOW()
+                    """,
+                    user_id,
+                )
             await log_event(
                 conn,
                 "auth.activate_role",

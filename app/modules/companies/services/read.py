@@ -34,6 +34,17 @@ SUPPLIER_SELECT = f"""
         c.description,
         c.website,
         c.logo,
+        c.cover,
+        u.avatar_url AS user_avatar,
+        ip.headline AS page_headline,
+        ip.about AS page_about,
+        ip.skills AS page_skills,
+        ip.city AS page_city,
+        ip.website AS page_website,
+        ip.rate_amount AS page_rate_amount,
+        ip.rate_currency AS page_rate_currency,
+        ip.rate_unit AS page_rate_unit,
+        ip.portfolio AS page_portfolio,
         c.rating,
         {ACTOR_VERIFICATION_SQL} AS verification_status,
         (
@@ -90,6 +101,7 @@ SUPPLIER_SELECT = f"""
     LEFT JOIN company_stats cs ON cs.company_id = c.id
     LEFT JOIN company_profiles cp ON cp.company_id = c.id
     LEFT JOIN users u ON u.id = a.user_id
+    LEFT JOIN individual_profiles ip ON ip.user_id = a.user_id
     WHERE a.side::text = 'supplier' AND a.is_active = TRUE
       AND COALESCE(c.operational_status::text, 'active') = 'active'
       AND NOT EXISTS (
@@ -204,7 +216,10 @@ class CompanyReadMixin:
         *,
         verified: bool = False,
     ) -> dict:
-        filters = []
+        # The list shows companies and private people who take orders themselves.
+        # A company employee is a person too, but is not listed until they say
+        # in their profile that they also work on their own.
+        filters = ["(a.kind::text = 'company' OR COALESCE(ip.accepts_orders, FALSE))"]
         params: list = []
         if query:
             params.append(like_contains(query))
@@ -216,6 +231,12 @@ class CompanyReadMixin:
                     OR c.description ILIKE ${len(params)}
                     OR u.first_name ILIKE ${len(params)}
                     OR u.last_name ILIKE ${len(params)}
+                    OR ip.headline ILIKE ${len(params)}
+                    OR ip.about ILIKE ${len(params)}
+                    OR EXISTS (
+                        SELECT 1 FROM unnest(ip.skills) AS skill
+                        WHERE skill ILIKE ${len(params)}
+                    )
                 )
                 """
             )

@@ -36,7 +36,16 @@ RFQ_COLUMNS = """
     r.moderation_reason,
     r.moderated_at,
     r.created_at,
-    r.updated_at
+    r.updated_at,
+    -- The employee who wrote the request: their role in the buying company now
+    -- (NULL for a private person and for someone who has left the company).
+    (
+        SELECT rcu.role::text
+        FROM company_users rcu
+        JOIN actors rca ON rca.company_id = rcu.company_id
+        WHERE rca.id = r.actor_id AND rca.kind::text = 'company'
+          AND rcu.user_id = r.created_by_user_id
+    ) AS contact_role
 """
 
 BUYER_COLUMNS = f"""
@@ -186,6 +195,7 @@ def rfq_to_response(
         "id": row["id"],
         "actor_id": str(row["actor_id"]),
         "created_by": row["created_by"],
+        "contact_role": row.get("contact_role"),
         "title": row["title"],
         "description": row["description"],
         "category_id": row["category_id"],

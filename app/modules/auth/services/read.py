@@ -30,6 +30,15 @@ class AuthReadMixin:
                 user_id,
             )
             actors = await actor_svc.list_for_user(user_id)
+            page = await conn.fetchrow(
+                """
+                SELECT accepts_orders, prefers_company
+                FROM individual_profiles WHERE user_id = $1
+                """,
+                user_id,
+            )
+            accepts_orders = bool(page and page["accepts_orders"])
+            prefers_company = bool(page and page["prefers_company"])
             permissions = await fetch_permission_names(
                 conn, role_id=user.get("role_id"), role_name=user["role"]
             )
@@ -59,7 +68,11 @@ class AuthReadMixin:
             active_actor_id = None
         if active_actor_id is None and actor_summaries:
             individual = next((a for a in actor_summaries if a.kind == "individual"), None)
-            active_actor_id = individual.id if individual else actor_summaries[0].id
+            company = next((a for a in actor_summaries if a.kind == "company"), None)
+            # A person who came for a company (registered one, or joined by
+            # invitation) starts in the company; a private person starts as themselves.
+            first = company if company and prefers_company else individual
+            active_actor_id = (first or actor_summaries[0]).id
         active_company_id = None
         if active_actor_id:
             active = next((a for a in actor_summaries if a.id == active_actor_id), None)
@@ -70,6 +83,8 @@ class AuthReadMixin:
             actors=actor_summaries,
             active_actor_id=active_actor_id,
             capabilities=user_capabilities(user["role"]),
+            accepts_orders=accepts_orders,
+            prefers_company=prefers_company,
             companies=companies,
             active_company_id=active_company_id,
             permissions=sorted(permissions),

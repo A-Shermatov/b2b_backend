@@ -22,6 +22,8 @@ class RfqBaseSchema(BaseModel):
     id: str
     actor_id: str
     created_by: str
+    # Role of the person who wrote the request in the buying company, if any.
+    contact_role: str | None = None
     title: str
     description: str | None
     category_id: str

@@ -198,7 +198,7 @@ class AdminCompanyDetail(AdminCompanyListItem):
     verification_checklist: dict[str, bool]
 
 
-AdminCompanyMemberRole = Literal["admin", "moderator", "accountant"]
+AdminCompanyMemberRole = Literal["admin", "moderator", "accountant", "viewer"]
 
 
 class AdminCompanyUpdate(BaseModel):

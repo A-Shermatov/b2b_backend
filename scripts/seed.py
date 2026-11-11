@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 
@@ -197,6 +198,109 @@ async def seed_categories(conn) -> None:
     print(f"Categories ready: {len(slug_to_id)}")
 
 
+# A company with a team (different access levels) and a private supplier, to
+# show who is who on the platform. Only for local and test databases.
+DEMO_MANAGER_EMAIL = "manager@example.com"
+DEMO_VIEWER_EMAIL = "viewer@example.com"
+DEMO_FREELANCER_EMAIL = "freelancer@example.com"
+
+DEMO_TEAM = [
+    # (email, password, first name, last name, access level in «ТехноСнаб»)
+    (DEMO_MANAGER_EMAIL, "Manager123!", "Алишер", "Рахимов", "moderator"),
+    (DEMO_VIEWER_EMAIL, "Viewer123!", "Зарина", "Каримова", "viewer"),
+]
+
+
+async def seed_team_and_freelancer(conn, svc: ActorService) -> None:
+    company_id = await conn.fetchval(
+        """
+        SELECT c.id FROM companies c
+        JOIN users u ON u.id = c.owner_id
+        WHERE u.email = $1 AND c.title = 'ТехноСнаб'
+        """,
+        DEMO_SUPPLIER_EMAIL,
+    )
+    if company_id:
+        for email, password, first_name, last_name, role in DEMO_TEAM:
+            if await user_id_by_emails(conn, email):
+                continue
+            member = await insert_user(
+                conn,
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                role="supplier",
+            )
+            await svc.ensure_individual_actor(member, "supplier")
+            await conn.execute(
+                """
+                INSERT INTO company_users (company_id, user_id, role)
+                VALUES ($1, $2, $3::company_role)
+                """,
+                company_id,
+                member["id"],
+                role,
+            )
+            # An employee: the cabinet opens in the company, and the person is
+            # not listed among suppliers on their own.
+            await conn.execute(
+                """
+                INSERT INTO individual_profiles (user_id, accepts_orders, prefers_company)
+                VALUES ($1, FALSE, TRUE)
+                ON CONFLICT (user_id) DO NOTHING
+                """,
+                member["id"],
+            )
+            print(f"Seeded {role} of ТехноСнаб: {email} / {password}")
+
+    if not await user_id_by_emails(conn, DEMO_FREELANCER_EMAIL):
+        freelancer = await insert_user(
+            conn,
+            email=DEMO_FREELANCER_EMAIL,
+            password="Freelancer123!",
+            first_name="Рустам",
+            last_name="Назаров",
+            role="supplier",
+        )
+        await svc.ensure_individual_actor(freelancer, "supplier")
+        await conn.execute(
+            """
+            INSERT INTO individual_profiles (
+                user_id, headline, about, skills, city, rate_amount, rate_currency,
+                rate_unit, portfolio, accepts_orders
+            )
+            VALUES ($1, $2, $3, $4::text[], $5, $6, 'TJS', 'hour', $7::jsonb, TRUE)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            freelancer["id"],
+            "Программист: сайты и Telegram-боты",
+            "Делаю сайты для малого бизнеса и ботов для приёма заказов. "
+            "Работаю один, отвечаю в течение дня, сдаю работу по этапам.",
+            ["Python", "FastAPI", "Next.js", "Telegram-боты", "PostgreSQL"],
+            "Душанбе",
+            180,
+            json.dumps(
+                [
+                    {
+                        "title": "Сайт магазина стройматериалов",
+                        "description": "Каталог на 400 товаров, заявки приходят в Telegram.",
+                        "image": None,
+                        "link": None,
+                    },
+                    {
+                        "title": "Бот записи в автосервис",
+                        "description": "Запись на время, напоминания клиентам, выгрузка в таблицу.",
+                        "image": None,
+                        "link": None,
+                    },
+                ],
+                ensure_ascii=False,
+            ),
+        )
+        print(f"Seeded freelancer: {DEMO_FREELANCER_EMAIL} / Freelancer123!")
+
+
 async def seed() -> None:
     await prepare_database()
     svc = ActorService()
@@ -334,6 +438,9 @@ async def seed() -> None:
             await insert_company_extras(conn, supplier_co["id"], both["id"])
         await svc.ensure_company_actor(supplier_co, "supplier")
         print(f"Seeded both: {DEMO_BOTH_EMAIL} / Both123!")
+
+    async with pool.connection() as conn:
+        await seed_team_and_freelancer(conn, svc)
 
     await backfill_actors_if_needed()
     from scripts.seed_presentation import seed_presentation
