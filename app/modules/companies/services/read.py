@@ -13,7 +13,7 @@ from app.modules.companies.services.common import (
     row_to_public_supplier,
     to_public_company_detail,
 )
-from app.modules.subscription.services.common import active_plan_sql
+from app.modules.subscription.services.common import active_plan_sql, plan_rank_sql
 from app.modules.trust.party import party_reputation_columns
 from app.modules.verification.common import actor_verification_sql
 from app.db.sql import like_contains
@@ -127,7 +127,7 @@ BUYER_SELECT = f"""
         c.legal_name,
         c.rating,
         {ACTOR_VERIFICATION_SQL} AS verification_status,
-        {active_plan_sql("COALESCE(c.owner_id, a.user_id)")} AS subscription_plan,
+        {active_plan_sql("COALESCE(c.owner_id, a.user_id)", "buyer")} AS subscription_plan,
         {party_reputation_columns("a")},
         cs.average_rating,
         u.first_name,
@@ -257,7 +257,12 @@ class CompanyReadMixin:
             filters.append(f"{ACTOR_VERIFICATION_SQL} = 'verified'")
         where = (" AND " + " AND ".join(filters)) if filters else ""
         count_sql = f"SELECT COUNT(*) FROM ({SUPPLIER_SELECT + where}) AS listed"
-        rows_sql = SUPPLIER_SELECT + where + " ORDER BY a.display_name ASC"
+        # Suppliers with a paid plan come first, a higher plan above a lower one.
+        rows_sql = (
+            SUPPLIER_SELECT
+            + where
+            + f" ORDER BY {plan_rank_sql('COALESCE(c.owner_id, a.user_id)', 'supplier')} DESC, a.display_name ASC"
+        )
         async with self.connection() as conn:
             total, rows = await fetch_page(conn, count_sql, rows_sql, params, page, page_size)
         return build_page([row_to_public_supplier(row) for row in rows], total, page, page_size)

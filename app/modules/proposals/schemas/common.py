@@ -29,6 +29,9 @@ class ProposalSchema(BaseModel):
     message: str | None
     status: str
     created_at: datetime
+    # The supplier holds a paid plan: the offer is shown first and highlighted.
+    promoted: bool = False
+    promotion_plan: str | None = None
 
 
 class ProposalActorBrief(BaseModel):

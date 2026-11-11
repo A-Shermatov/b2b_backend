@@ -14,7 +14,7 @@ from app.modules.catalog.schemas.common import (
     ItemStatsSchema,
 )
 from app.modules.catalog.services.quality import catalog_item_completeness_percent
-from app.modules.subscription.services.common import active_plan_sql
+from app.modules.subscription.services.common import active_plan_sql, plan_rank_sql
 from app.modules.verification.common import actor_verification_sql
 from app.utils.audit import log_event
 from app.utils.storage import public_file_url
@@ -415,18 +415,12 @@ class CatalogItemMixin:
             LEFT JOIN company_stats cs ON cs.company_id = c.id
         """
 
-        boost_sql = """
+        # VIP first, then every paid plan of the selling cabinet: business, pro, start.
+        boost_sql = f"""
             CASE
                 WHEN COALESCE(c.vip, FALSE)
-                     AND (c.vip_until IS NULL OR c.vip_until > NOW()) THEN 2
-                WHEN EXISTS (
-                    SELECT 1 FROM supplier_subscriptions ss
-                    WHERE ss.user_id = COALESCE(c.owner_id, a.user_id)
-                      AND ss.plan::text IN ('pro', 'business')
-                      AND ss.active_until IS NOT NULL
-                      AND ss.active_until > NOW()
-                ) THEN 1
-                ELSE 0
+                     AND (c.vip_until IS NULL OR c.vip_until > NOW()) THEN 10
+                ELSE {plan_rank_sql("COALESCE(c.owner_id, a.user_id)", "supplier")}
             END
         """
 

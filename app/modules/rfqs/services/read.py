@@ -3,6 +3,7 @@ from app.core.pagination import build_page, fetch_page
 from app.db.sql import like_contains
 from app.modules.rfqs.services.common import (
     BUYER_COLUMNS,
+    RFQ_PROMOTION_ORDER,
     BUYER_TAB_STATUSES,
     KNOWN_RFQ_STATUSES,
     OPEN_RFQ_STATUSES,
@@ -172,7 +173,7 @@ class RfqReadMixin:
                 SELECT {RFQ_COLUMNS}, {BUYER_COLUMNS}
                 {board_from}
                 WHERE {board_where}
-                ORDER BY r.updated_at DESC
+                ORDER BY {RFQ_PROMOTION_ORDER} DESC, r.updated_at DESC
                 """,
                 params,
                 page,
@@ -207,7 +208,7 @@ class RfqReadMixin:
                 SELECT {RFQ_COLUMNS}
                 FROM rfqs r
                 WHERE {public_where}
-                ORDER BY r.updated_at DESC
+                ORDER BY {RFQ_PROMOTION_ORDER} DESC, r.updated_at DESC
                 """,
                 params,
                 page,

@@ -2,6 +2,7 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.pagination import build_page, fetch_page
 from app.modules.proposals.services.common import (
     ACCEPTABLE_RFQ_STATUSES,
+    PROPOSAL_PROMOTION_ORDER,
     PROPOSAL_SELECT,
     assert_chat_access,
     load_proposal_context,
@@ -73,7 +74,10 @@ class ProposalReadMixin:
         page_size: int,
         *,
         actor_role: str = "supplier",
+        promoted_first: bool = False,
     ):
+        # A buyer comparing offers reads the subscribers' ones first.
+        order = f"{PROPOSAL_PROMOTION_ORDER} DESC, p.created_at DESC" if promoted_first else "p.created_at DESC"
         total, id_rows = await fetch_page(
             conn,
             f"SELECT COUNT(*) FROM proposals p WHERE {where_sql}",
@@ -81,7 +85,7 @@ class ProposalReadMixin:
             SELECT p.id
             FROM proposals p
             WHERE {where_sql}
-            ORDER BY p.created_at DESC
+            ORDER BY {order}
             """,
             params,
             page,
@@ -90,7 +94,7 @@ class ProposalReadMixin:
         if not id_rows:
             return build_page([], total, page, page_size)
         rows = await conn.fetch(
-            PROPOSAL_SELECT + " WHERE p.id = ANY($1::int[]) ORDER BY p.created_at DESC",
+            PROPOSAL_SELECT + " WHERE p.id = ANY($1::int[]) ORDER BY array_position($1::int[], p.id)",
             [row["id"] for row in id_rows],
         )
         return build_page(
@@ -136,6 +140,7 @@ class ProposalReadMixin:
                 page,
                 page_size,
                 actor_role="supplier",
+                promoted_first=True,
             )
 
     async def list_for_supplier(

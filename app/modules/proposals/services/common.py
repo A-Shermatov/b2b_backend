@@ -1,6 +1,10 @@
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.utils.storage import public_file_url
 from app.utils.affiliation import affiliation_fields
+from app.modules.subscription.services.common import active_plan_sql, actor_owner_sql, plan_rank_sql
+
+# Offers of suppliers with a paid plan come first, a higher plan above a lower one.
+PROPOSAL_PROMOTION_ORDER = plan_rank_sql(actor_owner_sql("p.supplier_actor_id"), "supplier")
 
 PROPOSAL_COLUMNS = """
     p.id,
@@ -114,6 +118,9 @@ def proposal_to_response(row, *, actor_role: str = "supplier") -> dict:
         "status": row["status"],
         "created_at": row["created_at"],
         "attachment": attachment_from_row(row),
+        # The supplier holds a paid plan: the offer stands first and is highlighted.
+        "promoted": row.get("supplier_plan") is not None,
+        "promotion_plan": row.get("supplier_plan"),
     }
     actor = _actor_from_row(row, role=actor_role)
     if actor is not None:
@@ -153,6 +160,7 @@ PROPOSAL_SELECT = f"""
         COALESCE(scs.average_rating, sc.rating, 0) AS supplier_rating,
         sc.logo AS supplier_photo,
         sa.kind::text AS supplier_kind,
+        {active_plan_sql("COALESCE(sc.owner_id, sa.user_id)", "supplier")} AS supplier_plan,
         NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), '') AS supplier_contact_name,
         (
             SELECT scu.role::text FROM company_users scu

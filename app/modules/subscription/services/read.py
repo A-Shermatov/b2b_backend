@@ -9,19 +9,22 @@ class SubscriptionReadMixin:
                 """
                 SELECT id, user_id, plan::text AS plan, active_until
                 FROM supplier_subscriptions
-                WHERE user_id = $1
+                WHERE user_id = $1 AND side = $2
                 """,
                 user_id,
+                self.side,
             )
             if row:
                 return dict(row)
             row = await conn.fetchrow(
                 """
-                INSERT INTO supplier_subscriptions (user_id, plan, active_until, created_at)
-                VALUES ($1, 'none', NULL, NOW())
+                INSERT INTO supplier_subscriptions (user_id, side, plan, active_until, created_at)
+                VALUES ($1, $2, 'none', NULL, NOW())
+                ON CONFLICT (user_id, side) DO UPDATE SET plan = supplier_subscriptions.plan
                 RETURNING id, user_id, plan::text AS plan, active_until
                 """,
                 user_id,
+                self.side,
             )
             return dict(row)
 
