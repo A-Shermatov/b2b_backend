@@ -886,4 +886,20 @@ COMPAT_PATCHES = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS ix_telegram_drafts_user ON telegram_drafts (user_id, created_at DESC);",
+    # The journal now keeps every request, views included: its row numbers must
+    # not run out (an INTEGER ends at 2.1 billion, and removed rows do not give
+    # theirs back). Widened once; afterwards the check finds nothing to do.
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'audit_logs'
+              AND column_name = 'id' AND data_type = 'integer'
+        ) THEN
+            ALTER TABLE public.audit_logs ALTER COLUMN id TYPE BIGINT;
+            ALTER SEQUENCE IF EXISTS public.audit_logs_id_seq AS BIGINT;
+        END IF;
+    END $$;
+    """,
 ]

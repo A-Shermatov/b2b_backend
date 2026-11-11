@@ -35,6 +35,10 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
             60,
         )
         if not allowed:
+            # Imported here: the journal middleware imports from this package too.
+            from app.core.middleware.http_audit import note_rate_limited
+
+            note_rate_limited(request)
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests. Try again later."},

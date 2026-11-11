@@ -26,11 +26,13 @@ import json
 import logging
 import re
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.config import get_settings
 from app.core.exceptions import AppError
+from app.core.journal import journal
 from app.core.permissions import ensure_company_role_permission, ensure_permission, fetch_permission_names
 from app.database import pool
 from app.deps import _load_membership, actor_from_row, user_from_row
@@ -43,6 +45,8 @@ from app.modules.rfqs.services import RfqService
 from app.modules.telegram import links, widgets
 from app.modules.telegram import service as telegram
 from app.modules.telegram.service import TelegramError
+from app.utils.audit import AuditLogger, RequestFacts, request_facts, request_user_id
+from app.utils.client_info import TELEGRAM_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +348,45 @@ async def send_feed(token: str, chat_id: int, user_id: int, site_url: str) -> No
     )
 
 
+# --- the journal: a step in the bot is kept like a step on the site ------------------------
+
+#: What a widget asked for, by the first letter of its request.
+WIDGET_ACTIONS = {
+    "f": "telegram.feed.view",
+    "o": "telegram.offer.submit",
+    "p": "telegram.request.publish",
+}
+
+
+def _facts(sender: dict, user_id: int | None) -> RequestFacts:
+    """Who acts through the bot. Telegram stands in for the browser: the chat is the device."""
+    return RequestFacts(
+        request_id=uuid.uuid4(),
+        user_agent=TELEGRAM_AGENT,
+        device_key=f"tg-{int(sender.get('id') or 0)}",
+        user_id=user_id,
+    )
+
+
+async def _note(facts: RequestFacts, action: str, details: dict | None = None) -> None:
+    """Write a step taken in the bot to the journal. Never fails the bot."""
+    journal.touch(facts)
+    try:
+        async with pool.acquire() as conn:
+            await AuditLogger(conn).log_action(
+                user_id=facts.user_id,
+                actor_id=None,
+                company_id=None,
+                action=action,
+                resource_type="telegram",
+                resource_id=(facts.device_key or "tg-0")[3:],
+                details=details,
+                facts=facts,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("Journal note %s failed", action)
+
+
 async def handle_message(state: dict, message: dict) -> None:
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
@@ -380,7 +423,16 @@ async def handle_message(state: dict, message: dict) -> None:
         )
         return
 
+    # Whatever the services write to the journal from here on (a request created,
+    # an offer sent) carries the chat as its device.
+    facts = _facts(sender, user_id)
+    facts_token = request_facts.set(facts)
+    user_token = request_user_id.set(user_id)
     try:
+        if text.startswith("/"):
+            await _note(facts, "telegram.command", {"command": command[:40]})
+        elif text:
+            await _note(facts, "telegram.request.start", {"text": _clip(text, 200)})
         if command in ("/start", "/help", "/menu"):
             await _say(token, chat_id, HELP)
         elif command in ("/zayavki", "/requests"):
@@ -400,6 +452,9 @@ async def handle_message(state: dict, message: dict) -> None:
             )
     except (Refusal, AppError) as exc:
         await _say(token, chat_id, html.escape(_reason(exc)))
+    finally:
+        request_facts.reset(facts_token)
+        request_user_id.reset(user_token)
 
 
 async def answer_query(user_id: int | None, data: str) -> dict:
@@ -425,7 +480,22 @@ async def answer_query(user_id: int | None, data: str) -> dict:
 async def handle_widget_query(state: dict, query: dict) -> None:
     sender = query.get("from") or {}
     user_id = await links.user_of_telegram(sender.get("id") or 0)
-    answer = await answer_query(user_id, query.get("data") or "")
+    data = query.get("data") or ""
+    facts = _facts(sender, user_id)
+    facts_token = request_facts.set(facts)
+    user_token = request_user_id.set(user_id)
+    try:
+        answer = await answer_query(user_id, data)
+    finally:
+        request_facts.reset(facts_token)
+        request_user_id.reset(user_token)
+    if user_id is not None:
+        details: dict[str, Any] = {"request": data[:64]}
+        if answer.get("e"):
+            details["error"] = answer["e"]
+        elif answer.get("id"):
+            details["rfq_id"] = answer["id"]
+        await _note(facts, WIDGET_ACTIONS.get(data[:1], "telegram.widget"), details)
     await telegram.call_bot(
         state["token"],
         "answerWidgetQuery",

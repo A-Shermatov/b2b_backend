@@ -1,3 +1,5 @@
+import re
+
 from app.core.security_core import decode_token
 from app.utils.request_meta import parse_optional_int
 
@@ -7,6 +9,11 @@ SKIP_LOG_PREFIXES = ("/health", "/uploads", "/docs", "/redoc", "/openapi.json")
 SKIP_AUDIT_PATHS = {
     f"{API_PREFIX}/auth/refresh",
     f"{API_PREFIX}/auth/logout",
+}
+# The site's own report about pages and its browser: each page it names becomes a
+# journal row of its own, so the call that carries them is not written again.
+SKIP_JOURNAL_PATHS = {
+    f"{API_PREFIX}/activity",
 }
 REDACT_KEYS = frozenset(
     {
@@ -34,6 +41,33 @@ REDACT_KEYS = frozenset(
         "key",
     }
 )
+
+
+# One-time links carry their secret in the address itself: /invite/<token>.
+_SECRET_AFTER = frozenset({"invitations", "invite", "reset-password", "verify-email"})
+_UUID_SEGMENT = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_OPAQUE_LENGTH = 32
+# Query keys of the site's own pages that hold a secret (?invite=<token>).
+PAGE_SECRET_KEYS = frozenset({"invite", "invitation"})
+
+
+def safe_path(path: str) -> str:
+    """The path as it may be kept: one-time tokens in it are replaced with «***».
+
+    A token is the part after a known word (/invite/...), or any long part that
+    is neither a number nor an object id.
+    """
+    parts = (path or "").split("/")
+    kept: list[str] = []
+    after_secret_word = False
+    for part in parts:
+        opaque = len(part) >= _OPAQUE_LENGTH and not _UUID_SEGMENT.match(part)
+        if part and not part.isdigit() and (after_secret_word or opaque):
+            kept.append("***")
+        else:
+            kept.append(part)
+        after_secret_word = part in _SECRET_AFTER
+    return "/".join(kept)
 
 
 def actor_side_from_path(path: str) -> str:

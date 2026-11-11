@@ -66,14 +66,20 @@ UPDATE_VERBS = frozenset(
     }
 )
 
-SIDE_SECTIONS: dict[str, str] = {"auth": "auth", "catalog": "catalog"}
+# A person's own link to the Telegram bot is part of their account.
+SIDE_SECTIONS: dict[str, str] = {"auth": "auth", "catalog": "catalog", "telegram": "auth"}
 SECTION_RESOURCES: dict[str, tuple[str, ...]] = {
     "rfqs": ("rfqs",),
     "proposals": ("proposals",),
     "contracts": ("contracts",),
     "finance": ("payments", "finance", "escrow", "withdrawals"),
     "catalog": ("catalog", "categories"),
-    "companies": ("companies", "verification"),
+    "companies": ("companies", "verification", "invitations"),
+    # Public pages of sellers and buyers.
+    "profiles": ("suppliers", "buyers", "individuals", "performers"),
+    "messages": ("direct-chats", "chats", "messages"),
+    "support": ("support",),
+    "approvals": ("approvals",),
     "staff": ("staff",),
     "roles": ("roles", "permissions"),
     "disputes": ("disputes",),
@@ -82,7 +88,11 @@ SECTION_RESOURCES: dict[str, tuple[str, ...]] = {
     "notifications": ("notifications",),
     "subscription": ("subscription",),
     "users": ("users",),
-    "settings": ("settings",),
+    "settings": ("settings", "platform-settings", "telegram"),
+    "overview": ("dashboard", "analytics", "merchant-balances"),
+    "journal": ("logs", "devices", "gateway-logs"),
+    # What the site asks by itself, without anybody's click: counters in the menu.
+    "service": ("nav-counts", "nav-seen"),
 }
 SECTIONS = ("auth", *SECTION_RESOURCES.keys(), "other")
 _RESOURCE_TO_SECTION = {
@@ -93,11 +103,14 @@ _SIDE_KEYS = sorted(SIDE_SECTIONS)
 
 _OBJECT_ID = re.compile(r"^(\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F-]{4,})$")
 
-PATH_SQL = "rtrim(COALESCE(al.details->>'path', ''), '/')"
+# Rows have a column for the path; the JSON is where older ones kept it.
+PATH_SQL = "rtrim(COALESCE(al.path, al.details->>'path', ''), '/')"
 SIDE_SQL = f"split_part({PATH_SQL}, '/', {API_SEGMENTS_BEFORE_SIDE + 1})"
 RESOURCE_SQL = f"split_part({PATH_SQL}, '/', {API_SEGMENTS_BEFORE_SIDE + 2})"
 LAST_SEGMENT_SQL = f"regexp_replace({PATH_SQL}, '^.*/', '')"
-STATUS_CODE_SQL = "COALESCE(NULLIF(al.details->>'status_code', '')::int, 200)"
+STATUS_CODE_SQL = (
+    "COALESCE(al.status_code::int, NULLIF(al.details->>'status_code', '')::int, 200)"
+)
 
 
 def _segments(path: str | None) -> list[str]:
@@ -230,8 +243,16 @@ def section_sql(section: str, params: list) -> str:
 
 # --- Semantic events (``audit_logs.action NOT LIKE 'http.%'``) -------------------------
 
-EVENT_SQL = "al.action NOT LIKE 'http.%'"
+EVENT_SQL = "(al.action NOT LIKE 'http.%' AND al.action NOT LIKE 'page.%')"
 HTTP_SQL = "al.action LIKE 'http.%'"
+# Pages of the site people opened, as the site itself reports them.
+PAGE_SQL = "al.action LIKE 'page.%'"
+
+
+def row_source(action: str) -> str:
+    if action.startswith("http."):
+        return "http"
+    return "page" if action.startswith("page.") else "event"
 
 EVENT_CATEGORIES: dict[str, tuple[str, ...]] = {
     "auth": ("auth.%", "login", "login\\_%", "register", "password\\_%"),
@@ -254,6 +275,8 @@ EVENT_CATEGORIES: dict[str, tuple[str, ...]] = {
     "review": ("review.%",),
     "dispute": ("dispute.%",),
     "finance": ("withdrawal.%", "finance.%"),
+    # What people do in the bot: the same journal as the site.
+    "telegram": ("telegram.%",),
 }
 EVENT_CATEGORY_KEYS = (*EVENT_CATEGORIES.keys(), "other")
 _ALL_EVENT_PATTERNS = sorted({pattern for patterns in EVENT_CATEGORIES.values() for pattern in patterns})

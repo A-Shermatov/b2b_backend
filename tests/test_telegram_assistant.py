@@ -293,3 +293,41 @@ async def test_notifications_are_repeated_to_the_linked_chat(client, buyer_auth,
     assert method == "sendMessage" and sent["chat_id"] == 740
     assert "Новое &lt;предложение&gt;" in sent["text"]
     assert sent["reply_markup"]["inline_keyboard"][0][0]["url"] == f"{SITE}/customer/rfqs/1"
+
+
+@pytest.mark.asyncio
+async def test_steps_taken_in_the_bot_are_kept_in_the_journal(
+    client, admin_auth, supplier_auth, assistant_on, bot
+):
+    state = assistant_on
+    # The journal is never cleaned between runs: a chat of its own each time.
+    chat = 1_000_000 + secrets.randbelow(10**9)
+    await _link(client, supplier_auth, state, chat)
+    await assistant.handle_update(state, _message(chat, "/zayavki"))
+    await assistant.handle_update(
+        state, {"update_id": 51, "widget_query": {"id": "q-9", "from": {"id": chat}, "data": "f:0"}}
+    )
+    # A stranger's taps are answered, but there is nobody to write them down for.
+    await assistant.handle_update(
+        state, {"update_id": 52, "widget_query": {"id": "q-10", "from": {"id": 998}, "data": "f:0"}}
+    )
+
+    res = await client.get(
+        f"{API}/admin/logs",
+        params={"source": "events", "category": "telegram", "device": f"tg-{chat}"},
+        headers=admin_auth["headers"],
+    )
+    assert res.status_code == 200, res.text
+    items = res.json()["items"]
+    assert [item["action"] for item in items] == ["telegram.feed.view", "telegram.command"]
+    assert items[1]["details"] == {"command": "/zayavki"}
+    assert items[0]["details"]["request"] == "f:0"
+    assert all(item["user"]["email"] == "supplier@example.com" for item in items)
+    # The chat is the device these steps came from.
+    assert items[0]["device"]["browser"] == "Telegram"
+    assert items[0]["device"]["type"] == "messenger"
+    assert not await fetchval("SELECT COUNT(*) FROM audit_logs WHERE device_key = 'tg-998'")
+
+    card = await client.get(f"{API}/admin/devices/tg-{chat}", headers=admin_auth["headers"])
+    assert card.status_code == 200, card.text
+    assert [user["email"] for user in card.json()["users"]] == ["supplier@example.com"]

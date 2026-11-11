@@ -12,6 +12,7 @@ import asyncpg
 
 from app.config import get_settings
 from app.core.exceptions import AppError
+from app.core.journal import journal
 from app.core.middleware import (
     AccessLogMiddleware,
     CollapseDuplicateSlashesMiddleware,
@@ -21,6 +22,7 @@ from app.core.middleware import (
 )
 from app.core.middleware.security_headers import SafeStaticFiles, SecurityHeadersMiddleware
 from app.database import pool
+from app.modules.activity.router import register as register_activity
 from app.modules.admin.router import register as register_admin
 from app.modules.approvals.router import register as register_approvals
 from app.modules.auth.router import register as register_auth
@@ -103,10 +105,14 @@ async def lifespan(_app: FastAPI):
     from app.modules.telegram import assistant
 
     assistant.start()
+    # Views wait in memory and are written about once a second; on the way out
+    # the rest is written before the pool closes.
+    journal.start()
     try:
         yield
     finally:
         await assistant.stop()
+        await journal.stop()
         await pool.close()
 
 
@@ -132,7 +138,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Authorization"],
+    expose_headers=["Authorization", "X-Request-Id"],
 )
 app.add_middleware(CollapseDuplicateSlashesMiddleware)
 
@@ -164,6 +170,7 @@ upload_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", SafeStaticFiles(directory=str(upload_dir)), name="uploads")
 
 register_auth(app, prefix=settings.api_v1_prefix)
+register_activity(app, prefix=settings.api_v1_prefix)
 register_companies(app, prefix=settings.api_v1_prefix)
 register_reviews(app, prefix=settings.api_v1_prefix)
 register_catalog(app, prefix=settings.api_v1_prefix)

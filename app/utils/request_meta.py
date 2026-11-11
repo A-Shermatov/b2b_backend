@@ -52,6 +52,30 @@ def client_ip(request: Request) -> str:
     return peer or "-"
 
 
+def _proxy_headers_trusted(request: Request) -> bool:
+    from app.config import get_settings
+
+    settings = get_settings()
+    peer = request.client.host if request.client and request.client.host else None
+    peer_ip = _parse_ip(peer)
+    return settings.trust_proxy_headers and (peer_ip is None or _is_internal(peer_ip))
+
+
+def client_country(request: Request) -> str | None:
+    """Two-letter country of the client, when Cloudflare stands in front and names it.
+
+    «T1» is Cloudflare's code for the Tor network; «XX» (unknown) is dropped.
+    """
+    from app.config import get_settings
+
+    if not get_settings().trust_cf_connecting_ip or not _proxy_headers_trusted(request):
+        return None
+    code = (request.headers.get("cf-ipcountry") or "").strip().upper()
+    if len(code) != 2 or not code.isalnum() or code == "XX":
+        return None
+    return code
+
+
 def parse_optional_int(value: str | None) -> int | None:
     if value is None or value == "":
         return None
