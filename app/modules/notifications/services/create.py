@@ -64,6 +64,10 @@ class NotificationCreateMixin:
         return shape_notification_row(row)
 
     async def _push_created(self, user_id: int, notification: NotificationSchema) -> None:
+        # The same words go to the person's Telegram, if they linked it to the bot.
+        from app.modules.telegram.assistant import schedule_notification
+
+        schedule_notification(user_id, notification.title, notification.body, notification.href)
         await notification_ws_manager.broadcast_to_users(
             [user_id],
             {

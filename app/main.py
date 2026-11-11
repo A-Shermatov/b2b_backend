@@ -99,9 +99,14 @@ async def lifespan(_app: FastAPI):
     await init_db_schema()
     if not pool.ready:
         await pool.init()
+    # The Telegram bot reads its private chats here; it idles until an admin turns it on.
+    from app.modules.telegram import assistant
+
+    assistant.start()
     try:
         yield
     finally:
+        await assistant.stop()
         await pool.close()
 
 

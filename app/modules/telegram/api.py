@@ -3,10 +3,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.core.permissions import ensure_permission, has_permission
-from app.deps import CurrentUser, require_admin
-from app.modules.telegram import service
+from app.deps import CurrentUser, get_current_user, require_admin
+from app.modules.telegram import links, service
 from app.modules.telegram.schemas import (
+    TelegramAccountView,
     TelegramActionResult,
+    TelegramLinkStart,
     TelegramSettingsUpdate,
     TelegramSettingsView,
 )
@@ -18,6 +20,24 @@ UPDATE_PERMISSION = "platform_settings.update"
 admin_router = APIRouter(
     prefix="/admin/telegram", tags=["admin-telegram"], dependencies=[Depends(require_admin)]
 )
+# A person's own link to the bot: any signed-in user, whatever the cabinet.
+account_router = APIRouter(prefix="/telegram/account", tags=["telegram-account"])
+
+
+@account_router.get("", response_model=TelegramAccountView)
+async def get_telegram_account(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    return await links.link_status(user.id)
+
+
+@account_router.post("/link", response_model=TelegramLinkStart)
+async def start_telegram_link(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    """A one-time link that opens the bot; pressing Start there finishes the linking."""
+    return await links.create_link(user.id)
+
+
+@account_router.delete("", response_model=TelegramAccountView)
+async def remove_telegram_account(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    return await links.unlink(user.id)
 
 
 async def _view(user: CurrentUser) -> dict:
