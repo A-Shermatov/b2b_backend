@@ -179,7 +179,7 @@ class SubscriptionPaymentMixin:
                 amount=amount_dec,
                 callback_url=callback_url,
                 return_url=return_url,
-                info=f"Подписка Brend Market: тариф {plan}",
+                info=f"Подписка Brand Market: тариф {plan}",
                 mp_terminal_info=mp_info,
             )
         except AlifGatewayError:

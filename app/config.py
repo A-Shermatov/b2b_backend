@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     secret_key: str = DEFAULT_SECRET_KEY
     totp_encryption_key: str | None = None
-    totp_issuer: str = "Brend Market"
+    totp_issuer: str = "Brand Market"
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
     two_fa_challenge_expire_minutes: int = 5
@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_from_email: str = ""
-    smtp_from_name: str = "BrandMarket"
+    smtp_from_name: str = "Brand Market"
     smtp_use_tls: bool = True  # STARTTLS
     smtp_use_ssl: bool = False  # implicit SSL (port 465)
     smtp_timeout: int = 15

@@ -110,9 +110,9 @@ def _build_email(row, token: str) -> InvitationEmail:
     who = row["invited_by_name"] or "Руководитель компании"
     return InvitationEmail(
         to=row["email"],
-        subject=f"Приглашение в компанию «{company}» на Brend Market",
+        subject=f"Приглашение в компанию «{company}» на Brand Market",
         text=(
-            f"{who} приглашает вас в команду компании «{company}» на Brend Market.\n"
+            f"{who} приглашает вас в команду компании «{company}» на Brand Market.\n"
             f"Уровень доступа: {role_label(row['role'])}.\n\n"
             f"Чтобы принять приглашение или отказаться, откройте ссылку:\n"
             f"{invite_link(token)}\n\n"
