@@ -11,6 +11,7 @@ from app.core.exceptions import (
     UnauthorizedError,
     ValidationError,
 )
+from app.core.journal import sign_in_details
 from app.core.security_core import (
     create_2fa_challenge_token,
     create_access_token,
@@ -239,6 +240,7 @@ class AuthCreateMixin:
                 resource_type="user",
                 resource_id=str(user_dict["id"]),
                 ip_address=ip,
+                details=await sign_in_details(conn, user_dict["id"], side=data.role),
             )
         tokens = self._issue_tokens(user_dict, side=data.role)
         return LoginResult(
@@ -319,7 +321,12 @@ class AuthCreateMixin:
                 resource_type="user",
                 resource_id=str(user_id),
                 ip_address=ip,
-                details={"via": "2fa_backup" if remaining_hashes is not None else "2fa_totp"},
+                details=await sign_in_details(
+                    conn,
+                    user_id,
+                    {"via": "2fa_backup" if remaining_hashes is not None else "2fa_totp"},
+                    side=side,
+                ),
             )
         if side and not user_capabilities(user["role"]).get(side):
             side = None

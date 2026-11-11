@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     rate_limit_2fa_verify_per_minute: int = 10
     rate_limit_2fa_setup_per_minute: int = 5
     rate_limit_global_per_minute: int = 300
+    # The journal keeps every request. Changes, refusals and errors stay for good;
+    # plain views and opened pages are most of it, so they are kept this many days
+    # (0: for good).
+    journal_view_retention_days: int = 180
+    # The same person reading the same thing again and again (a page that refreshes
+    # itself) is written once per this many seconds, with the number of repeats.
+    journal_repeat_window_seconds: int = 600
     # Per-account limits (independent of the client IP).
     rate_limit_login_per_account: int = 10
     rate_limit_login_account_window_seconds: int = 900

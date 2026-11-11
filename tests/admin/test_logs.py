@@ -109,7 +109,7 @@ async def test_logs_split_users_and_staff(client, admin_auth, buyer_auth):
     assert item["user"]["email"] == "buyer@example.com"
     assert (item["kind"], item["section"], item["status"]) == ("create", "rfqs", "success")
     assert "status_code" not in item
-    assert "path" not in item
+    assert item["path"] == f"{API}/buyer/rfqs/"
     assert users["audience_counts"]["staff"] == 0
 
     staff = await _logs(

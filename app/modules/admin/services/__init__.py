@@ -9,6 +9,7 @@ from app.modules.admin.services.companies import AdminCompaniesMixin
 from app.modules.admin.services.company_management import AdminCompanyManagementMixin
 from app.modules.admin.services.contracts import AdminContractsMixin
 from app.modules.admin.services.dashboard import AdminDashboardMixin
+from app.modules.admin.services.devices import AdminDevicesMixin
 from app.modules.admin.services.dossier import AdminDossierMixin
 from app.modules.admin.services.escrow import AdminEscrowMixin
 from app.modules.admin.services.finance import AdminFinanceMixin
@@ -41,6 +42,7 @@ class AdminService(
     AdminMerchantsMixin,
     AdminAnalyticsMixin,
     AdminLogsMixin,
+    AdminDevicesMixin,
     AdminGatewayLogsMixin,
     AdminIndividualsMixin,
     AdminDossierMixin,

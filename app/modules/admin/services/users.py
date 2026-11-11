@@ -410,6 +410,7 @@ class AdminUsersMixin:
                    OR (
                         a.user_id = $2
                         AND a.action NOT LIKE 'http.%'
+                        AND a.action NOT LIKE 'page.%'
                         AND a.resource_type <> 'http'
                    )
                 ORDER BY a.created_at DESC, a.id DESC
