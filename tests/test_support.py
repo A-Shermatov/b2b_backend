@@ -108,3 +108,52 @@ async def test_supplier_support_create(client, supplier_auth):
     )
     assert res.status_code == 200, res.text
     assert res.json()["side"] == "supplier"
+
+
+@pytest.mark.asyncio
+async def test_admin_starts_a_chat_with_a_person(client, buyer_auth, admin_auth):
+    """From the person's card the admin writes first; the person sees it in support."""
+    me = (await client.get(f"{API}/auth/me", headers=buyer_auth["headers"])).json()
+    user_id = me["user"]["id"]
+    await execute("UPDATE support_tickets SET status = 'closed' WHERE user_id = $1", user_id)
+
+    opened = await client.post(
+        f"{API}/admin/support/users/{user_id}/ticket",
+        headers=admin_auth["headers"],
+        json={"side": "buyer"},
+    )
+    assert opened.status_code == 200, opened.text
+    ticket_id = opened.json()["id"]
+    # Opening again goes back to the same open chat.
+    again = await client.post(
+        f"{API}/admin/support/users/{user_id}/ticket", headers=admin_auth["headers"], json={}
+    )
+    assert again.json()["id"] == ticket_id
+
+    sent = await client.post(
+        f"{API}/admin/support/tickets/{ticket_id}/messages",
+        headers=admin_auth["headers"],
+        data={"text": "Здравствуйте! Проверьте, пожалуйста, реквизиты."},
+    )
+    assert sent.status_code == 200, sent.text
+
+    mine = await client.get(f"{API}/buyer/support/ticket", headers=buyer_auth["headers"])
+    texts = [m["text"] for m in mine.json()["ticket"]["messages"]]
+    assert "Здравствуйте! Проверьте, пожалуйста, реквизиты." in texts
+
+    # A person without a supplier cabinet cannot get a chat there.
+    if me["user"]["role"] == "buyer":
+        wrong = await client.post(
+            f"{API}/admin/support/users/{user_id}/ticket",
+            headers=admin_auth["headers"],
+            json={"side": "supplier"},
+        )
+        assert wrong.status_code == 422, wrong.text
+    # Only marketplace people: not the admin's own account.
+    admin_me = (await client.get(f"{API}/auth/me", headers=admin_auth["headers"])).json()
+    staff = await client.post(
+        f"{API}/admin/support/users/{admin_me['user']['id']}/ticket",
+        headers=admin_auth["headers"],
+        json={},
+    )
+    assert staff.status_code == 422, staff.text

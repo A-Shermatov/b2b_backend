@@ -1,4 +1,4 @@
-from app.core.exceptions import ConflictError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.modules.notifications.services import NotificationService
 from app.modules.notifications.ws_manager import notification_ws_manager
 from app.modules.support.schemas import SupportMessageSchema, SupportTicketSchema
@@ -47,6 +47,52 @@ class SupportCreateMixin:
                 ticket = await load_ticket_row(conn, ticket_id)
             messages = await load_messages(conn, ticket["id"])
             unread = await unread_count_for_viewer(conn, ticket["id"], user_id)
+        return SupportTicketSchema(**ticket, unread_count=unread, messages=messages)
+
+    async def admin_open_ticket(
+        self, user_id: int, admin_id: int, side: str | None = None
+    ) -> SupportTicketSchema:
+        """An admin starts a conversation with a person: their open support chat
+        on that side, or a new one assigned to the admin. The person sees it in
+        the support chat of that cabinet."""
+        async with self.connection() as conn:
+            role = await conn.fetchval("SELECT role::text FROM users WHERE id = $1", user_id)
+            if role is None:
+                raise NotFoundError("User not found")
+            sides = {"buyer": ["buyer"], "supplier": ["supplier"], "both": ["buyer", "supplier"]}.get(role)
+            if not sides:
+                raise ValidationError("Написать можно только покупателю или поставщику")
+            side = side or sides[0]
+            if side not in sides:
+                raise ValidationError(
+                    "У пользователя нет кабинета покупателя"
+                    if side == "buyer"
+                    else "У пользователя нет кабинета поставщика"
+                )
+            ticket_id = await conn.fetchval(
+                """
+                SELECT id FROM support_tickets
+                WHERE user_id = $1 AND side::text = $2 AND status::text = 'open'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                user_id,
+                side,
+            )
+            if ticket_id is None:
+                ticket_id = await conn.fetchval(
+                    """
+                    INSERT INTO support_tickets (user_id, side, status, assigned_admin_id, created_at)
+                    VALUES ($1, $2::support_side, 'open'::support_ticket_status, $3, NOW())
+                    RETURNING id
+                    """,
+                    user_id,
+                    side,
+                    admin_id,
+                )
+            ticket = await load_ticket_row(conn, ticket_id)
+            messages = await load_messages(conn, ticket_id)
+            unread = await unread_count_for_viewer(conn, ticket_id, admin_id)
         return SupportTicketSchema(**ticket, unread_count=unread, messages=messages)
 
     async def _broadcast(self, user_ids: list[int], event: str, data: dict) -> None:
@@ -223,8 +269,9 @@ class SupportCreateMixin:
         )
         await self._notify_new_message(
             recipient_ids=recipient_ids,
-            title="Ответ поддержки",
+            title="Сообщение от поддержки",
             body=text[:120] if text else (file_name or "Вложение"),
-            href=None,
+            # Opens the cabinet of that side with the support chat unfolded.
+            href=f"/{'supplier' if ticket['side'] == 'supplier' else 'customer'}?support=1",
         )
         return SupportMessageSchema.model_validate(message_to_dict(loaded))
