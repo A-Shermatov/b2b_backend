@@ -886,6 +886,39 @@ COMPAT_PATCHES = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS ix_telegram_drafts_user ON telegram_drafts (user_id, created_at DESC);",
+    # Things done to a database once, by name: a default that an administrator may
+    # change afterwards must not come back on the next start.
+    """
+    CREATE TABLE IF NOT EXISTS schema_marks (
+        name VARCHAR(100) PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    # A moderator checks clients, goods, complaints and disputes. Money, the
+    # staff of the panel and the roles are the administrator's: these rights are
+    # taken from the built-in «moderator» role once. An administrator can give
+    # any of them back in «Роли и права», and it stays given.
+    #
+    # The rights are written down as switched off, not removed: the migrations
+    # that hand a role its defaults run on every start and add what is missing,
+    # so a right that is simply absent would come back on the next start.
+    """
+    WITH first_time AS (
+        INSERT INTO schema_marks (name) VALUES ('moderator_without_money_and_staff')
+        ON CONFLICT (name) DO NOTHING
+        RETURNING name
+    )
+    INSERT INTO role_permissions (role_id, permission_id, is_active)
+    SELECT r.id, p.id, FALSE
+    FROM first_time, roles r, permissions p
+    WHERE r.name = 'moderator'
+      AND p.name IN (
+          'admin_finance.view', 'admin_finance.update',
+          'admin_staff.view', 'admin_staff.update',
+          'roles.view'
+      )
+    ON CONFLICT (role_id, permission_id) DO UPDATE SET is_active = FALSE;
+    """,
     # The journal now keeps every request, views included: its row numbers must
     # not run out (an INTEGER ends at 2.1 billion, and removed rows do not give
     # theirs back). Widened once; afterwards the check finds nothing to do.

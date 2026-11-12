@@ -25,6 +25,10 @@ class PermissionActionCell(BaseModel):
     permission_id: int | None = None
     code: str | None = None
     enabled: bool = False
+    #: A ticked box that does not cover everything: the actions the role still
+    #: lacks («блокировка»). A box covers several actions; a built-in role may
+    #: hold only some of them.
+    missing: list[str] = []
 
 
 class PermissionMatrixRow(BaseModel):

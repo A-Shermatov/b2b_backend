@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/activity", tags=["activity"])
 
-# Anybody may send a report, so how much one browser and one address can write
-# to the journal is bounded. A person opens a page every few seconds at most; an
-# office behind one address is many such people.
-REPORTS_PER_DEVICE_PER_MINUTE = 30
-REPORTS_PER_ADDRESS_PER_MINUTE = 180
+# Anybody may send a report, so how much one browser can write to the journal is
+# bounded. Somebody who clicks through pages quickly sends two or three reports
+# per page; nobody sends two a second for a whole minute. What one address can
+# send is already bounded by the limiter in front of the whole API.
+REPORTS_PER_DEVICE_PER_MINUTE = 120
 
 
 @router.post("", response_model=ActivityAccepted)
@@ -34,8 +34,6 @@ async def report_activity(batch: ActivityBatch, request: Request):
     facts = request_facts.get() or facts_of(request)
     if not await redis_client.check_rate_limit(
         f"activity:device:{facts.device_key}", REPORTS_PER_DEVICE_PER_MINUTE, 60
-    ) or not await redis_client.check_rate_limit(
-        f"activity:ip:{facts.ip}", REPORTS_PER_ADDRESS_PER_MINUTE, 60
     ):
         raise RateLimitError()
     try:

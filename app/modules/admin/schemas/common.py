@@ -856,7 +856,7 @@ class AdminChatMessage(BaseModel):
     id: int
     sender_id: int | None = None
     sender_name: str
-    side: Literal["buyer", "supplier", "admin"]
+    side: Literal["buyer", "supplier", "admin", "other"]
     text: str
     created_at: datetime
     flagged: bool = False

@@ -10,9 +10,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-# A page that opens sends two or three events; this leaves room for a tab that
-# was offline for a while, and no more: every event becomes a row of the journal.
-MAX_EVENTS = 20
+# A page that opens sends two or three events, and the site cuts a longer queue
+# into batches of this size: every event becomes a row of the journal.
+MAX_EVENTS = 10
 MAX_QUERY_KEYS = 20
 
 

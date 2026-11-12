@@ -1,11 +1,11 @@
 from app.core.exceptions import ConflictError, ForbiddenError, ValidationError
-from app.core.permissions import PROTECTED_ROLE_NAMES, action_bucket
+from app.core.permissions import PROTECTED_ROLE_NAMES
 from app.modules.admin.services.common import log_admin
 from app.modules.roles.services.common import (
     ensure_can_manage_role,
     ensure_permissions_subset,
-    expand_permission_ids,
     fetch_staff_permissions,
+    keep_what_a_box_held,
     load_staff_role,
     role_from_row,
 )
@@ -79,14 +79,16 @@ class RoleUpdateMixin(RoleReadMixin):
             if requested - by_id.keys():
                 raise ValidationError("Unknown or non-staff permission")
 
-            expanded = set(await expand_permission_ids(conn, sorted(requested)))
-            touched_resources = {by_id[pid]["resource"] for pid in expanded}
-            expanded |= {
-                pid
-                for pid, item in by_id.items()
-                if item["resource"] in touched_resources and action_bucket(item["action"]) == "read"
+            current = {
+                int(record["permission_id"])
+                for record in await conn.fetch(
+                    "SELECT permission_id FROM role_permissions WHERE role_id = $1 AND is_active = TRUE",
+                    role_id,
+                )
             }
-            ensure_permissions_subset(actor, {by_id[pid]["name"] for pid in expanded})
+            expanded = keep_what_a_box_held(requested, current, by_id)
+            # Nobody hands out more than they hold; what the role already had is not theirs to judge.
+            ensure_permissions_subset(actor, {by_id[pid]["name"] for pid in expanded - current})
 
             async with conn.transaction():
                 await conn.execute(

@@ -387,7 +387,7 @@ async def test_a_report_with_junk_in_it_is_still_taken(client):
     too_many = await client.post(
         f"{API}/activity",
         headers=device_headers(device),
-        json={"events": [{"type": "view", "id": new_id(), "path": "/"} for _ in range(21)]},
+        json={"events": [{"type": "view", "id": new_id(), "path": "/"} for _ in range(11)]},
     )
     assert too_many.status_code == 422
 
@@ -408,7 +408,7 @@ async def test_one_browser_cannot_flood_the_journal_with_reports(client, monkeyp
         json={"events": [{"type": "view", "id": new_id(), "path": "/services"}]},
     )
     assert refused.status_code == 429
-    assert (f"activity:device:{device}", 30) in asked
+    assert (f"activity:device:{device}", 120) in asked
     assert not await fetchval("SELECT COUNT(*) FROM audit_logs WHERE device_key = $1 AND action = 'page.view'", device)
 
 

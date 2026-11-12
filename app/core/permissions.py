@@ -34,21 +34,22 @@ RESOURCE_ALIASES_RU: dict[str, str] = {
     "finance": "Финансы",
     "subscription": "Подписка",
     "reviews": "Отзывы",
-    "admin_users": "Пользователи",
-    "admin_companies": "Компании",
-    "admin_catalog": "Модерация каталога",
-    "admin_rfqs": "Модерация запросов",
-    "admin_proposals": "Модерация предложений",
-    "admin_contracts": "Модерация контрактов",
-    "admin_disputes": "Споры",
-    "admin_finance": "Финансы платформы",
+    # Staff: named as the admin menu names the sections these rights open.
+    "admin_dashboard": "Обзор",
+    "admin_companies": "Компании и проверка клиентов",
+    "admin_catalog": "Товары, услуги и категории",
     "admin_reports": "Жалобы",
-    "admin_dashboard": "Дашборд",
+    "admin_disputes": "Споры",
     "admin_support": "Поддержка",
-    "admin_staff": "Сотрудники",
+    "admin_users": "Пользователи",
+    "admin_rfqs": "Заявки",
+    "admin_proposals": "Предложения",
+    "admin_contracts": "Сделки и переписки",
+    "admin_finance": "Деньги",
     "audit_logs": "Журнал действий",
-    "platform_settings": "Настройки платформы",
-    "roles": "Роли",
+    "admin_staff": "Сотрудники",
+    "roles": "Роли и права",
+    "platform_settings": "Настройки и Telegram-бот",
 }
 
 PROTECTED_ROLE_NAMES = frozenset({"superadmin"})
@@ -177,6 +178,30 @@ def action_bucket(action: str) -> str | None:
     if name in DELETE_ACTIONS:
         return "delete"
     return None
+
+
+# What each action is called when the rights table says a box does not cover it.
+ACTION_ALIASES_RU: dict[str, str] = {
+    "view": "просмотр",
+    "create": "добавление",
+    "update": "изменение",
+    "delete": "удаление",
+    "block": "блокировка",
+    "suspend": "приостановка",
+    "force_complete": "принудительное завершение",
+    "manage": "управление",
+    "export": "выгрузка",
+    "approve": "одобрение",
+    "publish": "публикация",
+    "close": "закрытие",
+    "invite": "приглашение",
+    "accept": "принятие",
+    "fund": "оплата",
+}
+
+
+def action_alias_ru(action: str) -> str:
+    return ACTION_ALIASES_RU.get(action, action.replace("_", " "))
 
 
 def resource_alias_ru(resource: str) -> str:

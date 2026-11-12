@@ -278,6 +278,8 @@ class NavService:
                     + (SELECT COUNT(*) FROM users
                        WHERE individual_verification_status IN ('pending', 'needs_documents')
                          AND role::text NOT IN ('admin', 'superadmin', 'moderator'))
+                    -- Changes of a checked profile wait on the same page.
+                    + (SELECT COUNT(*) FROM company_change_requests WHERE status = 'pending')
                     """
                 )
                 or 0
@@ -360,6 +362,9 @@ class NavService:
         return {
             "companies": pending_verifications,
             "moderation": pending_catalog + open_reports,
+            # The menu shows these two queues as separate pages.
+            "catalog": pending_catalog,
+            "reports": open_reports,
             "support": support,
             "chats": contract_flagged + proposal_flagged,
             "disputes": disputes,
