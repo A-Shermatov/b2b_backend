@@ -30,6 +30,9 @@ INK = (10, 10, 12)
 TEXT = (24, 26, 32)
 LINE = (226, 230, 238)
 WHITE = (255, 255, 255)
+# The two colours of the logo: buyer blue and supplier navy.
+BRAND_BLUE = (31, 107, 235)
+BRAND_NAVY = (11, 37, 89)
 
 # Fonts in the order they are tried: the server image installs Inter and
 # DejaVu; a developer's Windows machine has Segoe UI and Arial.
@@ -188,17 +191,21 @@ def render_request_card(data: CardData) -> bytes:
     for i, line in enumerate(name_lines):
         draw.text((_s(name_x), _s(name_top + 40 * i)), line, font=name_font, fill=INK)
 
-    # Who publishes: the deal mark and the name as the logo writes it, top right.
+    # Who publishes: the deal mark and the name as the logo writes it, top right,
+    # "brand" in the buyer's blue and "market" in the supplier's navy.
     word_font = _font("bold", 42)
-    word = "brand market"
-    word_w = draw.textlength(word, font=word_font) / SCALE
+    first, second = "brand ", "market"
+    first_w = draw.textlength(first, font=word_font) / SCALE
+    word_w = first_w + draw.textlength(second, font=word_font) / SCALE
     mark_size = 68
     word_x = WIDTH - PAD - word_w
     mark_x = word_x - 14 - mark_size
     mark = _asset("brand-mark", mark_size)
     mark_top = top + (logo - mark_size) / 2
     canvas.paste(mark, (_s(mark_x), _s(mark_top)), mark)
-    draw.text((_s(word_x), _s(top + logo / 2)), word, font=word_font, fill=INK, anchor="lm")
+    word_y = _s(top + logo / 2)
+    draw.text((_s(word_x), word_y), first, font=word_font, fill=BRAND_BLUE, anchor="lm")
+    draw.text((_s(word_x + first_w), word_y), second, font=word_font, fill=BRAND_NAVY, anchor="lm")
 
     # What for: the title, large, up to two lines.
     y = TITLE_TOP

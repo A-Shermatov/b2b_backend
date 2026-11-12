@@ -171,9 +171,11 @@ def telegram_calls(monkeypatch):
         assert token == TOKEN
         calls.append((method, {**(payload or {}), **({"_files": files} if files else {})}))
         if method == "getMe":
-            return {"username": "brendmarket_bot"}
+            return {"id": 4242, "username": "brendmarket_bot"}
         if method == "getChat":
-            return {"title": "Заявки Brend Market"}
+            return {"title": "Заявки Brend Market", "type": "channel"}
+        if method == "getChatMember":
+            return {"status": "administrator", "can_post_messages": True}
         return {"message_id": len(calls)}
 
     monkeypatch.setattr(telegram, "call_bot", fake_call)
@@ -360,3 +362,46 @@ async def test_the_admin_sees_a_preview_of_the_next_post(client, admin_auth, tel
     assert "Откликнуться" not in body["caption"]
     if telegram_card.fonts_available():
         assert body["image"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_a_new_bot_must_be_an_admin_of_the_channel(client, admin_auth, monkeypatch):
+    """Swapping the bot keeps the channel: the new bot is checked there too."""
+    new_token = "987654321:" + "B" * 35
+    member = {"status": "left"}
+
+    async def fake_call(token, method, payload=None, files=None):
+        if method == "getMe":
+            return {"id": 777, "username": "brandmarket_new_bot"}
+        if method == "getChat":
+            return {"title": "Заявки", "type": "channel"}
+        if method == "getChatMember":
+            assert payload == {"chat_id": "@brend_zayavki", "user_id": 777}
+            return dict(member)
+        return {"message_id": 1}
+
+    monkeypatch.setattr(telegram, "call_bot", fake_call)
+    await execute("DELETE FROM telegram_settings")
+    await execute(
+        """
+        INSERT INTO telegram_settings (id, enabled, bot_token_enc, bot_username, channel_id, channel_title, updated_at)
+        VALUES (1, TRUE, $1, 'old_bot', '@brend_zayavki', 'Заявки', NOW())
+        """,
+        telegram.encrypt_token(TOKEN),
+    )
+    body = {"enabled": True, "bot_token": new_token, "channel_id": "@brend_zayavki"}
+
+    refused = await client.put(f"{API}/admin/telegram", headers=admin_auth["headers"], json=body)
+    assert refused.status_code == 422, refused.text
+    assert "@brandmarket_new_bot не администратор канала" in refused.text
+    assert "Публикация сообщений" in refused.text
+
+    member.update(status="administrator", can_post_messages=False)
+    refused = await client.put(f"{API}/admin/telegram", headers=admin_auth["headers"], json=body)
+    assert refused.status_code == 422, refused.text
+
+    member.update(can_post_messages=True)
+    saved = await client.put(f"{API}/admin/telegram", headers=admin_auth["headers"], json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["bot_username"] == "brandmarket_new_bot"
+    await execute("DELETE FROM telegram_settings")

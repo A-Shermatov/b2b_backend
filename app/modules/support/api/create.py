@@ -1,6 +1,7 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, File, Form, UploadFile
+from pydantic import BaseModel
 
 from app.deps import admin_perm, require_buyer_ctx, require_supplier_ctx
 from app.modules.support.api.common import (
@@ -86,3 +87,18 @@ async def admin_send_message(
         file_url=file_url,
         file_type=file_type,
     )
+
+
+class AdminOpenTicketRequest(BaseModel):
+    # The cabinet the person will see the chat in; by default the one they have.
+    side: Literal["buyer", "supplier"] | None = None
+
+
+@admin_router.post("/users/{user_id}/ticket", response_model=SupportTicketSchema)
+async def admin_open_ticket(
+    user_id: int,
+    data: AdminOpenTicketRequest,
+    current_user: Annotated[CurrentUser, Depends(admin_perm("admin_support.update"))],
+):
+    """Start a conversation with a person from the admin panel."""
+    return await SupportService().admin_open_ticket(user_id, current_user.id, data.side)

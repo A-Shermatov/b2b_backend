@@ -378,6 +378,48 @@ async def admin_view() -> dict:
     }
 
 
+def _admin_hint(username: str | None, channel: str) -> str:
+    bot = f"@{username}" if username else "бота"
+    return (
+        f"Бот {bot} не администратор канала {channel}. В Telegram откройте канал → "
+        f"«Управление каналом» → «Администраторы» → «Добавить администратора», "
+        f"найдите {bot} по имени с @ и включите право «Публикация сообщений». "
+        f"Затем сохраните настройки ещё раз."
+    )
+
+
+async def _check_channel(token: str, channel: str, bot_id: int | None, username: str | None) -> str:
+    """The channel's title, once Telegram confirms the bot may post there."""
+    try:
+        chat = await call_bot(token, "getChat", {"chat_id": channel})
+    except TelegramError as exc:
+        raise ValidationError(
+            f"Канал {channel} не найден для этого бота ({exc}). " + _admin_hint(username, channel)
+        ) from exc
+    if bot_id is None:
+        try:
+            me = await call_bot(token, "getMe")
+        except TelegramError as exc:
+            raise ValidationError(f"Бот не отвечает: {exc}") from exc
+        bot_id, username = me.get("id"), me.get("username") or username
+    if bot_id is not None:
+        try:
+            member = await call_bot(token, "getChatMember", {"chat_id": channel, "user_id": bot_id})
+        except TelegramError as exc:
+            raise ValidationError(_admin_hint(username, channel)) from exc
+        status = member.get("status")
+        if chat.get("type") == "channel":
+            # In a channel only an admin with the posting right can publish.
+            allowed = status == "creator" or (
+                status == "administrator" and member.get("can_post_messages") is not False
+            )
+        else:
+            allowed = status in ("creator", "administrator", "member")
+        if not allowed:
+            raise ValidationError(_admin_hint(username, channel))
+    return chat.get("title") or chat.get("username") or channel
+
+
 async def update_settings(data: dict, user_id: int) -> dict:
     """Save what the admin entered; a new token and channel are checked with Telegram first."""
     async with pool.connection() as conn:
@@ -402,20 +444,19 @@ async def update_settings(data: dict, user_id: int) -> dict:
 
     username = current.get("bot_username")
     channel_title = current.get("channel_title")
+    new_bot = bool(data.get("bot_token")) and token != decrypt_token(current.get("bot_token_enc"))
+    bot_id = None
     if token and (data.get("bot_token") or not username):
         try:
             me = await call_bot(token, "getMe")
         except TelegramError as exc:
             raise ValidationError(f"Бот не отвечает: {exc}") from exc
         username = me.get("username")
-    if token and channel and channel != current.get("channel_id"):
-        try:
-            chat = await call_bot(token, "getChat", {"chat_id": channel})
-        except TelegramError as exc:
-            raise ValidationError(
-                f"Канал не найден или бот не добавлен в него администратором: {exc}"
-            ) from exc
-        channel_title = chat.get("title") or chat.get("username") or channel
+        bot_id = me.get("id")
+    # A new bot or a new channel: the bot must be an admin there that may post.
+    # Checked even when the channel stays, or a swapped bot would fail silently.
+    if token and channel and (new_bot or channel != current.get("channel_id")):
+        channel_title = await _check_channel(token, channel, bot_id, username)
     if token and assistant_enabled and not current.get("assistant_enabled"):
         # The bot's menu in private chats; a refusal here is not a reason to fail the save.
         try:
