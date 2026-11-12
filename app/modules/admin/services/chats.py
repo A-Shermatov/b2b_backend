@@ -19,6 +19,26 @@ def message_is_flagged(text: str | None) -> bool:
     return bool(text and CHAT_RISK_RE.search(text))
 
 
+
+def _party_sql(actor: str) -> str:
+    return f"""EXISTS (
+        SELECT 1 FROM actors a
+        LEFT JOIN company_users cu ON cu.company_id = a.company_id
+        WHERE a.id = {actor} AND m.sender_id IN (a.user_id, cu.user_id)
+    )"""
+
+
+# Whose message it is ($2 is the buyer's profile, $3 the supplier's). A company
+# writes through its people, so a member of the buyer's company is the buyer.
+# Only the platform's own staff are «admin»; somebody who has left a company
+# since is «other».
+MESSAGE_SIDE_SQL = f"""CASE
+    WHEN u.role::text IN ('admin', 'superadmin', 'moderator') THEN 'admin'
+    WHEN {_party_sql("$2")} THEN 'buyer'
+    WHEN {_party_sql("$3")} THEN 'supplier'
+    ELSE 'other'
+END"""
+
 class AdminChatsMixin:
     async def count_flagged_chats(self) -> int:
         async with self.connection() as conn:
@@ -208,23 +228,13 @@ class AdminChatsMixin:
                 if not row:
                     raise NotFoundError("Chat not found")
                 messages = await conn.fetch(
-                    """
+                    f"""
                     SELECT
                         m.id, m.sender_id, m.text, m.created_at,
                         m.status::text AS status,
                         m.deleted_at,
                         u.first_name, u.last_name, u.email,
-                        CASE
-                            WHEN EXISTS (
-                                SELECT 1 FROM actors a
-                                WHERE a.user_id = m.sender_id AND a.id = $2
-                            ) THEN 'buyer'
-                            WHEN EXISTS (
-                                SELECT 1 FROM actors a
-                                WHERE a.user_id = m.sender_id AND a.id = $3
-                            ) THEN 'supplier'
-                            ELSE 'admin'
-                        END AS side
+                        {MESSAGE_SIDE_SQL} AS side
                     FROM messages m
                     LEFT JOIN users u ON u.id = m.sender_id
                     WHERE m.conversation_id = $1
@@ -262,25 +272,13 @@ class AdminChatsMixin:
                 if not row:
                     raise NotFoundError("Chat not found")
                 messages = await conn.fetch(
-                    """
+                    f"""
                     SELECT
                         m.id, m.sender_id, m.text, m.created_at,
                         'sent'::text AS status,
                         m.deleted_at,
                         u.first_name, u.last_name, u.email,
-                        CASE
-                            WHEN m.sender_id IN (
-                                SELECT u2.id FROM actors a2
-                                JOIN users u2 ON u2.id = a2.user_id
-                                WHERE a2.id = $2
-                            ) THEN 'buyer'
-                            WHEN m.sender_id IN (
-                                SELECT u2.id FROM actors a2
-                                JOIN users u2 ON u2.id = a2.user_id
-                                WHERE a2.id = $3
-                            ) THEN 'supplier'
-                            ELSE 'admin'
-                        END AS side
+                        {MESSAGE_SIDE_SQL} AS side
                     FROM proposal_messages m
                     LEFT JOIN users u ON u.id = m.sender_id
                     WHERE m.proposal_id = $1
@@ -302,7 +300,8 @@ class AdminChatsMixin:
             name_parts = [m["first_name"] or "", m["last_name"] or ""]
             sender_name = " ".join(p for p in name_parts if p).strip() or m["email"] or "Участник"
             if m["side"] == "admin":
-                sender_name = "Модератор"
+                # The parties see «Модератор»; the panel also says which one.
+                sender_name = f"Модератор · {sender_name}"
             msg_items.append(
                 {
                     "id": m["id"],

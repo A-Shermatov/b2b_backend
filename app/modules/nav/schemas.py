@@ -32,7 +32,10 @@ class NavSeenBody(BaseModel):
 
 class AdminNavCounts(BaseModel):
     companies: int = 0
+    #: `catalog` and `reports` together (kept for older clients).
     moderation: int = 0
+    catalog: int = 0
+    reports: int = 0
     support: int = 0
     chats: int = 0
     disputes: int = 0

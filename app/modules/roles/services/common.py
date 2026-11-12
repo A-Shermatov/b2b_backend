@@ -2,6 +2,7 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.permissions import (
     PROTECTED_ROLE_NAMES,
     STAFF_ROLE_SCOPE,
+    action_alias_ru,
     action_bucket,
     is_staff_resource,
     is_superadmin,
@@ -156,12 +157,20 @@ def build_matrix_rows(permission_rows: list[dict], enabled_ids: set[int] | None)
             representative = _pick_representative(bucket_rows, bucket)
             ids = {int(item["id"]) for item in bucket_rows}
             enabled = False
+            missing: list[str] = []
             if enabled_ids is not None and representative is not None:
                 enabled = bool(ids & enabled_ids)
+                if enabled:
+                    missing = sorted(
+                        action_alias_ru(item["action"])
+                        for item in bucket_rows
+                        if int(item["id"]) not in enabled_ids
+                    )
             cells[bucket] = PermissionActionCell(
                 permission_id=int(representative["id"]) if representative else None,
                 code=representative["name"] if representative else None,
                 enabled=enabled,
+                missing=missing,
             )
         result.append(
             PermissionMatrixRow(
@@ -175,28 +184,31 @@ def build_matrix_rows(permission_rows: list[dict], enabled_ids: set[int] | None)
     return result
 
 
-async def expand_permission_ids(conn, permission_ids: list[int]) -> list[int]:
-    selected = {int(value) for value in permission_ids if int(value) > 0}
-    rows = await conn.fetch(
-        """
-        SELECT id, resource, action
-        FROM permissions
-        WHERE is_active = TRUE
-        """
-    )
-    if not selected:
-        return []
-    selected_buckets: set[tuple[str, str]] = set()
-    for row in rows:
-        if int(row["id"]) not in selected:
+def keep_what_a_box_held(
+    requested: set[int],
+    current: set[int],
+    permissions: dict[int, dict],
+) -> set[int]:
+    """The rights a role gets when its table is saved.
+
+    A box of the table («Изменение» of a section) stands for several actions. A
+    box ticked for the first time gives all of them. A box that was ticked
+    before and still is keeps exactly what it held: a built-in role may hold
+    only some actions of a box (a moderator changes companies but does not block
+    them), and saving the table for another reason must not hand it the rest.
+    """
+    bucket_of = {
+        pid: (item["resource"], action_bucket(item["action"])) for pid, item in permissions.items()
+    }
+    ticked = {bucket_of[pid] for pid in requested if bucket_of[pid][1]}
+    # Anything allowed in a section lets its pages be opened.
+    ticked |= {(resource, "read") for resource, _bucket in ticked}
+    held = {bucket_of[pid] for pid in current if pid in bucket_of}
+    granted: set[int] = set()
+    for pid, box in bucket_of.items():
+        if box not in ticked:
             continue
-        bucket = action_bucket(row["action"])
-        if bucket is None:
+        if box in held and pid not in current:
             continue
-        selected_buckets.add((row["resource"], bucket))
-    expanded = set(selected)
-    for row in rows:
-        bucket = action_bucket(row["action"])
-        if bucket and (row["resource"], bucket) in selected_buckets:
-            expanded.add(int(row["id"]))
-    return sorted(expanded)
+        granted.add(pid)
+    return granted
